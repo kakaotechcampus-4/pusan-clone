@@ -1,0 +1,103 @@
+name: Auto-assign reviewer
+# PRD-mvp.md §7 (FR-1 ~ FR-5)
+# 학생이 학교 repo 에 PR open → 매핑 CSV 조회 → 매칭 멘토 reviewer 자동 지정
+# 실패 시 pr-pipeline repo 에 ops-alert label issue 자동 생성
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mapping data
+        uses: actions/checkout@v4
+        with:
+          repository: kakaotechcampus-4/pr-pipeline
+          token: ${{ secrets.AUTO_ASSIGN_PAT }}
+          path: mapping
+          sparse-checkout: |
+            data
+
+      - name: Lookup mentor + assign reviewer
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_ASSIGN_PAT }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          STUDENT_ROSTER=mapping/data/student-roster.csv
+          CYCLE_MAPPING=mapping/data/cycle-mapping.csv
+          CURRENT_CYCLE=$(tr -d '[:space:]' < mapping/data/current-cycle.txt)
+
+          if [ -z "$CURRENT_CYCLE" ]; then
+            echo "::error::current-cycle.txt is empty"
+            exit 1
+          fi
+
+          # 학생 → team_no (skip header + comment lines starting with #)
+          TEAM_NO=$(awk -F, -v s="$PR_AUTHOR" '
+            NR==1 || /^#/ {next}
+            $4==s {print $3; exit}
+          ' "$STUDENT_ROSTER")
+
+          if [ -z "$TEAM_NO" ]; then
+            echo "::error::student $PR_AUTHOR not in roster"
+            exit 1
+          fi
+
+          # (cycle, team_no) → mentor github username
+          MENTOR=$(awk -F, -v c="$CURRENT_CYCLE" -v t="$TEAM_NO" '
+            NR==1 || /^#/ {next}
+            $1==c && $2==t {print $3; exit}
+          ' "$CYCLE_MAPPING")
+
+          if [ -z "$MENTOR" ]; then
+            echo "::error::no mentor for cycle=$CURRENT_CYCLE team=$TEAM_NO"
+            exit 1
+          fi
+
+          echo "Assigning reviewer: $MENTOR (student=$PR_AUTHOR, cycle=$CURRENT_CYCLE, team=$TEAM_NO)"
+          gh pr edit "$PR_NUM" --add-reviewer "$MENTOR" -R "$REPO"
+
+      - name: Notify ops on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_ASSIGN_PAT }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          BODY=$(cat <<EOF
+          **PR**: $PR_URL
+          **Author**: $PR_AUTHOR
+          **Source repo**: $SOURCE_REPO
+          **Workflow run**: $RUN_URL
+
+          ---
+
+          Reviewer 자동 지정이 실패했습니다. Workflow 로그에서 \`::error::\` 줄을 확인하세요.
+
+          가능한 원인:
+          - 학생이 \`data/student-roster.csv\` 에 없음 (신규 입과 누락)
+          - 매칭 멘토가 \`data/cycle-mapping.csv\` 에 없음 (사이클 row 누락)
+          - \`data/current-cycle.txt\` 잘못된 값
+          - 멘토 GitHub username 오타 (gh API: "Reviewer is not a collaborator")
+
+          처리: roster/매핑 수정 → PR 에 reviewer 수동 추가 → 이 이슈 close.
+          EOF
+          )
+          gh issue create \
+            -R kakaotechcampus-4/pr-pipeline \
+            -t "[ops-alert] reviewer auto-assign failed: PR by $PR_AUTHOR" \
+            -b "$BODY" \
+            -l "ops-alert"
