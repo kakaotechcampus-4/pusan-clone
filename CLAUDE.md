@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-**Kanana Schedule Agent** — 수업용 로컬 Python 앱. Gradio 채팅 UI 위에서 LangChain agent가 개인 일정 CRUD tool을 호출하는 실습 프로젝트입니다. 학생들은 `student_parts/week01_wake_up_nana.py`의 `# TODO` 함수 3개만 구현합니다.
+**Kanana Schedule Agent** — 수업용 로컬 Python 앱. Gradio 채팅 UI 위에서 LangChain agent가 개인 일정 CRUD tool을 호출하는 실습 프로젝트입니다. Week 1 구현 대상(`personal_create_schedule`, `personal_list_schedules`, `personal_delete_schedule`)은 완성된 상태입니다.
 
 - Python 3.11 고정 (`pyproject.toml`: `requires-python = ">=3.11,<3.12"`)
 - 패키지 관리: `uv` (primary), conda (fallback)
@@ -19,23 +19,39 @@ cp .env.example .env
 # .env 안의 PROXY_TOKEN에 API 키를 입력하세요
 ```
 
-## 실행 명령
+## 최초 설치
+
+로컬 Python 버전과 무관하게 `uv`가 Python 3.11을 자동 설치합니다.
 
 ```bash
-# 최초 설치 후 실행
-./run.sh --install
+uv python install 3.11
+uv sync
+```
 
-# 앱 실행 (Week 1)
-./run.sh
+`.venv`가 프로젝트 루트에 생성되며, 이후 `uv run` 이 자동으로 사용합니다.
+
+## 실행 명령
+
+**Windows PowerShell**에서는 `.sh` 파일을 직접 실행할 수 없습니다.
+
+```powershell
+# PowerShell (Windows)
+$env:KANANA_ACTIVE_WEEK="1"; uv run python app.py
+```
+
+```bash
+# Git Bash / macOS / Linux
 ./run.sh --week1
+
+# 최초 설치 + 실행 (Git Bash)
+./run.sh --install
 
 # conda 환경 fallback
 ./run.sh --conda --install
 ./run.sh --conda
-
-# 도움말
-./run.sh --help
 ```
+
+앱 실행 후 브라우저에서 `http://localhost:7860` 접속합니다.
 
 ## 패키지 관리
 
@@ -91,7 +107,13 @@ uv lock
 
 ### 자동 테스트 없음
 
-이 저장소에는 자동화 테스트 하네스가 없습니다. 검증은 `./run.sh --week1` 실행 후 채팅 입력 → **상세** 탭의 trace JSON에서 tool 호출 여부와 반환 payload를 직접 확인합니다.
+이 저장소에는 자동화 테스트 하네스가 없습니다. 검증은 앱 실행 후 채팅 입력 → **상세** 탭의 trace JSON에서 tool 호출 여부와 반환 payload를 직접 확인합니다.
+
+| 확인할 tool | 샘플 프롬프트 | 기대 payload 키 |
+|---|---|---|
+| `personal_create_schedule` | "내일 오전 10시에 팀 회의 만들어줘" | `created_schedule` |
+| `personal_list_schedules` | "내 일정 보여줘" | `schedules` |
+| `personal_delete_schedule` | "팀 회의 일정 삭제해줘" | `deleted` |
 
 ## 환경 변수 주요 키
 
