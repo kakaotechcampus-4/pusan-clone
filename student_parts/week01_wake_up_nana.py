@@ -190,7 +190,7 @@ def personal_create_schedule(
     )
 
 
-@tool("personal_list_schedules", "선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회한다.")
+@tool("personal_list_schedules", description="선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회한다.")
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
@@ -208,7 +208,7 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     )
 
 
-@tool("personal_delete_schedule", "일정 ID에 해당하는 개인 일정을 삭제한다.")
+@tool("personal_delete_schedule", description="일정 ID에 해당하는 개인 일정을 삭제한다.")
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
