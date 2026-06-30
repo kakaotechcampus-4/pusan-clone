@@ -56,14 +56,6 @@ def join_system_prompt(parts: list[str]) -> str:
 #     schedule dict의 session_id에 넣고, 조회/삭제 때 같은 session_id만 대상으로 삼아 처리합니다.
 #   - week01_tools()가 세 tool을 LangChain agent에 공개하고, build_week01_agent()가 이 목록을 사용합니다.
 #
-# 구현 대상
-#   1. personal_create_schedule
-#      - title/date/start_time/end_time/attendees 인자로 schedule dict를 만듭니다.
-#      - id는 "personal_" 접두어가 붙은 임시 ID, created_at은 현재 시각으로 채웁니다.
-#      - attendees가 None이면 빈 list로 바꾸고, session_id=current_session_scope()를 함께 넣어
-#        PERSONAL_SCHEDULES에 append합니다.
-#      - 반환 JSON에는 ok, tool_name, created_schedule을 넣습니다.
-#      - Week 1 반환에는 structured_request나 sqlite_save를 넣지 않습니다.
 #
 #   2. personal_list_schedules
 #      - PERSONAL_SCHEDULES를 직접 수정하지 않고 현재 대화 범위의 일정만 조회합니다.
@@ -159,8 +151,15 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     session_id = current_session_scope()
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
-
-@tool
+# 구현 대상
+#   1. personal_create_schedule
+#      - title/date/start_time/end_time/attendees 인자로 schedule dict를 만듭니다.
+#      - id는 "personal_" 접두어가 붙은 임시 ID, created_at은 현재 시각으로 채웁니다.
+#      - attendees가 None이면 빈 list로 바꾸고, session_id=current_session_scope()를 함께 넣어
+#        PERSONAL_SCHEDULES에 append합니다.
+#      - 반환 JSON에는 ok, tool_name, created_schedule을 넣습니다.
+#      - Week 1 반환에는 structured_request나 sqlite_save를 넣지 않습니다.
+@tool("personal_create_schedule", description="개인 일정을 생성한다.")
 def personal_create_schedule(
     title: str,
     date: str,
@@ -170,7 +169,23 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
+    schedule = {
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "created_at": _now_iso(),
+        "attendees": attendees or [],
+        "session_id": current_session_scope(),
+    }
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json({
+        "ok": True,
+        "tool_name": "personal_create_schedule",
+        "created_schedule": schedule,
+    })
     ...
 
 
