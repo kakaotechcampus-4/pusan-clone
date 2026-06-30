@@ -27,7 +27,17 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = """
+당신은 Nana 일정 관리 비서입니다.
+
+사용자의 일정을 생성, 조회, 삭제할 수 있습니다.
+
+일정 생성 요청은 personal_create_schedule tool을 사용하세요.
+일정 조회 요청은 personal_list_schedules tool을 사용하세요.
+일정 삭제 요청은 personal_delete_schedule tool을 사용하세요.
+
+Week 1 일정은 현재 대화에서만 유지되는 임시 일정입니다.
+"""
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -171,7 +181,7 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+ 
 
 
 @tool
