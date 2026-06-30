@@ -64,65 +64,19 @@ def join_system_prompt(parts: list[str]) -> str:
 #        PERSONAL_SCHEDULES에 append합니다.
 #      - 반환 JSON에는 ok, tool_name, created_schedule을 넣습니다.
 #      - Week 1 반환에는 structured_request나 sqlite_save를 넣지 않습니다.
-
-@tool
-def personal_create_schedule(title: str, date: str, start_time: str, end_time: str, attendees: list[str] | None = None) -> str:
-    """Create a personal schedule."""
-    schedule = {
-        "id": _new_personal_id(),
-        "title": title,
-        "date": date,
-        "start_time": start_time,
-        "end_time": end_time,
-        "attendees": attendees or [],
-        "created_at": _now_iso(),
-        "session_id": current_session_scope(),
-    }
-    PERSONAL_SCHEDULES.append(schedule)
-    # tool은 실행 결과를 JSON 문자열로 돌려주고, agent는 이 값을 보고 최종 답변을 만든다.
-    return json.dumps({"ok": True, "tool_name": personal_create_schedule, "created_schedule": schedule}, ensure_ascii=False)
-
+#
 #   2. personal_list_schedules
 #      - PERSONAL_SCHEDULES를 직접 수정하지 않고 현재 대화 범위의 일정만 조회합니다.
 #      - date_from이 있으면 그 날짜 이상, date_to가 있으면 그 날짜 이하만 남깁니다.
 #      - 날짜 비교는 YYYY-MM-DD 문자열 기준으로 충분합니다.
 #      - 반환 JSON에는 ok, tool_name, schedules를 넣습니다.
-
-@tool
-def personal_list_schedules(date_from: str | None = None, date_to: str| None = None) -> str:
-    """List personal schedules."""
-    
-    schedules = _current_session_schedules()
-    if date_from:
-        schedules = [s from s in schedules if s["date"] >= date_from]
-    if date_to:
-        schedules = [s from s in schedules if s["date"] <= date_to]
-
-    return json.dumps({"ok": True, "tool_name": personal_list_schedules, "schedules": schedules}, ensure_ascii=False)
-
+#
 #   3. personal_delete_schedule
 #      - schedule_id가 일치하면서 현재 대화 범위에 속한 일정만 삭제합니다.
 #      - 리스트 객체 자체는 유지해야 하므로 PERSONAL_SCHEDULES[:]에 새 목록을 대입합니다.
 #      - 삭제 전후 길이 비교로 deleted 값을 만들고 JSON으로 반환합니다.
 #      - 다른 대화 범위의 같은 ID는 삭제하면 안 됩니다.
-
-@tool
-def personal_delete_schedule(schedule_id: str) -> str:
-    """Delete a personal schedule by id."""
-    session_id = current_session_scope()
-    before_count = len(PERSONAL_SCHEDULES)
-    remaining = [
-        schedule for schedule in PERSONAL_SCHEDULES
-        if not (schedule["id"] == schedule_id and _schedule_scope(schedule)==session_id)
-    ]
-    PERSONAL_SCHEDULES[:] = remaining
-    after_count = len(PERSONAL_SCHEDULES)
-    deleted = before_count != after_count
-    return json.dumps(
-        {"ok": deleted, "tool_name":personal_delete_schedule, "deleted":deledted, "schedule_id": schedule_id},
-        ensure_ascii=False,
-    )
-
+#
 # 중요한 반환 규칙
 #   LangChain tool은 문자열 반환이 가장 안정적입니다. dict를 만든 뒤 _json(...)으로 감싸세요.
 #   Week 1 도구는 현재 대화 안에서만 쓰는 임시 일정 dict만 반환하며 SQLite/App store를 호출하지 않습니다.
