@@ -194,12 +194,26 @@ def personal_create_schedule(
                 "created_schedule":schedule
             })
 
-@tool
+@tool("personal_list_schedules", description = "선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다.")
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
-    """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
+
+
+    # 현재 세션의 schedule을 먼저 불러오기 , 딕셔너리 리스트를 받아옴
+    schedules = _current_session_schedules()
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    if date_from and date_to:
+        schedules = [schedule for schedule in schedules if date_from <= schedule["date"] and schedule["date"] <= date_to]
+    elif not date_to:
+        schedules = [schedule for schedule in schedules if date_from <= schedule["date"]]
+    elif not date_from:
+        schedules = [schedule for schedule in schedules if schedule["date"] <= date_to]
+    
+    return _json({
+        "ok" : True,
+        "tool_name" : "personal_list_schedules",
+        "schedules" :schedules
+    })
 
 
 @tool
@@ -224,7 +238,7 @@ def week01_system_prompt() -> str:
 
 def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
-c
+
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
     ]
