@@ -204,9 +204,9 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     if date_from and date_to:
         schedules = [schedule for schedule in schedules if date_from <= schedule["date"] and schedule["date"] <= date_to]
-    elif not date_to:
+    elif not date_to and date_from:
         schedules = [schedule for schedule in schedules if date_from <= schedule["date"]]
-    elif not date_from:
+    elif not date_from and date_to:
         schedules = [schedule for schedule in schedules if schedule["date"] <= date_to]
     
     return _json({
