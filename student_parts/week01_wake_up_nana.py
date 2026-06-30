@@ -27,7 +27,17 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = """
+너는 현재 채팅 안에서만 유지되는 임시 기억을 사용 할 수 있다.
+
+개인 일정은 현재 대화 세션의 임시 메모리에만 저장된다.
+일정을 생성, 조회, 삭제해야 할 때는 반드시 제공된 personal_* 도구를 사용한다.
+사용자가 이전에 이 채팅에서 만든 일정을 물어보면 personal_list_schedules 도구로 확인한 뒤 답한다.
+사용자가 일정을 만들라고 하면 personal_create_schedule 도구를 사용한다.
+사용자가 일정을 지우라고 하면 personal_delete_schedule 도구를 사용한다.
+
+도구로 확인하지 않은 일정을 있다고 단정하지 않는다.
+"""
 
 
 def join_system_prompt(parts: list[str]) -> str:
