@@ -56,13 +56,6 @@ def join_system_prompt(parts: list[str]) -> str:
 #     schedule dict의 session_id에 넣고, 조회/삭제 때 같은 session_id만 대상으로 삼아 처리합니다.
 #   - week01_tools()가 세 tool을 LangChain agent에 공개하고, build_week01_agent()가 이 목록을 사용합니다.
 #
-#
-#   2. personal_list_schedules
-#      - PERSONAL_SCHEDULES를 직접 수정하지 않고 현재 대화 범위의 일정만 조회합니다.
-#      - date_from이 있으면 그 날짜 이상, date_to가 있으면 그 날짜 이하만 남깁니다.
-#      - 날짜 비교는 YYYY-MM-DD 문자열 기준으로 충분합니다.
-#      - 반환 JSON에는 ok, tool_name, schedules를 넣습니다.
-#
 #   3. personal_delete_schedule
 #      - schedule_id가 일치하면서 현재 대화 범위에 속한 일정만 삭제합니다.
 #      - 리스트 객체 자체는 유지해야 하므로 PERSONAL_SCHEDULES[:]에 새 목록을 대입합니다.
@@ -188,11 +181,30 @@ def personal_create_schedule(
     })
     ...
 
+#   2. personal_list_schedules
+#      - PERSONAL_SCHEDULES를 직접 수정하지 않고 현재 대화 범위의 일정만 조회합니다.
+#      - date_from이 있으면 그 날짜 이상, date_to가 있으면 그 날짜 이하만 남깁니다.
+#      - 날짜 비교는 YYYY-MM-DD 문자열 기준으로 충분합니다.
+#      - 반환 JSON에는 ok, tool_name, schedules를 넣습니다.
 
-@tool
+@tool("personal_list_schedules", description="현재 생성된 개인 일정을 조회한다.")
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
-
+    schedules = _current_session_schedules()
+    
+    if date_from is not None:
+        schedules = [
+            schedule for schedule in schedules if schedule.get("date", "") >= date_from
+        ]
+    if date_to is not None:
+        schedules = [
+            schedule for schedule in schedules if schedule.get("date", "") <= date_to
+        ]
+    return _json({
+        "ok": True,
+        "tool_name": "personal_list_schedules",
+        "schedules": schedules,
+    })
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     ...
 
