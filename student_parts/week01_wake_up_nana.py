@@ -195,12 +195,29 @@ def personal_create_schedule(
 
 
 
-@tool
+@tool(
+    "personal_list_schedules",
+    description="현재 생성된 개인 일정 목록을 조회한다. date_from과 date_to는 YYYY-MM-DD 형태이다."
+)
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = [
+        i for i in PERSONAL_SCHEDULES
+        if (
+            i["session_id"] == current_session_scope() and
+            (date_from == None or i["date"] >= date_from) and
+            (date_to == None or i["date"] <= date_to)
+        )
+    ]
+
+    return _json({
+        "ok" : True,
+        "tool_name" : "personal_list_schedules",
+        "schedules" : schedules
+    })
+    
 
 
 @tool
