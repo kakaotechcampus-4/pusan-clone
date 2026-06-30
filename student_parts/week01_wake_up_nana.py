@@ -249,16 +249,18 @@ def week01_tools() -> list[Any]:
 
 def week01_system_prompt() -> str:
     """1주차 단일 Nana agent가 따르는 시스템 프롬프트입니다."""
-
     return join_system_prompt(week01_prompt_parts())
 
 
 def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
-
+    today = current_app_date_iso()
     return [
-        CHAT_MEMORY_PROMPT,
-        f"현재 날짜는 앱 시작 시 OS에서 읽은 {current_app_date_iso()}이다."
+        f"오늘 날짜는 {today}입니다. "
+        "사용자가 '오늘', '내일', '모레', '이번 주' 같은 상대적 표현을 쓰면 "
+        "반드시 이 날짜를 기준으로 정확한 YYYY-MM-DD 형식으로 환산해서 "
+        "tool 인자(date, date_from, date_to)에 넣으세요. "
+        "임의로 다른 날짜를 추측하지 마세요.",
     ]
 
 
