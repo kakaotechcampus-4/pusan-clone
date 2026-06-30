@@ -202,9 +202,12 @@ def personal_create_schedule(
                 "created_schedule":schedule
             })
 
-@tool
+@tool("personal_list_schedules", description = "선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다.")
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
-    """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
+
+
+    # 현재 세션의 schedule을 먼저 불러오기 , 딕셔너리 리스트를 받아옴
+    schedules = _current_session_schedules()
 
     schedules = [
         schedule
@@ -251,7 +254,7 @@ def week01_system_prompt() -> str:
 
 def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
-c
+
     return [
         CHAT_MEMORY_PROMPT,
         f"현재 날짜는 앱 시작 시 OS에서 읽은 {current_app_date_iso()}이다."
