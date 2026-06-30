@@ -159,18 +159,43 @@ def _trace_message(trace: dict[str, Any]) -> str:
             lines.append(f"- `{label}`")
     return "\n".join(lines) if lines else "- trace 없음"
 
+# fix: Week 1 main 브랜치에서는 임시 일정만 사용. 임시로 주석처리 +
+#  _saved_schedule_markdown()를 모두 _saved_schedule_markdown(conversation_id=...)로 교체하여
+# 대화별 일정을 패널에 반영함
+# def _sqlite_schedule_memory_enabled() -> bool:
+#     return int(getattr(runtime, "active_week", CONFIG.active_week) or 1) >= 3
 
-def _sqlite_schedule_memory_enabled() -> bool:
-    return int(getattr(runtime, "active_week", CONFIG.active_week) or 1) >= 3
+# fix: Week 1 main 브랜치에서는 임시 일정만 사용. 
+# 아래 코드를 주석 처리하여 데이터 출처를 메모리 리스트로 교체
+# def _saved_schedule_lines(limit: int = 8) -> list[str]:
+#     if not _sqlite_schedule_memory_enabled():
+#         return []
+#     list_schedules = getattr(runtime.app_store, "list_schedules", None)
+#     if list_schedules is None:
+#         return []
+#     rows = list_schedules(limit=limit, kind="personal_schedule")
+#     lines: list[str] = []
+#     for row in rows:
+#         date = row.get("date") or "날짜 미정"
+#         start_time = row.get("start_time") or "시간 미정"
+#         end_time = row.get("end_time") or ""
+#         time_range = f"{start_time}-{end_time}" if end_time else start_time
+#         title = row.get("title") or "제목 없음"
+#         attendees = row.get("attendees") or []
+#         attendee_text = f" · 참석자: {', '.join(attendees)}" if attendees else ""
+#         lines.append(f"- {date} {time_range} · {title}{attendee_text}")
+#     return lines
 
+def _saved_schedule_lines(limit: int = 8, conversation_id: str | None = None) -> list[str]:
+    from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES
 
-def _saved_schedule_lines(limit: int = 8) -> list[str]:
-    if not _sqlite_schedule_memory_enabled():
-        return []
-    list_schedules = getattr(runtime.app_store, "list_schedules", None)
-    if list_schedules is None:
-        return []
-    rows = list_schedules(limit=limit, kind="personal_schedule")
+    rows = [
+        schedule
+        for schedule in PERSONAL_SCHEDULES
+        if conversation_id is None or schedule.get("session_id") == conversation_id
+    ]
+    rows = sorted(rows, key=lambda s: (s.get("date") or "", s.get("start_time") or ""))[:limit]
+
     lines: list[str] = []
     for row in rows:
         date = row.get("date") or "날짜 미정"
@@ -184,13 +209,21 @@ def _saved_schedule_lines(limit: int = 8) -> list[str]:
     return lines
 
 
-def _saved_schedule_markdown(limit: int = 8) -> str:
-    if not _sqlite_schedule_memory_enabled():
-        return "Week 1 main 브랜치에서는 현재 대화 안의 임시 일정만 사용합니다."
-    lines = _saved_schedule_lines(limit=limit)
+# fix: SQLite 게이트 제거 + conversation_id 전달
+# def _saved_schedule_markdown(limit: int = 8) -> str:
+#     if not _sqlite_schedule_memory_enabled():
+#         return "Week 1 main 브랜치에서는 현재 대화 안의 임시 일정만 사용합니다."
+#     lines = _saved_schedule_lines(limit=limit)
+#     if not lines:
+#         return "저장된 일정이 아직 없습니다."
+#     return "\n".join(lines)
+
+def _saved_schedule_markdown(limit: int = 8, conversation_id: str | None = None) -> str:
+    lines = _saved_schedule_lines(limit=limit, conversation_id=conversation_id)
     if not lines:
         return "저장된 일정이 아직 없습니다."
     return "\n".join(lines)
+
 
 
 def _chat_notice() -> list[dict[str, str]]:
@@ -274,7 +307,7 @@ def queue_user_message(
             gr.update(value="", interactive=True),
             "",
             gr.update(interactive=True),
-            _saved_schedule_markdown(),
+            _saved_schedule_markdown(conversation_id=conversation_id),
             *_conversation_button_updates(conversation_id),
         )
 
@@ -291,7 +324,7 @@ def queue_user_message(
         gr.update(value="", interactive=False),
         message,
         gr.update(interactive=False),
-        _saved_schedule_markdown(),
+        _saved_schedule_markdown(conversation_id=active_conversation_id),
         *_conversation_button_updates(active_conversation_id),
     )
 
@@ -311,7 +344,7 @@ def finish_agent_response(
             gr.update(interactive=True),
             "",
             gr.update(interactive=True),
-            _saved_schedule_markdown(),
+            _saved_schedule_markdown(conversation_id=conversation_id),
             *_conversation_button_updates(conversation_id),
         )
         return
@@ -327,7 +360,7 @@ def finish_agent_response(
                 gr.update(interactive=False),
                 pending_message,
                 gr.update(interactive=False),
-                _saved_schedule_markdown(),
+                _saved_schedule_markdown(conversation_id=conversation_id),
                 *_conversation_button_updates(conversation_id),
             )
         if event.result:
@@ -339,36 +372,36 @@ def finish_agent_response(
                 gr.update(interactive=True),
                 "",
                 gr.update(interactive=True),
-                _saved_schedule_markdown(),
+                _saved_schedule_markdown(conversation_id=event.result.conversation_id),
                 *_conversation_button_updates(event.result.conversation_id),
             )
             return
 
 
 def new_chat() -> tuple:
-    return (_chat_notice(), {}, "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+    return (_chat_notice(), {}, "", _saved_schedule_markdown(conversation_id=None), *_conversation_button_updates(None))
 
 
 def load_chat(conversation_id: str | None) -> tuple:
     if not conversation_id:
-        return (_chat_notice(), "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+        return (_chat_notice(), "", _saved_schedule_markdown(conversation_id=None), *_conversation_button_updates(None))
     return (
         _saved_chatbot_history(conversation_id),
         conversation_id,
-        _saved_schedule_markdown(),
+        _saved_schedule_markdown(conversation_id=conversation_id),
         *_conversation_button_updates(conversation_id),
     )
 
 
 def archive_chat(conversation_id: str | None) -> tuple:
     runtime.archive_conversation(conversation_id)
-    return (_chat_notice(), {}, "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+    return (_chat_notice(), {}, "", _saved_schedule_markdown(conversation_id=None), *_conversation_button_updates(None))
 
 
 def delete_chat(conversation_id: str | None) -> tuple:
     if conversation_id:
         runtime.delete_conversation(conversation_id)
-    return (_chat_notice(), {}, "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+    return (_chat_notice(), {}, "", _saved_schedule_markdown(conversation_id=None), *_conversation_button_updates(None))
 
 
 def conversation_id_at(index: int) -> str:
@@ -407,7 +440,7 @@ def build_demo() -> gr.Blocks:
                         ]
                         gr.HTML("<div class='conversation-list-title'>저장된 일정</div>", container=False)
                         saved_schedules = gr.Markdown(
-                            value=_saved_schedule_markdown(),
+                            value=_saved_schedule_markdown(conversation_id=None),
                             show_label=False,
                             elem_id="saved-schedule-list",
                             elem_classes=["saved-schedule-list"],
@@ -499,7 +532,7 @@ def build_demo() -> gr.Blocks:
                 show_progress="hidden",
             )
         demo.load(
-            lambda: (_saved_schedule_markdown(), *_conversation_button_updates(None)),
+            lambda: (_saved_schedule_markdown(conversation_id=None), *_conversation_button_updates(None)),
             outputs=[saved_schedules, *conversation_buttons],
         )
     return demo
