@@ -56,12 +56,6 @@ def join_system_prompt(parts: list[str]) -> str:
 #     schedule dict의 session_id에 넣고, 조회/삭제 때 같은 session_id만 대상으로 삼아 처리합니다.
 #   - week01_tools()가 세 tool을 LangChain agent에 공개하고, build_week01_agent()가 이 목록을 사용합니다.
 #
-#   3. personal_delete_schedule
-#      - schedule_id가 일치하면서 현재 대화 범위에 속한 일정만 삭제합니다.
-#      - 리스트 객체 자체는 유지해야 하므로 PERSONAL_SCHEDULES[:]에 새 목록을 대입합니다.
-#      - 삭제 전후 길이 비교로 deleted 값을 만들고 JSON으로 반환합니다.
-#      - 다른 대화 범위의 같은 ID는 삭제하면 안 됩니다.
-#
 # 중요한 반환 규칙
 #   LangChain tool은 문자열 반환이 가장 안정적입니다. dict를 만든 뒤 _json(...)으로 감싸세요.
 #   Week 1 도구는 현재 대화 안에서만 쓰는 임시 일정 dict만 반환하며 SQLite/App store를 호출하지 않습니다.
@@ -208,11 +202,36 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     ...
 
-
-@tool
+#   3. personal_delete_schedule
+#      - schedule_id가 일치하면서 현재 대화 범위에 속한 일정만 삭제합니다.
+#      - 리스트 객체 자체는 유지해야 하므로 PERSONAL_SCHEDULES[:]에 새 목록을 대입합니다.
+#      - 삭제 전후 길이 비교로 deleted 값을 만들고 JSON으로 반환합니다.
+#      - 다른 대화 범위의 같은 ID는 삭제하면 안 됩니다.
+@tool("personal_delete_schedule", description="schedule_id가 일치하면서, 현재 대화 범위에 속한 일정만 삭제합니다.")
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
-
+    session_id = current_session_scope()
+    before_len = len(PERSONAL_SCHEDULES)
+    deleted_schedule = None
+    
+    for schedule in PERSONAL_SCHEDULES:
+        if schedule.get("id") == schedule_id and _schedule_scope(schedule) == session_id:
+            deleted_schedule = schedule
+            break
+    PERSONAL_SCHEDULES[:] = [
+        schedule for schedule in PERSONAL_SCHEDULES if not (schedule.get("id") == schedule_id and _schedule_scope(schedule) == session_id)
+    ]
+    
+    after_len = len(PERSONAL_SCHEDULES)
+    deleted = before_len != after_len
+    
+    return _json({
+        "ok": True,
+        "tool_name": "personal_delete_schedule",
+        "deleted": deleted,
+        "deleted_schedule": deleted_schedule,
+    })
+    
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     ...
 
