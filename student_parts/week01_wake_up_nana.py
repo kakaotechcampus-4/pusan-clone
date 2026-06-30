@@ -26,8 +26,12 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
+
+
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = f"""
+    너는 일정 관리 헬퍼 챗봇이다.
+"""
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -140,14 +144,11 @@ def join_system_prompt(parts: list[str]) -> str:
 def _json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
-
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="microseconds")
 
-
 def _new_personal_id() -> str:
     return f"personal_{uuid.uuid4().hex[:10]}"
-
 
 def _schedule_scope(schedule: dict[str, Any]) -> str:
     """기존 직접 tool 호출 row는 기본 scope로 취급합니다."""
@@ -159,41 +160,125 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     session_id = current_session_scope()
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
-
-@tool
+# start_time이 명확하지 않으면 다시 물어본다. <- 이거 때문이었네 아...
+@tool("personal_create_schedule", description="""
+    사용자의 개인 일정을 생성한다.
+    date는 YYYY-MM-DD, start_time, end_time은 HH:MM 형식이다.
+    end_time이 명확하지 않으면 1시간으로 잡고, 사용자에게 1시간으로 잡았다고 말한다.
+    오전/오후 언급이 없는 시각은 현재 시각을 기준으로 판단한다. 현재 시각 이전의 시각이면 무조건 다음 가능한 미래 시각으로 해석한다.
+    예: 현재 17:00이고 사용자가 "10시"라고 하면, 오전 10시(10:00)는 이미 지났으므로 오후 10시(22:00)로 잡는다.
+    단, 사용자가 과거 일정임을 명시한 경우는 예외이다.
+""")
 def personal_create_schedule(
     title: str,
     date: str,
     start_time: str,
-    end_time: str = "미정",
+    end_time: str,
     attendees: list[str] | None = None,
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    schedule = {
+        "session_id": current_session_scope(),
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees or [],
+        "created_at": _now_iso()
+    }
+    
+    PERSONAL_SCHEDULES.append(schedule)
+
+    return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
 
 
-@tool
+@tool("personal_list_schedules", description="개인 일정을 조회한다. date_from, date_to는 YYYY-MM-DD 형식이다. 만약 하나의 날짜만 주어진다면 date_from, date_to를 동일하게 설정한다. 날짜의 정보가 없다면 date_from, date_to를 따로 설정하지 않고 함수를 호출한다.")
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    filtered_schedules = _current_session_schedules()
+
+    if date_from :
+        filtered_schedules = [s for s in filtered_schedules if s["date"] >= date_from]
+    
+    if date_to :
+        filtered_schedules = [s for s in filtered_schedules if s["date"] <= date_to]
+
+    return _json({"ok": True, "tool_name": "personal_list_schedules", "schedules": filtered_schedules})
+    
 
 
-@tool
+@tool("personal_delete_schedule", description="개인 일정을 삭제한다. schedule_id는 삭제할 일정의 ID이다. schedule_id가 같은 일정을 찾아 삭제한다.")
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    deleted_schedule = {}
+    deleted_schedule_list = PERSONAL_SCHEDULES.copy()
+    for idx, schedule in enumerate(deleted_schedule_list):
+        if schedule["id"] == schedule_id and _schedule_scope(schedule) == current_session_scope():
+            deleted_schedule = deleted_schedule_list.pop(idx)
+
+    # if deleted_schedule is None:
+    #     return _json({"ok": False, "message": "해당하는 일정을 찾을 수 없습니다."})
+    
+    # return _json({"ok": True, "deleted": deleted_schedule})
+    deleted = len(PERSONAL_SCHEDULES) - len(deleted_schedule_list)
+    PERSONAL_SCHEDULES[:] = deleted_schedule_list
+    return _json({"deleted": deleted, "deleted_schedule": deleted_schedule})
+
+
+@tool("personal_change_schedule", description="""
+    개인 일정을 변경(옮긴다)한다. personal_delete_schedule과 personal_create_schedule 함수를 두 번 실행하는 방식이다.
+    title, date, start_time, end_time, attendees 중 변경하고자 하는 필드의 값을 전달받는다.
+    schedule_id는 변경하고자 하는 일정의 ID이다.
+    오전/오후 언급이 없는 시각은 현재 시각을 기준으로 판단한다. 현재 시각 이전의 시각이면 무조건 다음 가능한 미래 시각으로 해석한다.
+""")
+def personal_change_schedule(
+    schedule_id: str,
+    title: str | None = None,
+    date: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    attendees: list[str] | None = None,
+) -> str:
+    deleted_json = json.loads(personal_delete_schedule.invoke({"schedule_id": schedule_id}))
+    deleted = deleted_json.get("deleted")
+    deleted_schedule = deleted_json.get("deleted_schedule")
+
+    if deleted == 0:
+        return _json({"ok": False, "message": "해당하는 일정을 찾을 수 없습니다."})
+
+    if title:
+        deleted_schedule["title"] = title
+    if date:
+        deleted_schedule["date"] = date
+    if start_time:
+        deleted_schedule["start_time"] = start_time
+    if end_time:
+        deleted_schedule["end_time"] = end_time
+    if attendees:
+        deleted_schedule["attendees"] = attendees
+
+    created_json = json.loads(personal_create_schedule.invoke({
+        "title": deleted_schedule["title"],
+        "date": deleted_schedule["date"],
+        "start_time": deleted_schedule["start_time"],
+        "end_time": deleted_schedule["end_time"],
+        "attendees": deleted_schedule["attendees"],
+    }))
+
+    return _json({"ok": True, "deleted": deleted, "created": created_json.get("created_schedule")})
 
 
 def week01_tools() -> list[Any]:
     """1주차에서 직접 구현한 개인 일정 CRUD 도구 목록입니다."""
 
-    return [personal_create_schedule, personal_list_schedules, personal_delete_schedule]
+    return [personal_create_schedule, personal_list_schedules, personal_delete_schedule, personal_change_schedule]
 
 
 def week01_system_prompt() -> str:
@@ -206,7 +291,11 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        CHAT_MEMORY_PROMPT,
+        f"""
+        오늘 날짜는 {datetime.now().strftime("%Y-%m-%d")}이며, 현재 시각은 {datetime.now().strftime('%H:%M')}이다.
+        이 날짜 및 시간을 기준으로 일정을 잡으면 된다.
+        """,
     ]
 
 
