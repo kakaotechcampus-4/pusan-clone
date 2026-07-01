@@ -260,7 +260,7 @@ def week01_system_prompt() -> str:
 
 def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
-
+     
     return [
         CHAT_MEMORY_PROMPT,
         f"""
@@ -273,7 +273,7 @@ def week01_prompt_parts() -> list[str]:
 - 일정 삭제 요청에는 먼저 personal_list_schedules로 대상 일정을 확인하고, schedule_id를 알 수 있을 때 personal_delete_schedule 도구를 사용한다.
 - 날짜, 시작 시간, 제목처럼 일정 생성에 꼭 필요한 정보가 부족하면 도구를 호출하기 전에 짧게 되묻는다.
 - 도구 실행 결과를 바탕으로 사용자에게 간결하게 답하고, schedule_id는 사용자가 식별해야 할 때만 알려준다.
-""",
+""".strip(),
     ]
 
 
