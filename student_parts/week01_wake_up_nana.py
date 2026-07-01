@@ -213,8 +213,8 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
     try:
-        datetime.strptime(date_from, "%Y-%m-%d")
-        datetime.strptime(date_to, "%Y-%m-%d")
+        date_from is None or datetime.strptime(date_from, "%Y-%m-%d")
+        date_to is None or datetime.strptime(date_to, "%Y-%m-%d")
     except ValueError as err:
         raise ToolException(str(err))
 
