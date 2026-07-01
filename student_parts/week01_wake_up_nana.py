@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, TypedDict
 
 from langchain.agents import create_agent
-from langchain.tools import tool
+from langchain.tools import tool, ToolException
 
 from fixed.config import CONFIG
 from fixed.langchain_trace import (
@@ -212,13 +212,19 @@ def personal_create_schedule(
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
+    try:
+        datetime.strptime(date_from, "%Y-%m-%d")
+        datetime.strptime(date_to, "%Y-%m-%d")
+    except ValueError as err:
+        raise ToolException(str(err))
+
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     schedules = [
         i for i in PERSONAL_SCHEDULES
         if (
             i["session_id"] == current_session_scope() and
-            (date_from == None or i["date"] >= date_from) and
-            (date_to == None or i["date"] <= date_to)
+            (date_from is None or i["date"] >= date_from) and
+            (date_to is None or i["date"] <= date_to)
         )
     ]
 
@@ -228,7 +234,7 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
         "schedules" : schedules
     })
     
-
+personal_list_schedules.handle_tool_error = True
 
 @tool(
     "personal_delete_schedule",
