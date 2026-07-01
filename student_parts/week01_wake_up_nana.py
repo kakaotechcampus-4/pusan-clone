@@ -238,7 +238,7 @@ personal_list_schedules.handle_tool_error = True
 
 @tool(
     "personal_delete_schedule",
-    description="schedule_id와 일치하는 개인 일정을 삭제한다. schedule_id 예 : personal_{uuid.uuid4().hex[:10]}"
+    description="schedule_id와 일치하는 개인 일정을 삭제한다. schedule_id 예 : personal_e9c8e63704"
 )
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
@@ -247,7 +247,10 @@ def personal_delete_schedule(schedule_id: str) -> str:
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     PERSONAL_SCHEDULES[:] = [
         i for i in PERSONAL_SCHEDULES
-        if i["session_id"] != current_session_scope() or i["id"] != schedule_id
+        if (
+            i["id"] != schedule_id or
+            _schedule_scope(i) != current_session_scope() 
+        )
     ]
 
     return _json({
