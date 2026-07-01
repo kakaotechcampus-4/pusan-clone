@@ -22,6 +22,8 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
+from datetime import datetime
+
 
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
@@ -167,11 +169,31 @@ def personal_create_schedule(
     end_time: str = "미정",
     attendees: list[str] | None = None,
 ) -> str:
-    """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
+    """
+    Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다.
+    date는 YYYY-MM-DD 형식, start_time/end_time은 HH:MM 형식으로 입력합니다.
+    end_time은 생략 가능합니다.
+    """
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
     if attendees is None:
         attendees = []
+    
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return _json({"ok": False, "tool_name": "personal_create_schedule", "error": "date 포맷 오류: YYYY-MM-DD 형식이어야 합니다."})
+    
+    try:
+        datetime.strptime(start_time, "%H:%M")
+    except ValueError:
+        return _json({"ok": False, "tool_name": "personal_create_schedule", "error": "start_time 포맷 오류: HH:MM 형식이어야 합니다."})
+    
+    if end_time != "미정":
+        try:
+            datetime.strptime(end_time, "%H:%M")
+        except ValueError:
+            return _json({"ok": False, "tool_name": "personal_create_schedule", "error": "end_time 포맷 오류: HH:MM 형식이어야 합니다."})
 
     new_schedule = {
         "id": _new_personal_id(),
@@ -189,14 +211,27 @@ def personal_create_schedule(
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
-    """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
+    """
+    선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다.
+    date_from/date_to는 YYYY-MM-DD 형식이며 생략 가능합니다. 생략 시 전체 범위 조회입니다.
+    """
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     schedules = _current_session_schedules()
 
     if date_from is not None:
+        try:
+            datetime.strptime(date_from, "%Y-%m-%d")
+        except ValueError:
+            return _json({"ok": False, "tool_name": "personal_list_schedules", "error": "date_from 포맷 오류: YYYY-MM-DD 형식이어야 합니다."})
+        
         schedules = [s for s in schedules if s["date"] >= date_from]
     if date_to is not None:
+        try:
+            datetime.strptime(date_to, "%Y-%m-%d")
+        except ValueError:
+            return _json({"ok": False, "tool_name": "personal_list_schedules", "error": "date_to 포맷 오류: YYYY-MM-DD 형식이어야 합니다."})
+        
         schedules = [s for s in schedules if s["date"] <= date_to]
         
     return _json({"ok": True, "tool_name": "personal_list_schedules", "schedules": schedules})
@@ -231,10 +266,12 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
-        f"오늘 날짜는 {current_app_date_iso()}이다.",
         "너는 Nana야. 사용자의 개인 일정을 관리하는 어시스턴트야.",
+        f"오늘 날짜는 {current_app_date_iso()}이다.",
         "일정 생성/조회/삭제 요청은 반드시 tool을 사용해야 해.",
+        "날짜는 항상 YYYY-MM-DD, 시간은 HH:MM 형식을 사용해.",
         "일정 생성/삭제 요청 뒤에는 반드시 personal_list_schedules를 호출해서 실제 결과를 확인한 후 사용자에게 답하라.",
+        "tool이 ok:False를 반환하면 error 메시지를 확인하고 올바른 요청을 다시 시도해.",
     ]
 
 
