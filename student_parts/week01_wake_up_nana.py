@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -29,9 +30,19 @@ _WEEK01_AGENT: Any | None = None
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
 CHAT_MEMORY_PROMPT = """
 너는 현재 채팅에서만 사용자의 정보를 기억한다.
-사용자가 현재 대화에서 알려준 이름, 선호, 일정 등의 정보는 이후 답변에 반영한다.
 다른 채팅이나 이전 실행의 정보는 알고 있다고 가정하지 않는다.
 현재 대화에 없는 정보가 필요하면 추측하지 말고 사용자에게 짧게 질문한다.
+""".strip()
+
+today = current_app_date_iso()
+
+DATE_TIME_FORMAT_PROMPT = """
+현재 앱 날짜는 {today}이다.
+
+date는 반드시 YYYY-MM-DD 형식으로 넣는다.
+start_time과 end_time은 반드시 HH:MM 24시간 형식으로 넣는다.
+종료 시간이 없으면 end_time은 "미정"으로 둔다.
+"오늘", "내일", "다음 주 화요일" 같은 상대 날짜는 현재 앱 날짜를 기준으로 YYYY-MM-DD로 변환한다.
 """.strip()
 
 
@@ -176,13 +187,30 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
+
+    try:        # 정규식으로 적당히만 검증 (YYYY-MM-DD, HH:MM), 실무용 X
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            raise ValueError
+
+        if not re.fullmatch(r"\d{2}:\d{2}", start_time):
+            raise ValueError
+
+        if end_time != "미정" and not re.fullmatch(r"\d{2}:\d{2}", end_time):
+            raise ValueError
+
+    except ValueError:
+        return _json({
+            "ok": False,
+            "tool_name": "personal_create_schedule",
+            "error": "날짜는 YYYY-MM-DD, 시간은 HH:MM 형식이어야 합니다."
+        })
+
     schedule = {
         "title": title,
         "date": date,
         "start_time": start_time,
         "end_time": end_time,
         "attendees": attendees or [],
-
         "id": _new_personal_id(),
         "created_at": _now_iso(),
         "session_id": current_session_scope(),
@@ -211,8 +239,8 @@ def personal_delete_schedule(schedule_id: str) -> str:
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     before = len(PERSONAL_SCHEDULES)
     
-    DELETE_COND = lambda s: s["id"] == schedule_id and _schedule_scope(s) == current_session_scope()
-    PERSONAL_SCHEDULES[:] = [s for s in PERSONAL_SCHEDULES if not DELETE_COND(s)]
+    delete_cond = lambda s: s["id"] == schedule_id and _schedule_scope(s) == current_session_scope()
+    PERSONAL_SCHEDULES[:] = [s for s in PERSONAL_SCHEDULES if not delete_cond(s)]
     # 삭제 전후 길이 비교로 deleted 값을 만들고 JSON으로 반환합니다.
 
     after = len(PERSONAL_SCHEDULES)
@@ -238,6 +266,8 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        CHAT_MEMORY_PROMPT,
+        DATE_TIME_FORMAT_PROMPT,
     ]
 
 
