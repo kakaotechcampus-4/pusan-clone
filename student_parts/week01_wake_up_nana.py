@@ -283,3 +283,4 @@ def ensure_demo_personal_schedule() -> None:
             "attendees": [],
         }
     )
+ 
