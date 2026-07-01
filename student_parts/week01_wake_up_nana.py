@@ -170,24 +170,93 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    schedule = {
+        # 대화 범위 일정은 DB ID가 없으므로 세션 내 참조용 임시 ID를 사용한다.
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        # 참석자가 생략되어도 tool 응답 스키마가 항상 list로 유지되게 한다.
+        "attendees": attendees or [],
+        "created_at": _now_iso(),
+        "session_id": current_session_scope(),
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_create_schedule",
+            "created_schedule": schedule,
+        }
+    )
 
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
+    # 다른 대화의 개인 일정이 섞이지 않도록 현재 세션의 일정만 먼저 좁힌다.
+    schedules = _current_session_schedules()
 
-    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    # 사용자가 조회 시작일을 지정하면 이전 일정이 응답에 섞이지 않아야 한다.
+    if date_from is not None:
+        schedules = [
+            schedule
+            for schedule in schedules
+            if schedule["date"] >= date_from
+        ]
+
+    # 사용자가 조회 종료일을 지정하면 이후 일정이 응답에 섞이지 않아야 한다.
+    if date_to is not None:
+        schedules = [
+            schedule
+            for schedule in schedules
+            if schedule["date"] <= date_to
+        ]
+
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_list_schedules",
+            "schedules": schedules,
+        }
+    )
+
+
 
 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
-    # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    # 삭제 요청은 현재 대화 안의 개인 일정에만 영향을 줘야 한다.
+    session_id = current_session_scope()
+    # 별도 조회 없이 삭제 성공 여부를 응답해야 하므로 변경 전 개수를 보관한다.
+    before_count = len(PERSONAL_SCHEDULES)
+
+    # 다른 코드가 PERSONAL_SCHEDULES 참조를 들고 있어도 최신 상태를 보게 하려고 리스트 객체는 유지하고 내용만 교체한다.
+    PERSONAL_SCHEDULES[:] = [
+        schedule
+        for schedule in PERSONAL_SCHEDULES
+        # 같은 ID가 다른 대화에 있어도 현재 세션의 대상 일정만 제외한다.
+        if not (
+            schedule.get("id") == schedule_id
+            and _schedule_scope(schedule) == session_id
+        )
+    ]
+
+    # 호출자가 삭제 결과를 바로 판단할 수 있도록 tool 응답에 성공 여부를 담는다.
+    deleted = len(PERSONAL_SCHEDULES) < before_count
+
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_delete_schedule",
+            "schedule_id": schedule_id,
+            "deleted": deleted,
+        }
+    )
+
 
 
 def week01_tools() -> list[Any]:
