@@ -160,7 +160,7 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
 
-@tool("personal_create_schedule", description="개인 일정을 생성한다. date는 yyyy-mm-dd, start_time/end_time은 HH:MM 형식이다. attendees는 이름 목록이다.")
+@tool
 def personal_create_schedule(
     title: str,
     date: str,
@@ -181,11 +181,13 @@ def personal_create_schedule(
         "session_id": current_session_scope(),
     }
     PERSONAL_SCHEDULES.append(schedule)
-    return _json({"schedule": schedule})
+    return _json({"ok": True, 
+                  "created_schedule": schedule,
+                  "tool_name": "personal_create_schedule"})
 
 
 
-@tool("personal_list_schedules", description="선택한 시작일과 종료일 범위에 포함되는 개인 일정을 조회합니다.")
+@tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
@@ -194,10 +196,12 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
         schedules = [s for s in schedules if s["date"] >= date_from]
     if date_to:
         schedules = [s for s in schedules if s["date"] <= date_to]
-    return _json({"schedules": schedules})
+    return _json({"ok": True, 
+                  "schedules": schedules, 
+                  "tool_name": "personal_list_schedules"})
 
 
-@tool("personal_delete_schedule", description="일정 ID에 해당하는 개인 일정을 삭제합니다.")
+@tool
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
@@ -207,8 +211,10 @@ def personal_delete_schedule(schedule_id: str) -> str:
         schedule for schedule in PERSONAL_SCHEDULES if not (schedule["id"] == schedule_id and _schedule_scope(schedule) == session_id)
     ]
     after_count = len(PERSONAL_SCHEDULES)
-    deleted = before_count - after_count
-    return _json({"deleted": deleted})
+    deleted = before_count > after_count
+    return _json({"ok": True, 
+                  "deleted": deleted, 
+                  "tool_name": "personal_delete_schedule"})
 
 
 def week01_tools() -> list[Any]:
@@ -227,7 +233,14 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        "너의 이름은 Nana입니다. 너는 개인 일정 관리 도우미입니다.",
+        f"오늘 날짜는 앱 시작 시 OS에서 읽은 {current_app_date_iso()}입니다.",
+        "사용자가 요청하면 personal_create_schedule을 호출하여 일정을 만듭니다.",
+        "personal_list_schedules을 호출하여 일정을 조회합니다." ,
+        "personal_delete_schedule을 호출하여 삭제할 수 있습니다." ,
+        "일정은 현재 대화 범위에서만 유효하며, 다른 대화 범위의 일정과 혼동되지 않도록 합니다.",
+        "질문은 일정 관련해서 오류가 감지되는 경우에만 하고, 다른 도움이 필요한지는 묻지 않습니다.",
+        "답변은 tool 호출 결과를 사용자가 알기 쉽게 정리해서 전달합니다."
     ]
 
 
