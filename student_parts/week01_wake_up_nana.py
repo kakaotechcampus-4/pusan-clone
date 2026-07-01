@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, TypedDict
 
 from langchain.agents import create_agent
-from langchain.tools import tool
+from langchain.tools import tool, ToolException
 
 from fixed.config import CONFIG
 from fixed.langchain_trace import (
@@ -22,13 +22,21 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
+class Schedule(TypedDict):
+    id: str
+    session_id: str
+    title: str
+    date: str
+    start_time: str
+    end_time: str
+    created_at: str
+    attendees: list[str]
 
-PERSONAL_SCHEDULES: list[dict[str, Any]] = []
+PERSONAL_SCHEDULES: list[Schedule] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
-
+CHAT_MEMORY_PROMPT = "이전에 언급된 일정 제목을 기억하고 활용하여라."
 
 def join_system_prompt(parts: list[str]) -> str:
     """주차별 prompt 조각을 읽기 쉬운 누적 system prompt로 합칩니다."""
@@ -160,7 +168,12 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
 
-@tool
+
+
+@tool(
+    "personal_create_schedule", 
+    description="개인 일정을 생성한다. date는 YYYY-MM-DD, start_time, end_time은 HH:MM 형식이다."
+)
 def personal_create_schedule(
     title: str,
     date: str,
@@ -171,23 +184,81 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    schedule: Schedule = {
+        "id" : _new_personal_id(),
+        "session_id" : current_session_scope(),
+        "title" : title,
+        "date" : date,
+        "start_time" : start_time,
+        "end_time" : end_time,
+        "created_at" : _now_iso(),
+        "attendees" : attendees or [],
+    }
+    
+    PERSONAL_SCHEDULES.append(schedule)
+
+    return _json({
+      "ok" : True,
+      "tool_name" : "personal_create_schedule",
+      "created_schedule" : schedule
+    })
 
 
-@tool
+
+@tool(
+    "personal_list_schedules",
+    description="현재 생성된 개인 일정 목록을 조회한다. date_from과 date_to는 YYYY-MM-DD 형태이다."
+)
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
+    try:
+        date_from is None or datetime.strptime(date_from, "%Y-%m-%d")
+        date_to is None or datetime.strptime(date_to, "%Y-%m-%d")
+    except ValueError as err:
+        raise ToolException(str(err))
+
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = [
+        i for i in PERSONAL_SCHEDULES
+        if (
+            i["session_id"] == current_session_scope() and
+            (date_from is None or i["date"] >= date_from) and
+            (date_to is None or i["date"] <= date_to)
+        )
+    ]
 
+    return _json({
+        "ok" : True,
+        "tool_name" : "personal_list_schedules",
+        "schedules" : schedules
+    })
+    
+personal_list_schedules.handle_tool_error = True
 
-@tool
+@tool(
+    "personal_delete_schedule",
+    description="schedule_id와 일치하는 개인 일정을 삭제한다. schedule_id 예 : personal_e9c8e63704"
+)
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
+    original_length = len(PERSONAL_SCHEDULES)
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    PERSONAL_SCHEDULES[:] = [
+        i for i in PERSONAL_SCHEDULES
+        if (
+            i["id"] != schedule_id or
+            _schedule_scope(i) != current_session_scope() 
+        )
+    ]
+
+    return _json({
+        "ok" : True,
+        "tool_name" : "personal_delete_schedule",
+        "deleted" : original_length != len(PERSONAL_SCHEDULES)
+    })
+
 
 
 def week01_tools() -> list[Any]:
@@ -206,7 +277,9 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
+        CHAT_MEMORY_PROMPT,
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        f"당신은 일정을 관리하는 Agent Nana이다. 사용자의 지시에 따라 필요한 도구를 호출하여 사용하여라. 지금은 {current_app_date_iso()}이다."
     ]
 
 
