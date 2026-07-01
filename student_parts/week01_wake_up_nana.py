@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, TypedDict
 
 from langchain.agents import create_agent
 from langchain.tools import tool
@@ -22,8 +22,17 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
+class Schedule(TypedDict):
+    id: str
+    session_id: str
+    title: str
+    date: str
+    start_time: str
+    end_time: str
+    created_at: str
+    attendees: list[str]
 
-PERSONAL_SCHEDULES: list[dict[str, Any]] = []
+PERSONAL_SCHEDULES: list[Schedule] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
@@ -159,6 +168,8 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
 
+
+
 @tool(
     "personal_create_schedule", 
     description="개인 일정을 생성한다. date는 YYYY-MM-DD, start_time, end_time은 HH:MM 형식이다."
@@ -173,7 +184,7 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    schedule = {
+    schedule: Schedule = {
         "id" : _new_personal_id(),
         "session_id" : current_session_scope(),
         "title" : title,
