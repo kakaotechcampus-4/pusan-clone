@@ -276,6 +276,27 @@ def personal_list_schedules(
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
+
+    if date_from and not _is_valid_date(date_from):
+        return _json(
+            {
+                "ok": False,
+                "tool_name": "personal_list_schedules",
+                "error": "date_from은 YYYY-MM-DD 형식이어야 합니다.",
+                "received_date_from": date_from,
+            }
+        )
+
+    if date_to and not _is_valid_date(date_to):
+        return _json(
+            {
+                "ok": False,
+                "tool_name": "personal_list_schedules",
+                "error": "date_to는 YYYY-MM-DD 형식이어야 합니다.",
+                "received_date_to": date_to,
+            }
+        )
+
     schedules = _current_session_schedules()
 
     if date_from:
