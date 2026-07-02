@@ -31,6 +31,9 @@ _WEEK01_AGENT: Any | None = None
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
 CHAT_MEMORY_PROMPT = f"""
     너는 일정 관리 헬퍼 챗봇이다.
+    오전/오후 언급이 없는 시각은 현재 시각을 기준으로 판단한다. 현재 시각 이전의 시각이면 무조건 다음 가능한 미래 시각으로 해석한다.
+    예: 현재 17:00이고 사용자가 "10시"라고 하면, 오전 10시(10:00)는 이미 지났으므로 오후 10시(22:00)로 잡는다.
+    단, 사용자가 과거 일정임을 명시한 경우는 예외이다.
 """
 
 
@@ -165,9 +168,6 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     사용자의 개인 일정을 생성한다.
     date는 YYYY-MM-DD, start_time, end_time은 HH:MM 형식이다.
     end_time이 명확하지 않으면 1시간으로 잡고, 사용자에게 1시간으로 잡았다고 말한다.
-    오전/오후 언급이 없는 시각은 현재 시각을 기준으로 판단한다. 현재 시각 이전의 시각이면 무조건 다음 가능한 미래 시각으로 해석한다.
-    예: 현재 17:00이고 사용자가 "10시"라고 하면, 오전 10시(10:00)는 이미 지났으므로 오후 10시(22:00)로 잡는다.
-    단, 사용자가 과거 일정임을 명시한 경우는 예외이다.
 """)
 def personal_create_schedule(
     title: str,
@@ -195,7 +195,15 @@ def personal_create_schedule(
     return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
 
 
-@tool("personal_list_schedules", description="개인 일정을 조회한다. date_from, date_to는 YYYY-MM-DD 형식이다. 만약 하나의 날짜만 주어진다면 date_from, date_to를 동일하게 설정한다. 날짜의 정보가 없다면 date_from, date_to를 따로 설정하지 않고 함수를 호출한다.")
+# 명확한 맥락 : '하나의 날짜만'?
+# 하나의 날짜가 주어지는 경우도 멘토님이 말씀하신 것처럼 '부터', '까지', 일반적인 경우 총 3가지로 나누어서 예시를 추가로 알려주었습니다.
+@tool("personal_list_schedules", description="""
+    개인 일정을 조회한다. date_from, date_to는 YYYY-MM-DD 형식이다.
+    만약 "5월 1일에 잡힌 일정 알려줘"처럼 하나의 날짜만 주어진다면 date_from, date_to를 동일하게 설정한다.
+    "5월 1일부터 잡힌 일정 알려줘"처럼 "부터" 또는 "부터"와 의미가 비슷한 접미사와 함께 날짜가 하나만 주어진다면, date_from에만 날짜를 입력한다.
+    "5월 1일까지 잡힌 일정 알려줘"처럼 "까지" 또는 "까지"와 의미가 비슷한 접미사와 함께 날짜가 하나만 주어진다면, date_to에만 날짜를 입력한다. 
+    날짜의 정보가 없다면 date_from, date_to를 따로 설정하지 않고 함수를 호출한다.
+""")
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
@@ -231,12 +239,17 @@ def personal_delete_schedule(schedule_id: str) -> str:
     PERSONAL_SCHEDULES[:] = deleted_schedule_list
     return _json({"deleted": deleted, "deleted_schedule": deleted_schedule})
 
-
+# Falsy/Truthy 문제 구체화 : 빈 배열을 false -> None을 기준으로 false를 판단하게 변경
+# 조금 더 자세히 찾아보니, 배열 또는 리스트 뿐 아니라, set, dict 등도 비어있으면 False로 판단하는 것을 확인했습니다.
+# [[]]처럼 빈 리스트를 품은 리스트는 빈 리스트라는 원소를 가지므로 True,
+# (None,)처럼 None을 가진 튜플도 True,
+# 이 예제들이 재미있어 보이지만, 빈 리스트를 품은 리스트라는 문제는 실제로 코드나 시스템이 커지면 충분히 발생할 수 있는 문제라고 판단해서
+# 이번 기회에 정리했습니다.
+# (다른 예제들도 있었지만 개인적으로는 당연하게 느껴져서 오히려 머리에 담아두는 게 헷갈릴 것 같아서 따로 메모는 하지 않습니다!)
 @tool("personal_change_schedule", description="""
     개인 일정을 변경(옮긴다)한다. personal_delete_schedule과 personal_create_schedule 함수를 두 번 실행하는 방식이다.
     title, date, start_time, end_time, attendees 중 변경하고자 하는 필드의 값을 전달받는다.
     schedule_id는 변경하고자 하는 일정의 ID이다.
-    오전/오후 언급이 없는 시각은 현재 시각을 기준으로 판단한다. 현재 시각 이전의 시각이면 무조건 다음 가능한 미래 시각으로 해석한다.
 """)
 def personal_change_schedule(
     schedule_id: str,
@@ -261,7 +274,7 @@ def personal_change_schedule(
         deleted_schedule["start_time"] = start_time
     if end_time:
         deleted_schedule["end_time"] = end_time
-    if attendees:
+    if attendees is not None:
         deleted_schedule["attendees"] = attendees
 
     created_json = json.loads(personal_create_schedule.invoke({
