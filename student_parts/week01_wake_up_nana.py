@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
@@ -39,6 +40,18 @@ CHAT_MEMORY_PROMPT = """
 
 Week 1 일정은 현재 대화에서만 유지되는 임시 일정입니다.
 """
+
+
+@dataclass
+class PersonalSchedule:
+    id: str
+    title: str
+    date: str
+    start_time: str
+    end_time: str
+    attendees: list[str]
+    created_at: str
+    session_id: str
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -187,16 +200,18 @@ def personal_create_schedule(
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
 
-    schedule = {
-        "id": _new_personal_id(),
-        "title": title,
-        "date": date,
-        "start_time": start_time,
-        "end_time": end_time,
-        "attendees": attendees or [],
-        "created_at": _now_iso(),
-        "session_id": current_session_scope(),
-    }
+    schedule = asdict(
+        PersonalSchedule(
+            id=_new_personal_id(),
+            title=title,
+            date=date,
+            start_time=start_time,
+            end_time=end_time,
+            attendees=attendees or [],
+            created_at=_now_iso(),
+            session_id=current_session_scope(),
+        )
+    )
 
     PERSONAL_SCHEDULES.append(schedule)
 
