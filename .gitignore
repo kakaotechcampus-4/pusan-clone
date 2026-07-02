@@ -13,6 +13,10 @@ data/
 .coverage
 htmlcov/
 
+# Jupyter (course notebooks generate these locally)
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
 .DS_Store
 .vscode/
 .idea/
