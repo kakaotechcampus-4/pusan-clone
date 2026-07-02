@@ -339,6 +339,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
         None,
     )
 
+    before_len = len(PERSONAL_SCHEDULES)
     PERSONAL_SCHEDULES[:] = [
         schedule
         for schedule in PERSONAL_SCHEDULES
@@ -347,12 +348,13 @@ def personal_delete_schedule(schedule_id: str) -> str:
             and _schedule_scope(schedule) == session_id
         )
     ]
+    deleted = len(PERSONAL_SCHEDULES) < before_len
 
     return _json(
         {
             "ok": True,
             "tool_name": "personal_delete_schedule",
-            "deleted": target_schedule is not None,
+            "deleted": deleted,
             "deleted_schedule": target_schedule,
         }
     )
