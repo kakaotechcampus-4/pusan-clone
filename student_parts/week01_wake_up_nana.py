@@ -220,11 +220,17 @@ def personal_list_schedules(
 
     if date_from:
         schedules = [
-            schedule for schedule in schedules if schedule["date"] >= date_from
+            schedule
+            for schedule in schedules
+            if str(schedule.get("date", "")) >= date_from
         ]
 
     if date_to:
-        schedules = [schedule for schedule in schedules if schedule["date"] <= date_to]
+        schedules = [
+            schedule
+            for schedule in schedules
+            if str(schedule.get("date", "")) <= date_to
+        ]
 
     return _json(
         {
