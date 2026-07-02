@@ -180,7 +180,7 @@ def personal_create_schedule(
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요. 
     
-    normalize_attendees = attendees if attendees is not None else []
+    normalize_attendees = attendees or []
     
     schedule = {
         "id" : _new_personal_id(),
@@ -202,9 +202,9 @@ def personal_create_schedule(
                 "created_schedule":schedule
             })
 
-@tool("personal_list_schedules", description = "선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다.")
+@tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
-
+    """"선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다.""""
 
     # 현재 세션의 schedule을 먼저 불러오기 , 딕셔너리 리스트를 받아옴
     schedules = _current_session_schedules()
@@ -214,8 +214,12 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
         for schedule in _current_session_schedules()
         if (not date_from or schedule["date"] >= date_from) and (not date_to or schedule["date"] <= date_to)
     ]
-    return _json({"ok": True, "tool_name": "personal_list_schedules", "schedules": schedules})
-
+    
+    return _json({
+        "ok" : True,
+        "tool_name" : "personal_list_schedules",
+        "schedules" : schedules
+    })
 
 
 @tool
@@ -256,6 +260,9 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
     today = current_app_date_iso()
     return [
+        "당신은 사용자의 일정을 관리하는 비서입니다"
+        "사용자의 요청(생성, 조회, 수정, 삭제) 에 맞는 도구를 선택해 호출하세요!"
+        
         f"오늘 날짜는 {today}입니다. "
         "사용자가 '오늘', '내일', '모레', '이번 주' 같은 상대적 표현을 쓰면 "
         "반드시 이 날짜를 기준으로 정확한 YYYY-MM-DD 형식으로 환산해서 "
