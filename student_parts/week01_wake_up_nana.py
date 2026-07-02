@@ -171,7 +171,12 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
     if attendees is None:
         attendees = []
-
+    
+    # 일정 추가할 때 이미 존재하는 일정이 있는지 판단하여 중복 방지 
+    for test in PERSONAL_SCHEDULES :
+        if(test.get("title")==title and test.get("date")==date and test.get("start_time")==start_time and test.get("session_id")==current_session_scope()):
+            return _json({"ok": False, "tool_name": "personal_create_schedule", "error": "이미 동일한 시간과 제목의 일정이 존재합니다."})
+        
     new_schedule = {
         "id" : _new_personal_id(),
         "title": title,
@@ -216,8 +221,11 @@ def personal_delete_schedule(schedule_id: str) -> str:
         if schedule.get("id") == schedule_id and _schedule_scope(schedule) == session_id:
             deleted_schedule = PERSONAL_SCHEDULES.pop(index)
             break
-    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted_schedule})
-    # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
+    #삭제된 일정이 있는지 확인해서 별도로 처리하는 과정을 통해 항상 true가 되는 문제 방지 
+    if deleted_schedule is not None :
+        return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted_schedule})
+    else :
+        return _json({"ok": False, "tool_name": "personal_delete_schedule", "error": "해당 ID의 일정을 찾을 수 없습니다."})
     ...
 
 
@@ -239,7 +247,11 @@ def week01_prompt_parts() -> list[str]:
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
         "당신은 사용자의 개인 일정을 똑똑하게 관리해 주는 전담 AI 비서 'Nana(나나)'입니다.",
-        
+        "현재 시스템 시간은 2026년 7월 2일 목요일입니다.",
+        "앞으로 사용자가 말하는 모든 시간에 대해 이 시스템 시간을 기준으로 삼아 계산하세요",
+        "년도, 월을 명시하지 않은 경우, 현재 년도(2026년), 월(7월)을 기본값으로 적용하세요",
+        "일정 도구를 호출할 때 date 파라미터는 반드시 YYYY-MM-DD 형식의 문자열로 전달하세요",
+        "start_time 파라미터는 반드시 24시간제 HH:MM 형식으로 전달하세요",        
     ]
 
 
