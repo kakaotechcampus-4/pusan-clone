@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import date, time, datetime
+from typing import TypedDict
 from datetime import datetime
 from typing import Any
 
@@ -27,7 +29,13 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = (
+    "## 답변 생성 지침" 
+    "* 사용자가 등록을 요청한 일정이 사용자 혹은 타인의 신체적/정신적 안전에 위해를 가하는 내용인 경우, Nana는 안전을 최우선으로 고려하여 일정 등록을 거부해야 하며 시스템에도 등록하지 않아야 합니다. \n"
+    "* 어조는 사용자에게 신뢰를 주는 정중한 어조로 유지하세요. \n"
+    "* 단어는 일상적인 단어를 사용하세요. \n"
+    "* 현재 날짜는 "+current_app_date_iso()+"입니다. \n"
+)
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -158,23 +166,45 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     session_id = current_session_scope()
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
+class TodoStruct(TypedDict):
+    id: str
+    title: str
+    date: str
+    start_time: str
+    end_time: str
+    attendees: list[str]
+    created_at: str
+    session_id: str
+    place: str | None
 
 @tool
 def personal_create_schedule(
     title: str,
     date: str,
     start_time: str,
-    end_time: str = "미정",
+    end_time: str | None = None,
     attendees: list[str] | None = None,
+    place: str | None = None
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
+    """
+    다음과 같은 순서로 동작하도록 합니다.
+    1. 사용자가 입력한 내용을 요약하여 title을 만들고, 사용자의 입력에서 date, start_time, end_time, attendees, place를 추출합니다.
+        -> 이 때, date와 title, start_time은 필수 입력값이므로 반드시 존재해야 합니다. 이 셋 중 하나라도 사용자의 명확한 입력이 없을 경우, 임의로 값을 채우지 말고 입력하지 않은 값에 대한 재입력을 요청해주세요.
+        -> date는 YYYY-MM-DD 형식으로 입력되어야 하며, start_time과 end_time은 HH:MM 형식으로 입력되어야 합니다.
+        -> end_time, attendees, place는 선택 입력값이므로 사용자가 입력하지 않은 경우, None으로 처리합니다.
+    2. 추출한 값들을 기반으로 TodoStruct를 생성합니다.
+    3. 생성된 TodoStruct를 PERSONAL_SCHEDULES에 추가합니다.
+    4. 생성된 TodoStruct를 JSON 형식으로 반환합니다.
+    """
 
-    todo = {
+    todo: TodoStruct = {
         "id": _new_personal_id(),
         "title": title,
         "date": date,
         "start_time": start_time,
         "end_time": end_time,
+        "place": place,
         "attendees": attendees or [],
         "created_at": _now_iso(),
         "session_id": current_session_scope(),
@@ -187,10 +217,24 @@ def personal_create_schedule(
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
+    """
+    다음과 같은 순서로 동작하도록 합니다.
+    1. date_from과 date_to를 YYYY-MM-DD 형식으로 입력받습니다.
+        -> date_from과 date_to가 YYYY-MM-DD 형식이 아닌 경우, ValueError를 발생시킵니다.
+    2. PERSONAL_SCHEDULES에서 현재 대화 범위에 속하는 일정만 필터링합니다.
+        -> date_from만 존재할 경우, date_from 이상인 일정만 필터링합니다.
+        -> date_to만 존재할 경우, date_to 이하인 일정만 필터링합니다.
+    3. 필터링된 일정들을 JSON 형식으로 반환합니다.
+    """
+    
     scope_schedules = _current_session_schedules()
     if date_from is not None:
+        if not datetime.strptime(date_from, "%Y-%m-%d"):
+            raise ValueError("날짜 형식이 잘못되었습니다. YYYY-MM-DD 형식으로 입력하여 주세요.")
         scope_schedules = [s for s in scope_schedules if s.get("date", "") >= date_from]
     if date_to is not None:
+        if not datetime.strptime(date_to, "%Y-%m-%d"):
+            raise ValueError("날짜 형식이 잘못되었습니다. YYYY-MM-DD 형식으로 입력하여 주세요.")
         scope_schedules = [s for s in scope_schedules if s.get("date", "") <= date_to]
     return _json({"ok": True, "tool_name": "personal_list_schedules", "schedules": scope_schedules})
 
@@ -199,6 +243,13 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
+    """
+    다음과 같은 순서로 동작하도록 합니다.
+    1. 사용자의 입력과 가장 근접한 일정의 id를 schedule_id로 받습니다.
+    2. PERSONAL_SCHEDULES에서 현재 대화 범위에 속하는 일정 중 schedule_id와 일치하는 일정만 삭제합니다.
+    3. 삭제 전후의 PERSONAL_SCHEDULES 길이를 비교하여, 삭제가 성공했는지 확인합니다.
+    4. 삭제 결과를 JSON 형식으로 반환합니다.
+    """
 
     session_id = current_session_scope()
     before = len(PERSONAL_SCHEDULES)
@@ -206,6 +257,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
         s for s in PERSONAL_SCHEDULES
         if not (s.get("id") == schedule_id and _schedule_scope(s) == session_id)
     ]
+    # 제대로 삭제되었는지 이후 일정표 길이 < 이전 일정표 길이를 비교하여 확인, 전달
     return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": len(PERSONAL_SCHEDULES) < before})
 
 
@@ -225,9 +277,10 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        "Nana는 개인 일정 관리 도우미입니다.",
-        "현재 날짜는 "+current_app_date_iso()+"입니다.",
-        "Nana는 personal_create_schedule, personal_list_schedules, personal_delete_schedule tool을 이용하여 일정을 관리해야 합니다."
+        CHAT_MEMORY_PROMPT,
+        "* Nana는 personal_create_schedule, personal_list_schedules, personal_delete_schedule tool을 이용하여 일정을 관리해야 합니다.",
+        "* 생성 시 사용자가 입력한 일정의 요지를 요약한 다음, 일정 생성 tool을 호출하고 그 결과를 자연어로 정리하여 사용자에게 알려주어야 합니다.",
+        "* 생성/일정 조회 시 사용자가 입력한 장소가 있다면 이를 일정 dict의 place 필드에 포함시킨 후 언급해야 하며, 장소가 없다면 언급하지 않아야 합니다.",
     ]
 
 
