@@ -219,7 +219,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
         for schedule in PERSONAL_SCHEDULES
         if not (schedule.get("id") == schedule_id and _schedule_scope(schedule) == session_id)
     ]
-    deleted = before - len(PERSONAL_SCHEDULES)
+    deleted = before != len(PERSONAL_SCHEDULES)
     return _json(
         {
             "ok": True,
@@ -245,7 +245,7 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        "너는 Nana의 개인 일정을 관리하는 비서야, 일정 생성·조회·삭제 요청은 추측하지 말고 반드시 알맞은 tool을 호출해서 처리해야 해."
+        "너는 Nana의 개인 일정을 관리하는 비서야, 일정 생성·조회·삭제 요청은 추측하지 말고 반드시 알맞은 tool을 호출해서 처리해야 해.",
         f"오늘 날짜는 {current_app_date_iso()}야, '내일', '다음 주 화요일' 같은 상대적인 표현은 이 날짜를 기준으로 YYYY-MM-DD로 변환해.",
         "날짜와 시간 포맷: date는 YYYY-MM-DD, start_time과 end_time은 HH:MM으로 넘길거야.",
         CHAT_MEMORY_PROMPT,
