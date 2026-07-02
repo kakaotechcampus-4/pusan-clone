@@ -22,8 +22,19 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
+from typing import TypedDict
 
-PERSONAL_SCHEDULES: list[dict[str, Any]] = []
+class PersonalSchedule(TypedDict):
+    id: str
+    title: str
+    date: str
+    start_time: str
+    end_time: str
+    attendees: list[str]
+    created_at: str
+    session_id: str
+
+PERSONAL_SCHEDULES: list[PersonalSchedule] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
@@ -66,7 +77,7 @@ def join_system_prompt(parts: list[str]) -> str:
 #      - Week 1 반환에는 structured_request나 sqlite_save를 넣지 않습니다.
 
 @tool
-def personal_create_schedule(title: str, date: str, start_time: str, end_time: str, attendees: list[str] | None = None) -> str:
+def personal_create_schedule(title: str, date: str, start_time: str, end_time: str = '미정', attendees: list[str] | None = None) -> str:
     """Create a personal schedule."""
     schedule = {
         "id": _new_personal_id(),
@@ -80,7 +91,7 @@ def personal_create_schedule(title: str, date: str, start_time: str, end_time: s
     }
     PERSONAL_SCHEDULES.append(schedule)
     # tool은 실행 결과를 JSON 문자열로 돌려주고, agent는 이 값을 보고 최종 답변을 만든다.
-    return json.dumps({"ok": True, "tool_name": personal_create_schedule, "created_schedule": schedule}, ensure_ascii=False)
+    return json.dumps({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule}, ensure_ascii=False)
 
 #   2. personal_list_schedules
 #      - PERSONAL_SCHEDULES를 직접 수정하지 않고 현재 대화 범위의 일정만 조회합니다.
@@ -98,7 +109,7 @@ def personal_list_schedules(date_from: str | None = None, date_to: str| None = N
     if date_to:
         schedules = [s from s in schedules if s["date"] <= date_to]
 
-    return json.dumps({"ok": True, "tool_name": personal_list_schedules, "schedules": schedules}, ensure_ascii=False)
+    return json.dumps({"ok": True, "tool_name": "personal_list_schedules", "schedules": schedules}, ensure_ascii=False)
 
 #   3. personal_delete_schedule
 #      - schedule_id가 일치하면서 현재 대화 범위에 속한 일정만 삭제합니다.
@@ -119,7 +130,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
     after_count = len(PERSONAL_SCHEDULES)
     deleted = before_count != after_count
     return json.dumps(
-        {"ok": deleted, "tool_name":personal_delete_schedule, "deleted":deledted, "schedule_id": schedule_id},
+        {"ok": deleted, "tool_name":"personal_delete_schedule", "deleted":deleted, "schedule_id": schedule_id},
         ensure_ascii=False,
     )
 
@@ -252,7 +263,9 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        "너는 개인 일정 관리 메이트 나나다. "
+        "일정 생성/조회/삭제 요청이 오면 반드시 해당 tool을 호출한 뒤 짧고 친절하게 결과를 안내한다. "
+        "사용자가 '내일', '다음주' 같은 상대적 날짜를 말하면 YYYY-MM-DD 형식으로 변환해서 tool에 전달한다."
     ]
 
 
