@@ -25,6 +25,9 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
+SCHEDULE_DATE_FORMAT = "%Y-%m-%d"
+SCHEDULE_TIME_FORMAT = "%H:%M"
+UNKNOWN_TIME = "미정"
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
 CHAT_MEMORY_PROMPT = """
@@ -71,7 +74,7 @@ def join_system_prompt(parts: list[str]) -> str:
 #   2. personal_list_schedules
 #      - PERSONAL_SCHEDULES를 직접 수정하지 않고 현재 대화 범위의 일정만 조회합니다.
 #      - date_from이 있으면 그 날짜 이상, date_to가 있으면 그 날짜 이하만 남깁니다.
-#      - 날짜 비교는 YYYY-MM-DD 문자열 기준으로 충분합니다.
+#      - 날짜 비교 전 YYYY-MM-DD 형식인지 검증하고 datetime으로 파싱해 비교합니다.
 #      - 반환 JSON에는 ok, tool_name, schedules를 넣습니다.
 #
 #   3. personal_delete_schedule
@@ -144,12 +147,80 @@ def _json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _tool_error(tool_name: str, message: str, field: str | None = None) -> str:
+    payload: dict[str, Any] = {
+        "ok": False,
+        "tool_name": tool_name,
+        "error": message,
+    }
+    if field is not None:
+        payload["field"] = field
+    return _json(payload)
+
+
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="microseconds")
 
 
 def _new_personal_id() -> str:
     return f"personal_{uuid.uuid4().hex[:10]}"
+
+
+def _parse_schedule_date(value: str) -> datetime:
+    parsed = datetime.strptime(value, SCHEDULE_DATE_FORMAT)
+    if parsed.strftime(SCHEDULE_DATE_FORMAT) != value:
+        raise ValueError("date must match YYYY-MM-DD exactly")
+    return parsed
+
+
+def _normalize_date(value: Any, field_name: str, tool_name: str) -> tuple[str | None, str | None]:
+    if not isinstance(value, str):
+        return None, _tool_error(
+            tool_name,
+            f"{field_name}는 YYYY-MM-DD 형식의 문자열이어야 합니다.",
+            field_name,
+        )
+
+    value = value.strip()
+    try:
+        _parse_schedule_date(value)
+    except ValueError:
+        return None, _tool_error(
+            tool_name,
+            f"{field_name}는 YYYY-MM-DD 형식이어야 합니다.",
+            field_name,
+        )
+    return value, None
+
+
+def _normalize_time(value: Any, field_name: str, tool_name: str) -> tuple[str | None, str | None]:
+    if not isinstance(value, str):
+        return None, _tool_error(
+            tool_name,
+            f"{field_name}는 HH:MM 형식이거나 {UNKNOWN_TIME}인 문자열이어야 합니다.",
+            field_name,
+        )
+
+    value = value.strip()
+    if value == UNKNOWN_TIME:
+        return value, None
+
+    try:
+        parsed = datetime.strptime(value, SCHEDULE_TIME_FORMAT)
+    except ValueError:
+        return None, _tool_error(
+            tool_name,
+            f"{field_name}는 HH:MM 형식이거나 {UNKNOWN_TIME}이어야 합니다.",
+            field_name,
+        )
+
+    if parsed.strftime(SCHEDULE_TIME_FORMAT) != value:
+        return None, _tool_error(
+            tool_name,
+            f"{field_name}는 HH:MM 형식이거나 {UNKNOWN_TIME}이어야 합니다.",
+            field_name,
+        )
+    return value, None
 
 
 def _schedule_scope(schedule: dict[str, Any]) -> str:
@@ -174,9 +245,21 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
+    date, error = _normalize_date(date, "date", "personal_create_schedule")
+    if error is not None:
+        return error
+
+    start_time, error = _normalize_time(start_time, "start_time", "personal_create_schedule")
+    if error is not None:
+        return error
+
+    end_time, error = _normalize_time(end_time, "end_time", "personal_create_schedule")
+    if error is not None:
+        return error
+
     schedule = {
         "id": _new_personal_id(),
-        "title": title,
+        "title": title.strip(),
         "date": date,
         "start_time": start_time,
         "end_time": end_time,
@@ -198,20 +281,21 @@ def personal_create_schedule(
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
-    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     schedules = _current_session_schedules()
 
+    # 저장된 date는 생성 시 이미 YYYY-MM-DD로 검증됨. ISO 포맷은 문자열 비교가
+    # 곧 날짜 비교이므로 조회에선 재파싱 없이 문자열로 비교한다.
     if date_from is not None:
-        schedules = [
-            schedule for schedule in schedules
-            if schedule["date"] >= date_from
-        ]
+        date_from, error = _normalize_date(date_from, "date_from", "personal_list_schedules")
+        if error is not None:
+            return error
+        schedules = [s for s in schedules if s["date"] >= date_from]
 
     if date_to is not None:
-        schedules = [
-            schedule for schedule in schedules
-            if schedule["date"] <= date_to
-        ]
+        date_to, error = _normalize_date(date_to, "date_to", "personal_list_schedules")
+        if error is not None:
+            return error
+        schedules = [s for s in schedules if s["date"] <= date_to]
 
     return _json({
         "ok": True,
@@ -235,6 +319,15 @@ def personal_delete_schedule(schedule_id: str) -> str:
     ]
     after_len = len(PERSONAL_SCHEDULES)
     deleted = before_len != after_len
+
+    if not deleted:
+        return _json({
+            "ok": False,
+            "tool_name": "personal_delete_schedule",
+            "deleted": False,
+            "error": "해당 ID의 일정을 찾지 못했습니다.",
+            "field": "schedule_id",
+        })
 
     return _json({
         "ok": True,
@@ -269,12 +362,16 @@ def week01_prompt_parts() -> list[str]:
 1. 사용자가 실제로 일정 생성을 요청하면 personal_create_schedule 도구를 사용하세요.
 2. 사용자가 일정 조회를 요청하면 personal_list_schedules 도구를 사용하세요.
 3. 사용자가 일정 삭제를 요청하면 personal_delete_schedule 도구를 사용하세요.
+4. 사용자가 일정 수정을 요청하면 기존 일정을 삭제한 뒤 수정된 내용으로 다시 생성하세요.
+5. 삭제 또는 수정 대상의 schedule_id를 알 수 없는 경우에는 먼저 personal_list_schedules 도구로 관련 일정을 조회한 뒤 작업을 진행하세요.
 
 [일정 생성 규칙]
 
 - 각 일정은 서로 독립적으로 생성합니다.
-- 이전 일정의 날짜, 시간, 참석자 등의 정보를 새로운 일정에 임의로 사용하지 마세요.
+- 이전 일정의 날짜, 시간, 참석자 등의 정보를 이전 일정과는 무관한 새로운 일정에 임의로 사용하지 마세요.
+- 날짜는 YYYY-MM-DD 형식으로, 시간은 HH:MM 형식으로 도구에 전달하세요.
 - 시간이 지정 되지 않은 일정은 "미정"으로 처리하세요.
+- 도구가 ok: False를 반환하면 내용을 임의로 보정하지 말고 사용자에게 다시 확인하세요.
 
 [상대 날짜 해석]
 
