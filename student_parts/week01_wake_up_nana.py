@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -40,6 +41,10 @@ CHAT_MEMORY_PROMPT = """
 
 Week 1 일정은 현재 대화에서만 유지되는 임시 일정입니다.
 """
+
+_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+_TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
 
 
 @dataclass
@@ -161,6 +166,16 @@ def join_system_prompt(parts: list[str]) -> str:
 #     데모/테스트에서 빈 일정 저장소를 피하려고 기본 임시 일정을 하나 넣습니다. 이미 일정이 있으면 아무 일도 하지 않습니다.
 
 
+def _is_valid_date(value: str) -> bool:
+    return bool(_DATE_PATTERN.match(value))
+
+
+def _is_valid_time(value: str) -> bool:
+    if value == "미정":
+        return True
+    return bool(_TIME_PATTERN.match(value))
+
+
 def _json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
@@ -199,6 +214,36 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
+
+    if not _is_valid_date(date):
+        return _json(
+            {
+                "ok": False,
+                "tool_name": "personal_create_schedule",
+                "error": "date는 YYYY-MM-DD 형식이어야 합니다.",
+                "received_date": date,
+            }
+        )
+
+    if not _is_valid_time(start_time):
+        return _json(
+            {
+                "ok": False,
+                "tool_name": "personal_create_schedule",
+                "error": "start_time은 HH:MM 형식이어야 합니다.",
+                "received_start_time": start_time,
+            }
+        )
+
+    if not _is_valid_time(end_time):
+        return _json(
+            {
+                "ok": False,
+                "tool_name": "personal_create_schedule",
+                "error": "end_time은 HH:MM 형식 또는 미정이어야 합니다.",
+                "received_end_time": end_time,
+            }
+        )
 
     schedule = asdict(
         PersonalSchedule(
@@ -311,8 +356,9 @@ def week01_prompt_parts() -> list[str]:
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
         CHAT_MEMORY_PROMPT,
         f"오늘 날짜는 {current_app_date_iso()}입니다.",
-        "날짜는 가능하면 YYYY-MM-DD 형식으로 tool에 전달하세요.",
-        "시간은 가능하면 HH:MM 형식으로 tool에 전달하세요.",
+        "날짜는 반드시 YYYY-MM-DD 형식으로 tool에 전달하세요.",
+        "시간은 반드시 HH:MM 형식으로 tool에 전달하세요.",
+        "내일, 다음 주 수요일, 아침 9시 같은 자연어 표현은 tool에 그대로 전달하지 말고 반드시 날짜/시간 형식으로 변환하세요.",
     ]
 
 
