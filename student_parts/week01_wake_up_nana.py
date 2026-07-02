@@ -280,10 +280,8 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        CHAT_MEMORY_PROMPT,
         f"오늘 날짜는 {current_app_date_iso()}입니다.",
-        "사용자가 일정을 만들어달라고 하면 personal_create_schedule tool을 사용하세요.",
-        "사용자가 일정을 보여달라고 하면 personal_list_schedules tool을 사용하세요.",
-        "사용자가 일정을 삭제해달라고 하면 personal_delete_schedule tool을 사용하세요.",
         "날짜는 가능하면 YYYY-MM-DD 형식으로 tool에 전달하세요.",
         "시간은 가능하면 HH:MM 형식으로 tool에 전달하세요.",
     ]
