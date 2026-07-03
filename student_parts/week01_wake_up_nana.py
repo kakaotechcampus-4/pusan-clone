@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 from langchain.agents import create_agent
 from langchain.tools import tool
@@ -23,10 +23,20 @@ from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
 
-PERSONAL_SCHEDULES: list[dict[str, Any]] = []
+class PersonalSchedule(TypedDict):
+    id: str
+    title: str
+    date: str
+    start_time: str
+    end_time: str
+    attendees: list[str]
+    created_at: str
+    session_id: NotRequired[str]
+
+
+PERSONAL_SCHEDULES: list[PersonalSchedule] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
 CHAT_MEMORY_PROMPT = ""
 
 
@@ -149,13 +159,13 @@ def _new_personal_id() -> str:
     return f"personal_{uuid.uuid4().hex[:10]}"
 
 
-def _schedule_scope(schedule: dict[str, Any]) -> str:
+def _schedule_scope(schedule: PersonalSchedule) -> str:
     """기존 직접 tool 호출 row는 기본 scope로 취급합니다."""
 
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _current_session_schedules() -> list[dict[str, Any]]:
+def _current_session_schedules() -> list[PersonalSchedule]:
     session_id = current_session_scope()
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
@@ -170,24 +180,44 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    schedule: PersonalSchedule = {
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees if attendees is not None else [],
+        "created_at": _now_iso(),
+        "session_id": current_session_scope(),
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
 
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
-    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = _current_session_schedules()
+    if date_from:
+        schedules = [s for s in schedules if s["date"] >= date_from]
+    if date_to:
+        schedules = [s for s in schedules if s["date"] <= date_to]
+    return _json({"ok": True, "tool_name": "personal_list_schedules", "schedules": schedules})
 
 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
-    # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    session_id = current_session_scope()
+    before = len(PERSONAL_SCHEDULES)
+    PERSONAL_SCHEDULES[:] = [
+        s for s in PERSONAL_SCHEDULES
+        if not (s["id"] == schedule_id and _schedule_scope(s) == session_id)
+    ]
+    deleted = before - len(PERSONAL_SCHEDULES)
+    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted})
 
 
 def week01_tools() -> list[Any]:
@@ -206,7 +236,10 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        f"""너는 개인 일정 관리 비서 Nana다.
+오늘 날짜는 {current_app_date_iso()}이다.
+사용자의 일정 생성·조회·삭제 요청을 personal_create_schedule, personal_list_schedules, personal_delete_schedule 도구로 처리한다.
+도구 호출 결과의 JSON을 확인한 뒤 자연스러운 한국어로 응답한다.""",
     ]
 
 
@@ -231,7 +264,10 @@ def build_week_agent() -> object:
     return build_week01_agent()
 
 
-def list_personal_schedule_dicts(date_from: str | None = None, date_to: str | None = None) -> list[dict[str, Any]]:
+def list_personal_schedule_dicts(
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[PersonalSchedule]:
     """개인 일정 dict 목록이 필요한 내부 코드에서 사용하는 비-도구 헬퍼입니다."""
 
     schedules = json.loads(personal_list_schedules.invoke({"date_from": date_from, "date_to": date_to}))
