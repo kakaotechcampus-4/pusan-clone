@@ -281,6 +281,23 @@ def week01_prompt_parts() -> list[str]:
             "결과를 바탕으로 짧게 답한다. 삭제 요청은 사용자가 말한 schedule_id를 "
             "personal_delete_schedule 도구에 그대로 전달한다."
         ),
+        (
+            "[생성: personal_create_schedule] 필수 입력은 title, date(YYYY-MM-DD), start_time(HH:MM). "
+            "선택 입력은 end_time(없으면 '미정'), attendees(참석자 이름 목록, 없으면 빈 목록). "
+            "일정을 현재 대화의 임시 메모리에 추가하고 {ok, tool_name, created_schedule}을 반환한다. "
+            "created_schedule.id가 이후 삭제에 쓰는 일정 ID다."
+        ),
+        (
+            "[조회: personal_list_schedules] 입력은 모두 선택으로 date_from, date_to(YYYY-MM-DD). "
+            "현재 대화의 일정 중 해당 날짜 범위만 걸러 {ok, tool_name, schedules}를 반환한다. "
+            "schedules가 빈 목록이면 조회된 일정이 없는 것이다."
+        ),
+        (
+            "[삭제: personal_delete_schedule] 필수 입력은 schedule_id. 현재 대화 범위에서 ID가 일치하는 "
+            "일정만 삭제하고 {ok, tool_name, deleted, deleted_schedules, not_found}를 반환한다. "
+            "not_found가 true면 해당 ID의 일정이 없는 것이므로 삭제했다고 답하지 말고 매칭된 일정이 없다고 안내한다. "
+            "사용자가 ID 대신 일정 제목으로 삭제를 요청하면 먼저 personal_list_schedules로 ID를 찾은 뒤 삭제한다."
+        ),
         CHAT_MEMORY_PROMPT,
     ]
 
