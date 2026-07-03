@@ -163,6 +163,12 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
 
+def _matches_schedule(schedule: dict[str, Any], schedule_id: str, session_id: str) -> bool:
+    """일정이 주어진 id와 대화 범위에 모두 일치하는지 판정합니다. 삭제·조회·수정 공통으로 사용합니다."""
+
+    return schedule.get("id") == schedule_id and _schedule_scope(schedule) == session_id
+
+
 @tool
 def personal_create_schedule(
     title: str,
@@ -216,18 +222,27 @@ def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     session_id = current_session_scope()
-    before = len(PERSONAL_SCHEDULES)
-    PERSONAL_SCHEDULES[:] = [
-        schedule
-        for schedule in PERSONAL_SCHEDULES
-        if not (schedule.get("id") == schedule_id and _schedule_scope(schedule) == session_id)
-    ]
-    deleted = before - len(PERSONAL_SCHEDULES)
+
+    deleted_schedules: list[dict[str, Any]] = []
+    kept_schedules: list[dict[str, Any]] = []
+    for schedule in PERSONAL_SCHEDULES:
+        if _matches_schedule(schedule, schedule_id, session_id):
+            deleted_schedules.append(schedule)
+        else:
+            kept_schedules.append(schedule)
+
+    # 리스트 객체 유지를 위해 슬라이스 대입으로 남길 일정만 다시 PERSONAL_SCHEDULES에 넣기.
+    PERSONAL_SCHEDULES[:] = kept_schedules
+
+    # 매칭 0건: 이미 삭제됐거나 잘못 추측한 id일 수 있으므로 not_found로 알림.
+    deleted_count = len(deleted_schedules)
     return _json(
         {
-            "ok": deleted > 0,
+            "ok": deleted_count > 0,
             "tool_name": "personal_delete_schedule",
-            "deleted": deleted,
+            "deleted": deleted_count,
+            "deleted_schedules": deleted_schedules,
+            "not_found": deleted_count == 0,
         }
     )
 
