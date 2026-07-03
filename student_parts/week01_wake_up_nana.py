@@ -171,7 +171,20 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+
+    schedule = {
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees or [], # 참석자 목록
+        "created_at": _now_iso(), # 생성 시각 기록
+        "session_id": current_session_scope() # 대화창 지정..? 
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+
+    return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
 
 
 @tool
@@ -179,7 +192,14 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = _current_session_schedules()
+
+    if date_from:
+        schedules = [s for s in schedules if s["date"] >= date_from]
+    if date_to:
+        schedules = [s for s in schedules if s["date"] <= date_to]
+
+    return _json({"ok": True, "tool_name": "personal_list_schedules", "schedules": schedules})
 
 
 @tool
@@ -187,7 +207,17 @@ def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    session_id = current_session_scope()
+    before = len(PERSONAL_SCHEDULES)
+    
+
+    PERSONAL_SCHEDULES[:] = [
+        s for s in PERSONAL_SCHEDULES
+        if not (_schedule_scope(s) == session_id and s["id"] == schedule_id)
+    ]
+
+    after = len(PERSONAL_SCHEDULES)
+    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": before - after})
 
 
 def week01_tools() -> list[Any]:
@@ -206,7 +236,8 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        f"오늘 날짜는 {current_app_date_iso()}이다.",
+        "일정을 삭제할 때는 반드시 personal_list_schedules를 먼저 호출해 schedule_id를 확인한 뒤 personal_delete_schedule을 호출해라.",
     ]
 
 
