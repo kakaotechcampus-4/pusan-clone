@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 from langchain.agents import create_agent
 from langchain.tools import tool
@@ -23,7 +23,18 @@ from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
 
-PERSONAL_SCHEDULES: list[dict[str, Any]] = []
+class PersonalSchedule(TypedDict):
+    id: str
+    title: str
+    date: str
+    start_time: str
+    end_time: str
+    attendees: list[str]
+    created_at: str
+    session_id: NotRequired[str]
+
+
+PERSONAL_SCHEDULES: list[PersonalSchedule] = []
 _WEEK01_AGENT: Any | None = None
 
 CHAT_MEMORY_PROMPT = ""
@@ -148,13 +159,13 @@ def _new_personal_id() -> str:
     return f"personal_{uuid.uuid4().hex[:10]}"
 
 
-def _schedule_scope(schedule: dict[str, Any]) -> str:
+def _schedule_scope(schedule: PersonalSchedule) -> str:
     """기존 직접 tool 호출 row는 기본 scope로 취급합니다."""
 
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _current_session_schedules() -> list[dict[str, Any]]:
+def _current_session_schedules() -> list[PersonalSchedule]:
     session_id = current_session_scope()
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
@@ -169,7 +180,7 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    schedule = {
+    schedule: PersonalSchedule = {
         "id": _new_personal_id(),
         "title": title,
         "date": date,
@@ -253,7 +264,10 @@ def build_week_agent() -> object:
     return build_week01_agent()
 
 
-def list_personal_schedule_dicts(date_from: str | None = None, date_to: str | None = None) -> list[dict[str, Any]]:
+def list_personal_schedule_dicts(
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[PersonalSchedule]:
     """개인 일정 dict 목록이 필요한 내부 코드에서 사용하는 비-도구 헬퍼입니다."""
 
     schedules = json.loads(personal_list_schedules.invoke({"date_from": date_from, "date_to": date_to}))
