@@ -221,6 +221,20 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
+    # 에이전트가 schedule_id가 아닌 순번 같은 값을 추측해 넘기는 실패를 not_found가 아닌 교정 힌트로 돌려준다.
+    if not schedule_id.startswith("personal_"):
+        return _json(
+            {
+                "ok": False,
+                "tool_name": "personal_delete_schedule",
+                "error": "invalid_schedule_id",
+                "hint": (
+                    "schedule_id는 personal_ 형식의 내부 ID여야 합니다. "
+                    "personal_list_schedules로 실제 id를 조회한 뒤 그 id로 다시 호출하세요."
+                ),
+            }
+        )
+
     session_id = current_session_scope()
 
     deleted_schedules: list[dict[str, Any]] = []
@@ -318,7 +332,9 @@ def week01_prompt_parts() -> list[str]:
             "[삭제 절차] 일정 ID(personal_...)는 내부용이라 사용자에게 보이지 않으니 '2'·'16시' 같은 "
             "표현을 schedule_id로 추측하지 않는다. 삭제 전에는 반드시 먼저 personal_list_schedules로 "
             "현재 대화의 일정과 실제 id를 조회하고, 그 목록에서 사용자가 말한 조건(제목·날짜·시간)에 "
-            "맞는 일정을 직접 골라 그 id로 personal_delete_schedule을 호출한다. 조건에 맞는 일정이 "
+            "맞는 일정을 직접 골라 그 id로 personal_delete_schedule을 호출한다. "
+            "이전 턴에서 조회했더라도 삭제를 실행하는 턴에서 다시 personal_list_schedules를 호출해 "
+            "최신 id를 확보한 뒤 그 id로 삭제한다. 이전 답변에서 보여준 순번이나 번호는 schedule_id가 아니다. 조건에 맞는 일정이 "
             "여럿이라 어느 것인지 모호하면 지우지 말고 후보(제목·날짜·시간)를 보여 주며 어느 것을 지울지 "
             "되묻는다. 삭제 대상이 여러 건이면 각 일정의 id마다 personal_delete_schedule을 한 번씩 나눠 "
             "호출한다('A랑 B 지워줘'는 두 번, '다 지워줘'는 해당하는 모든 id를 각각). 반환의 deleted가 "
