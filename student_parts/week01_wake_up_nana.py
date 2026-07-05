@@ -41,7 +41,7 @@ def join_system_prompt(parts: list[str]) -> str:
 
 
 # [수강생 구현 가이드]
-#
+# 
 # 목표
 #   Nana가 "내 일정 만들어줘/보여줘/지워줘" 같은 개인 일정 요청을 받았을 때
 #   LLM이 직접 고를 수 있는 LangChain tool 3개를 완성합니다. Week 1의 일정은
@@ -171,15 +171,51 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    if attendees is None:
+        attendees = []
+    
+    schedule = {
+        'id': _new_personal_id(),
+        'title': title,
+        'date': date,
+        'start_time': start_time,
+        'end_time': end_time,
+        'attendees': attendees,
+        'created_at': _now_iso(),
+        'session_id': current_session_scope(),
+    }
+
+    PERSONAL_SCHEDULES.append(schedule) #펄스널 스케쥴에 추가 하는 이유는?
+    #강제 에러 발생시 어떻게 처리하는지 확인
+    return _json({   
+        'ok': True, #무조건 ok면 의미없지 않나?
+        'tool_name': 'personal_create_schedule',
+        'created_schedule': schedule,
+    })
+
 
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
-
+    #여러 날에 걸친 일정은 처리 불가
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = _current_session_schedules() #현재 대화방 일정만 [{schedule'},...]형식 으로 반환 
+    result = [] 
+    for s in schedules:
+        if date_from is not None and s['date'] < date_from:
+            continue
+        if date_to is not None and s['date'] > date_to: #단축평가 사용
+            continue
+        
+        result.append(s)
+    
+    return _json({
+        'ok': True, 
+        'tool_name': 'personal_list_schedules', 
+        'schedules': result,
+    })
+
 
 
 @tool
@@ -187,7 +223,25 @@ def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    current_scope = current_session_scope()
+    before = len(PERSONAL_SCHEDULES)
+
+    keep = []
+    for s in PERSONAL_SCHEDULES:
+        #같은 대화방 이고 지우려는 번호이면 건너뛰기
+        if _schedule_scope(s) == current_scope and s['id'] == schedule_id:
+            continue # 건너뛰기 = 삭제
+        keep.append(s)
+    
+    PERSONAL_SCHEDULES[:] = keep 
+    after = len(keep)
+    deleted = before - after
+
+    return _json({
+        'ok': True,
+        'tool_name': 'personal_delete_schedule',
+        'deleted': deleted,
+    })
 
 
 def week01_tools() -> list[Any]:
@@ -207,6 +261,12 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+f"""
+너는 사용자의 개인 일정을 돕는 비서 '나나(Nana)'다.
+오늘 날짜는 {current_app_date_iso()}다. "오늘", "내일", "다음 주 무슨요일" 같은 표현은 이 날짜를 기준으로 계산한다.
+사용자가 시간을 말하지 않으면 일정 만들기 전에 몇 시 인지 되물어라. 만약 모른다고 할시에는 시작시간을 "미정" 으로 저장해라.
+제목·날짜·시간이 모두 같은 경우에만 중복으로 보고 다시 만들지 마라. 시간이 같아도 다른 일정이면 정상적으로 추가하라.
+"""
     ]
 
 
