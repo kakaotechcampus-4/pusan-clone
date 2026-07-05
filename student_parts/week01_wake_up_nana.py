@@ -27,7 +27,10 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = (
+    "이 일정들은 영구 저장소가 아니라 지금 진행 중인 대화에서만 유지되는 임시 메모리다. "
+    "다른 대화에서 만든 일정은 보이지 않으며, 현재 대화에서 만든 일정만 조회·삭제할 수 있다."
+)
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -160,6 +163,12 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
 
+def _matches_schedule(schedule: dict[str, Any], schedule_id: str, session_id: str) -> bool:
+    """일정이 주어진 id와 대화 범위에 모두 일치하는지 판정합니다. 삭제·조회·수정 공통으로 사용합니다."""
+
+    return schedule.get("id") == schedule_id and _schedule_scope(schedule) == session_id
+
+
 @tool
 def personal_create_schedule(
     title: str,
@@ -169,25 +178,87 @@ def personal_create_schedule(
     attendees: list[str] | None = None,
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
-
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    schedule = {
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees or [],
+        "created_at": _now_iso(),
+        "session_id": current_session_scope(),
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_create_schedule",
+            "created_schedule": schedule,
+        }
+    )
 
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
-
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = _current_session_schedules()
+    if date_from is not None:
+        schedules = [schedule for schedule in schedules if schedule.get("date", "") >= date_from]
+    if date_to is not None:
+        schedules = [schedule for schedule in schedules if schedule.get("date", "") <= date_to]
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_list_schedules",
+            "schedules": schedules,
+        }
+    )
 
 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
-
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    # 에이전트가 schedule_id가 아닌 순번 같은 값을 추측해 넘기는 실패를 not_found가 아닌 교정 힌트로 돌려준다.
+    if not schedule_id.startswith("personal_"):
+        return _json(
+            {
+                "ok": False,
+                "tool_name": "personal_delete_schedule",
+                "error": "invalid_schedule_id",
+                "hint": (
+                    "schedule_id는 personal_ 형식의 내부 ID여야 합니다. "
+                    "personal_list_schedules로 실제 id를 조회한 뒤 그 id로 다시 호출하세요."
+                ),
+            }
+        )
+
+    session_id = current_session_scope()
+
+    deleted_schedules: list[dict[str, Any]] = []
+    kept_schedules: list[dict[str, Any]] = []
+    for schedule in PERSONAL_SCHEDULES:
+        if _matches_schedule(schedule, schedule_id, session_id):
+            deleted_schedules.append(schedule)
+        else:
+            kept_schedules.append(schedule)
+
+    # 리스트 객체 유지를 위해 슬라이스 대입으로 남길 일정만 다시 PERSONAL_SCHEDULES에 넣기.
+    PERSONAL_SCHEDULES[:] = kept_schedules
+
+    # 매칭 0건: 이미 삭제됐거나 잘못 추측한 id일 수 있으므로 not_found로 알림.
+    deleted_count = len(deleted_schedules)
+    return _json(
+        {
+            "ok": deleted_count > 0,
+            "tool_name": "personal_delete_schedule",
+            "deleted": deleted_count,
+            "deleted_schedules": deleted_schedules,
+            "not_found": deleted_count == 0,
+        }
+    )
 
 
 def week01_tools() -> list[Any]:
@@ -207,6 +278,70 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        (
+            "너는 카카오 일정 메이트 Nana다. 사용자의 개인 일정 생성·조회·삭제 요청을 돕는다. "
+            f"오늘은 {current_app_date_iso()}이다. '내일', '다음 주 화요일' 같은 상대 날짜는 "
+            "이 날짜를 기준으로 YYYY-MM-DD 형식으로 바꾸고, 시간은 HH:MM 형식으로 정규화한다."
+        ),
+        (
+            "너의 역할은 오직 개인 일정 관리뿐이다. 요리법·일반 상식·코딩·번역처럼 일정과 무관한 "
+            "요청에는 답을 만들어 내지 말고, '저는 일정 관리만 도와드릴 수 있어요'라고 정중히 거절한 뒤 "
+            "도울 수 있는 일정 작업(생성·조회·삭제)을 한 문장으로 안내한다. "
+            "요청에 일정과 무관한 부분과 일정 부분이 섞여 있으면 일정 부분만 처리한다."
+        ),
+        (
+            "일정 생성·조회·삭제가 필요하면 반드시 알맞은 도구"
+            "(personal_create_schedule, personal_list_schedules, personal_delete_schedule)를 호출한 뒤"
+            "그 결과를 바탕으로 짧게 답한다."
+        ),
+        (
+            "핵심 정보가 빠졌거나 모호하면 값을 지어내지 말고 무엇이 필요한지 한 문장으로 되묻는다"
+            "(생성은 제목·날짜, 삭제는 대상 일정). 단, 스스로 정할 수 있는 것은 되묻지 않는다: "
+            "상대 날짜는 직접 정규화하고, end_time 등 기본값은 그대로 두며, 조회에 기간 조건이 "
+            "없으면 전체 조회한다."
+        ),
+        (
+            "사용자에게 일정을 보여줄 때는 항상 다음 한 줄 포맷을 쓴다: "
+            "'- [제목] MM/DD HH:MM ~ HH:MM (참여자: 이름, 이름)'. "
+            "end_time이 '미정'이면 '- [제목] MM/DD HH:MM'으로 쓰고, "
+            "참여자가 없으면 '(참여자: ...)' 부분을 생략한다. 일정 ID는 표기하지 않는다. "
+            "일정이 여러 건이면 일정마다 줄바꿈해서 한 줄씩 나열한다."
+        ),
+        (
+            "[생성: personal_create_schedule] 필수 입력은 title, date(YYYY-MM-DD), start_time(HH:MM). "
+            "선택 입력은 end_time(없으면 '미정'), attendees(참석자 이름 목록, 없으면 빈 목록). "
+            "일정을 현재 대화의 임시 메모리에 추가하고 {ok, tool_name, created_schedule}을 반환한다. "
+            "created_schedule.id가 이후 삭제에 쓰는 일정 ID다. "
+            "성공하면 '일정 생성이 완료되었습니다.' 한 문장 뒤에 생성된 일정 하나를 일정 한 줄 포맷으로, "
+            "여러 건을 만들었으면 각 일정을 줄바꿈해서 보여준다."
+        ),
+        (
+            "[조회: personal_list_schedules] 입력은 모두 선택으로 date_from, date_to(YYYY-MM-DD). "
+            "현재 대화의 일정 중 해당 날짜 범위만 걸러 {ok, tool_name, schedules}를 반환한다. "
+            "결과가 있으면 '일정 조회가 완료되었습니다.' 한 문장 뒤에 schedules의 각 일정을 "
+            "일정 한 줄 포맷으로 날짜·시간 순으로 나열한다. "
+            "schedules가 빈 목록이면 '조회된 일정이 없습니다.'라고만 답한다."
+        ),
+        (
+            "[삭제: personal_delete_schedule] 필수 입력은 schedule_id. 현재 대화 범위에서 ID가 일치하는 "
+            "일정만 삭제하고 {ok, tool_name, deleted, deleted_schedules, not_found}를 반환한다. "
+            "성공하면 '일정 삭제가 완료되었습니다.' 한 문장 뒤에 deleted_schedules의 각 일정을 "
+            "일정 한 줄 포맷으로 나열해 무엇이 지워졌는지 확인시킨다."
+        ),
+        (
+            "[삭제 절차] 일정 ID(personal_...)는 내부용이라 사용자에게 보이지 않으니 '2'·'16시' 같은 "
+            "표현을 schedule_id로 추측하지 않는다. 삭제 전에는 반드시 먼저 personal_list_schedules로 "
+            "현재 대화의 일정과 실제 id를 조회하고, 그 목록에서 사용자가 말한 조건(제목·날짜·시간)에 "
+            "맞는 일정을 직접 골라 그 id로 personal_delete_schedule을 호출한다. "
+            "이전 턴에서 조회했더라도 삭제를 실행하는 턴에서 다시 personal_list_schedules를 호출해 "
+            "최신 id를 확보한 뒤 그 id로 삭제한다. 이전 답변에서 보여준 순번이나 번호는 schedule_id가 아니다. 조건에 맞는 일정이 "
+            "여럿이라 어느 것인지 모호하면 지우지 말고 후보(제목·날짜·시간)를 보여 주며 어느 것을 지울지 "
+            "되묻는다. 삭제 대상이 여러 건이면 각 일정의 id마다 personal_delete_schedule을 한 번씩 나눠 "
+            "호출한다('A랑 B 지워줘'는 두 번, '다 지워줘'는 해당하는 모든 id를 각각). 반환의 deleted가 "
+            "0이거나 not_found가 true면 삭제됐다고 답하지 말고 '해당 일정을 찾지 못했다'고 안내한다. "
+            "'매주 회의' 같은 반복 일정은 단일 건만 지우고 그 사실을 알린 뒤 범위를 되묻는다."
+        ),
+        CHAT_MEMORY_PROMPT,
     ]
 
 
