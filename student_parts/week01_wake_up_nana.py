@@ -27,15 +27,7 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = (
-    "너는 kana agent로 개인일정을 관리할거야."
-    "personal_create_schedule을 사용해서 사용자의 요청을에 따라 일정을 등록해줘."
-    "사용자가 일정 조회를 요청하면, personal_list_schedules를 활용해서 일정을 조회해줘."
-    "사용자가 삭제를 요청하면 아래 지시사항에 따라서 처리해줘."
-    "1. personal list schedules을 활용해서 일정을 조회한다."
-    "2. 사용자가 삭제 요청한 일정의 아이디를 검색한다."
-    "3. personal_delete_schedules를 활용해서 일정을 삭제한다."
-)
+CHAT_MEMORY_PROMPT = ""
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -209,10 +201,11 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     # 현재 세션의 schedule을 먼저 불러오기 , 딕셔너리 리스트를 받아옴
     schedules = _current_session_schedules()
 
+    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     schedules = [
-        schedule
-        for schedule in _current_session_schedules()
-        if (not date_from or schedule["date"] >= date_from) and (not date_to or schedule["date"] <= date_to)
+        s for s in schedules
+        if (date_from is None or s["date"] >= date_from)
+        and (date_to is None or s["date"] <= date_to)
     ]
     
     return _json({
