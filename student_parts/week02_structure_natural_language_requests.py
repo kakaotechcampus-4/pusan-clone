@@ -108,7 +108,7 @@ class StructuredRequest(BaseModel):
     start_time : str | None = Field(default=None, description="HH:MM, 24시간제 형식의 시작 시간")
     end_time : str | None = Field(default=None, description="HH:MM, 24시간제 형식의 종료 시간")
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
-    members : list[str] = Field(default_factory=list, description="group_schedule의 경우, 같이 참여하는 사람들의 이름을 담은 리스트")
+    members : list[str] = Field(default_factory=list, description="같이 참여하는 사람들의 이름을 담은 리스트")
 
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     priority : PriorityLevel | None = Field(default=None, description="todo의 경우 우선순위")
@@ -148,7 +148,7 @@ def extract_schedule_request(query: str) -> str:
     ...
 
 
-def week02_tools() -> list[function]:
+def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
     # TODO: Week 1에서 구현한 tool 목록을 그대로 반환하세요.
@@ -158,12 +158,12 @@ def week02_tools() -> list[function]:
 def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
     # TODO: join_system_prompt(...)로 week02_prompt_parts()와 Week 2 structured_response 최종 답변 규칙을 합치세요.
-    join_system_prompt([
+    return join_system_prompt([
         *week02_prompt_parts(), 
         # TODO: StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 지시하세요.
         "StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담는 형식이 되어야 한다.",
         # TODO: personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채우도록 지시하세요.
-        "personal_create_schedule tool의 결과 JSON의 created_schedule을 읽어 필드를 채워라"
+        "personal_create_schedule tool의 결과 JSON의 created_schedule을 읽어 StructuredRequestBatch의 필드를 채워라"
     ])
 
 def week02_prompt_parts() -> list[str]:
@@ -172,11 +172,11 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        "당신의 역할은 사용자의 요청(비정형 데이터)를 JSON 형식의 정형 데이터로 변환하는 것이다.",
-        f"사용자가 날짜를 명시적으로 밝히지 않았을 경우 오늘 날짜를 참고하여라. 오늘 날짜는 {current_app_date_iso()}이다.",
+        "당신의 역할은 개인 일정 생성 요청에서 personal_create_schedule이 반환한 created_schedule JSON payload를 읽고 response_format=StructuredRequestBatch로 최종 구조화 결과를 출력하는 것이다.",
+        f"오늘 날짜는 {current_app_date_iso()}이다.",
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
-        "사용자의 요청은 자연어, 즉 비정형 데이터이다. 이를 StructuredRequest를 이용하여 구조화하라.",
-        f"사용자의 요청사항에 대한 종류로는 다음과 같은 것들이 있다 : {",".join(RequestKind.__args__)}",
+        "자연어, 즉 비정형 데이터를 StructuredRequest를 이용하여 구조화하라.",
+        f"요청사항에 대한 종류로는 다음과 같은 것들이 있다 : {','.join(RequestKind.__args__)}",
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         "만약 tool JSON을 입력받은 경우, 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어라",
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
