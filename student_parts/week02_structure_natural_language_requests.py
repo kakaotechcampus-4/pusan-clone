@@ -177,6 +177,8 @@ def week02_prompt_parts() -> list[str]:
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
         (
+            f"Week 2 구조화 에이전트다. 상대 날짜 판단 기준일은 {current_app_date_iso()}다."
+            "이 기준일을 바탕으로 '내일', '다음 주' 등의 상대 날짜를 구조화해야 합니다."
             "사용자의 자연어 요청을 StructuredRequest 필드로 구조화한다. "
             "kind는 personal_schedule, group_schedule, todo, reminder, unknown 중 가장 알맞은 값으로 정하고, "
             "title에는 일정/할 일의 핵심 제목을 넣으며, date/start_time/end_time은 확실할 때만 "
@@ -185,18 +187,33 @@ def week02_prompt_parts() -> list[str]:
             "모르는 값은 추측하지 말고 None 또는 빈 목록으로 둔다."
         ),
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
+        (
+            "만약 Week 1 tool Json을 받은 경우 다시 tool을 호출하지 않고 payload를 읽고 structured_response를 만든다."
+        ),
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
+        (
+            "Week 2에서는 절대 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다."
+        )
     ]
 
 
 def build_week02_agent() -> object:
     """Week 2 대화에서 structured_response를 직접 반환하는 단일 LangChain agent를 만듭니다."""
-
     # TODO: CONFIG.has_openai_key가 없으면 RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")를 발생시키세요.
+    if not getattr(CONFIG, "has_openai_key", False):
+        raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     # TODO: 전역 _WEEK02_AGENT를 재사용하고, 아직 없을 때만 create_agent(...)로 새 agent를 만드세요.
-    # TODO: create_agent에는 model=chat_model(), tools=week02_tools(), response_format=StructuredRequestBatch,
-    #       system_prompt=week02_system_prompt()를 연결하세요.
+    global _WEEK02_AGENT
+    # TODO: create_agent에는 model=chat_model(), tools=week02_tools(), response_format=StructuredRequestBatch, system_prompt=week02_system_prompt()를 연결하세요.
+    if _WEEK02_AGENT is None:
+        _WEEK02_AGENT = create_agent(
+            model=chat_model(),
+            tools=week02_tools(),
+            response_format=StructuredRequestBatch,
+            system_prompt=week02_system_prompt()
+        )
     # TODO: 생성 또는 재사용한 _WEEK02_AGENT를 반환하세요.
+    return _WEEK02_AGENT
     ...
 
 
