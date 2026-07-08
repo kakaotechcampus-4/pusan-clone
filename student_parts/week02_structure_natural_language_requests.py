@@ -117,7 +117,7 @@ class StructuredRequest(BaseModel):
     priority: str | None = Field(default=None, description="일정 우선순위")
     reason: str | None = Field(default=None, description="일정 우선순위 판단 근거")
 
-    original_text: str | "" = Field(default=None, description="사용자의 자연어 요청 원문 보존")
+    original_text: str = Field(default="", description="사용자의 자연어 요청 원문 보존")
 
 
 
@@ -128,7 +128,7 @@ class StructuredRequestBatch(BaseModel):
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
     requests: list[StructuredRequest] = Field(default_factory=list, description="요청된 schedule을 리스트로 관리함")
-    base_date: str | None = Field(default_factory=current_app_date_iso, description="상대적인 날짜의 기준이 되는 base 날짜")
+    base_date: str = Field(default_factory=current_app_date_iso(), description="상대적인 날짜의 기준이 되는 base 날짜")
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
@@ -197,9 +197,10 @@ def build_week02_agent() -> object:
     #       system_prompt=week02_system_prompt()를 연결하세요.
     # TODO: 생성 또는 재사용한 _WEEK02_AGENT를 반환하세요.
 
-    if CONFIG.has_openai_key is None:
-        raise RuntimeError(""PROXY_TOKEN이 .env에 필요합니다."")
+    if not CONFIG.has_openai_key:
+        raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     
+    global _WEEK02_AGENT
     if _WEEK02_AGENT is None:
         _WEEK02_AGENT = create_agent(
             model=chat_model(),
