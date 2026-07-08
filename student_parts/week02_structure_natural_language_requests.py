@@ -10,10 +10,15 @@ from pydantic import BaseModel, Field
 from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
-from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_parts, week01_tools
+from student_parts.week01_wake_up_nana import (
+    join_system_prompt,
+    week01_prompt_parts,
+    week01_tools,
+)
 
-
-RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
+RequestKind = Literal[
+    "personal_schedule", "group_schedule", "todo", "reminder", "unknown"
+]
 _WEEK02_AGENT: Any | None = None
 
 
@@ -113,8 +118,12 @@ class StructuredRequest(BaseModel):
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 2차 과제 스키마입니다."""
 
-    requests: list[StructuredRequest] = Field(default_factory=list, description="구조화된 요청 목록")
-    base_date: str = Field(default_factory=current_app_date_iso, description="상대 날짜의 기준 일자(오늘)")
+    requests: list[StructuredRequest] = Field(
+        default_factory=list, description="구조화된 요청 목록"
+    )
+    base_date: str = Field(
+        default_factory=current_app_date_iso, description="상대 날짜의 기준 일자(오늘)"
+    )
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
@@ -140,16 +149,19 @@ def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
     # TODO: Week 1에서 구현한 tool 목록을 그대로 반환하세요.
-    ...
+    return week01_tools()
 
 
 def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
 
-    # TODO: join_system_prompt(...)로 week02_prompt_parts()와 Week 2 structured_response 최종 답변 규칙을 합치세요.
-    # TODO: StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 지시하세요.
-    # TODO: personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채우도록 지시하세요.
-    ...
+    return join_system_prompt(
+        [
+            *week02_prompt_parts(),
+            "StructuredRequestBatch에는 StructuredRequest가 하나라도 requests 목록에 담아야 해.",
+            "personal_create_schedule() tool의 결과 JSON의 created_schedule 필드를 읽어서 StructuredRequest 필드를 채워줘.",
+        ]
+    )
 
 
 def week02_prompt_parts() -> list[str]:
