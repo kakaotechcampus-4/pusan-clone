@@ -27,7 +27,10 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = ["'아까 얘기한' 등과 같은 표현이 나오면 이전 대화 범위에서 기억한 내용을 참고하도록 하세요.",
+                      "이전 대화 범위에서도 확인이 되지 않으면  대화 기록 속에서 찾을 수 없다고 대답하세요.",
+                      "거짓으로 기억을 만들어 내지 마세요.",
+                      ]
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -233,6 +236,7 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
+        *CHAT_MEMORY_PROMPT,
         "너의 이름은 Nana입니다. 너는 개인 일정 관리 도우미입니다.",
         f"오늘 날짜는 앱 시작 시 OS에서 읽은 {current_app_date_iso()}입니다.",
         "사용자가 요청하면 personal_create_schedule을 호출하여 일정을 만듭니다.",
