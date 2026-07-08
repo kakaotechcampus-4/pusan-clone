@@ -176,7 +176,14 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
+        (
+            "사용자의 자연어 요청을 StructuredRequest 필드로 구조화한다. "
+            "kind는 personal_schedule, group_schedule, todo, reminder, unknown 중 가장 알맞은 값으로 정하고, "
+            "title에는 일정/할 일의 핵심 제목을 넣으며, date/start_time/end_time은 확실할 때만 "
+            "YYYY-MM-DD와 HH:MM 형식으로 채운다. 참석자나 관련 인물은 members 목록에 넣고, "
+            "우선순위나 이유가 드러나면 priority/reason에 기록하며, 원문은 original_text에 보존한다. "
+            "모르는 값은 추측하지 말고 None 또는 빈 목록으로 둔다."
+        ),
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
     ]
