@@ -99,8 +99,7 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    kind : RequestKind = Field(description = "일정의 종류 입니다" +
-                                        "personal_schedule/group_schedule/todo/reminder/unknown 이 값중 하나를 가집니다")
+    kind : RequestKind = Field(description = "일정의 종류 입니다 personal_schedule/group_schedule/todo/reminder/unknown 이 값중 하나를 가집니다")
     
     # pydantic은 타입을 엄격하게 검사한다. default로 기본값 자체는 None으로 설정 가능하지만. | None을 적어주지 않으면 타입 자체를 허용하지 않아서 오류가 발생한다 
     title : str | None = Field(default = None, description ="일정의 제목을 저장합니다")
@@ -117,16 +116,15 @@ class StructuredRequest(BaseModel):
     reason : str | None = Field(default = None, description="이 요청을 이렇게 분류/추출한 판단 근거를 저장합니다.")
     
     original_text : str = Field(default = "", description= "사용자의 원문 요청을 저장해둡니다.")
-    ...
+    
 
 
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 2차 과제 스키마입니다."""
 
-    # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
-    # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
-    # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
-    ...
+    requests : list[StructuredRequest] = Field(default_factory = list, description ="StructuredRequest 를 개별로 저장하는 리스트")
+    base_date : str = Field(default_factory = current_app_date_iso, description ="상대 날짜 표현(예 : 내일, 다음 주 화요일)을 절대 날짜로 해석할 때 기준이 되는 오늘 날짜 입니다. YYYY-MM-DD 형식입니다")
+
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
