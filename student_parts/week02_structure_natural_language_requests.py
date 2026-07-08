@@ -127,8 +127,8 @@ class StructuredRequestBatch(BaseModel):
     # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
-    ...
-
+    requests: list[StructuredRequest] = Field(default_factory=list, description="요청된 schedule을 리스트로 관리함")
+    base_date: str | None = Field(default_factory=current_app_date_iso, description="상대적인 날짜의 기준이 되는 base 날짜")
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
