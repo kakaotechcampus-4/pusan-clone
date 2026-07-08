@@ -100,12 +100,22 @@ class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
+    kind : RequestKind = Field(description="")
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
+    title : str | None = Field(default=None, description="")
+    date : str | None = Field(default=None, description="YYYY-MM-DD 형식의 날짜")
+    start_time : str | None = Field(default=None, description="")
+    end_time : str | None = Field(default=None, description="")
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
+    members : list[str] = Field(default_factory=list, description="")
+
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
+    priority : str | None = Field(default=None, description="")
+    reason : str | None = Field(default=None, description="")
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
+    original_text : str = Field(default="", description="")
+
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    ...
 
 
 class StructuredRequestBatch(BaseModel):
