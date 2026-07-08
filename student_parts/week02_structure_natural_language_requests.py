@@ -191,6 +191,10 @@ def week02_prompt_parts() -> list[str]:
         "RequestKind를 결정하는 경우 todo는 참석이 필요한 일정이 아니라, 특정 날짜/시간까지 완료해야 하는 작업입니다. "
         "RequestKind를 결정하는 경우 reminder는 매주, 매달 처럼 특정 주기마다 해야 하는 일 또는 특정 일정 전에 알려달라는 요청입니다. "
         "만약 RequestKind가 앞에서 나온 어느 예시에도 해당되지 않는 경우에는 unknown입니다. "
+        "대화 기록에 있는 이전 턴의 assistant 메시지(StructuredRequestBatch 형태 텍스트)는 이미 완료되어 저장된 과거 결과입니다. "
+        "그 안에 있는 일정/할 일 항목에 대해 personal_create_schedule, personal_list_schedules, personal_delete_schedule 등의 "
+        "tool을 다시 호출하지 않습니다. 이번 턴에서 tool을 호출할지 여부는 오직 가장 최근 사용자 메시지 내용만 보고 판단합니다.",
+
     ]
 
 
