@@ -201,7 +201,20 @@ def week02_system_prompt() -> str:
     # TODO: join_system_prompt(...)로 week02_prompt_parts()와 Week 2 structured_response 최종 답변 규칙을 합치세요.
     # TODO: StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 지시하세요.
     # TODO: personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채우도록 지시하세요.
-    ...
+    return join_system_prompt(
+        [
+            *week02_prompt_parts(),  # week02_prompt_parts는 list[str]를 반환, *로 리스트 펼쳐줘야 함 아니면 이차원 리스트가 돼버린다
+            """
+            최종 답변 규칙:
+            - 최종 응답은 반드시 StructuredRequestBatch structured_response로 반환합니다.
+            - 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담습니다.
+            - base_date에는 현재 앱 기준 날짜를 YYYY-MM-DD 형식으로 담습니다.
+            - personal_create_schedule tool 결과 JSON이 있으면 created_schedule을 읽어 StructuredRequest 필드를 채웁니다.
+            - 확실하지 않은 date/start_time/end_time/title/members/priority는 추측하지 않습니다.
+            """,
+        ]
+    )
+    # week02_prompt_parts 결과 + 최종 답변 규칙을 하나의 문자열로 합치기
 
 
 def week02_prompt_parts() -> list[str]:
