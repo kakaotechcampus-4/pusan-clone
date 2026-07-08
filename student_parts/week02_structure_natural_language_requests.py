@@ -159,9 +159,10 @@ def week02_tools() -> list[Any]:
 def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
     system_prompt = (
-        "자연어를 StructuredRequestBatch로 출력한다",
-        "사용자의 요청이 하나뿐이라도 requests 목록에 StructuredRequest 하나만을 담는다.",
-        "personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채운다."
+        "너는 반드시 자연어를 StructuredRequestBatch의 스키마 규격에 완벽하게 부합하는 json 객체를 출력한다",
+        "사용자의 요청이 하나뿐이라도 반드시 'requests' 필드는 리스트 형태여야 하며 목록에 그 내부에 반드시 StructuredRequest 딱 하나만을 담는다.",
+        "이전에 personal_create_schedule tool 도구 결과 JSON데이터가 온다면, 도구를 재호출하지말고 해당 json 본문의 값으로 created_schedule을 읽어 필드를 채운다.",
+        "중요: 출력이 완료된 후, JSON 객체 바깥에 그 어떤 부연 설명, 마침표, 인사말, 대화용 일반 텍스트, 혹은 ```json 과 같은 마크다운 코드 블록 기호를 단 한 글자도 덧붙이지 마십시오. 중괄호({}) 데이터 출력 후 즉시 통신을 종료해야 파싱 에러가 나지 않습니다."
     )
     # TODO: join_system_prompt(...)로 week02_prompt_parts()와 Week 2 structured_response 최종 답변 규칙을 합치세요.
     # TODO: StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 지시하세요.
