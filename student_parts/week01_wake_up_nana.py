@@ -189,7 +189,25 @@ def personal_create_schedule(
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
-    """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
+
+    # (1차 PR 피드백 수정사항) 기존 docstring이 agent가 명확히 의미를 이해하기 어렵다는 피드백을 받음
+    # -> 대화 범위의 개인 일정 조회, 삭제 전에도 호출하도록 명령 (tool description에도 힌트를 추가하면서 tool 선택 시점에서 올바른 판단을 하도록 유도)
+    # -> 날짜 형식을 지정해주면서 크기 비교가 일정하게 진행될 수 있도록 함
+    # -> JSON에 저장되는 반환값을 명확히 해주어 후속 tool 호출이 안정적이도록 유도함.
+
+    """현재 대화 범위에 있는 Nana의 개인 일정을 조회합니다.
+
+    일정을 삭제하기 전 schedule_id를 확인할 때도 이 tool을 먼저 호출합니다.
+
+    Args:
+        date_from: 조회 시작일 (포함, YYYY-MM-DD 형식). None이면 시작일 제한 없음.
+        date_to:   조회 종료일 (포함, YYYY-MM-DD 형식). None이면 종료일 제한 없음.
+
+    Returns:
+        JSON 문자열. schedules 배열에 각 일정의 id, title, date, start_time, end_time, attendees가 포함됩니다.
+    """
+
+    
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     schedules = _current_session_schedules()
@@ -217,7 +235,17 @@ def personal_delete_schedule(schedule_id: str) -> str:
     ]
 
     after = len(PERSONAL_SCHEDULES)
-    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": before - after})
+
+    # (1차 PR 피드백 수정사항) 삭제 대상이 없을 때에도 모델이 ok만 보고 삭제 성공으로 해석할 여지가 있는 문제 존재
+    # -> deleted_count 변수로 삭제 전후 길이를 비교하여, 삭제 성공 여부에 따라 ok와 message를 다르게 반환하도록 개선
+
+    deleted_count = before - after
+    return _json({
+        "ok": deleted_count > 0,
+        "tool_name": "personal_delete_schedule",
+        "deleted": deleted_count,
+        "message": "삭제 완료." if deleted_count > 0 else "현재 대화 범위에서 해당 일정을 찾지 못했습니다.",
+    })
 
 
 def week01_tools() -> list[Any]:
