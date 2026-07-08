@@ -4,6 +4,7 @@ import json
 from typing import Any, Literal
 
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain.tools import tool
 from pydantic import BaseModel, Field
 
@@ -289,7 +290,9 @@ def build_week02_agent() -> object:
         _WEEK02_AGENT = create_agent(
             model=chat_model(),
             tools=week02_tools(),
-            response_format=StructuredRequestBatch,
+            # 프록시 환경에서 native json_schema 강제가 깨져 ToolStrategy로 구조화한다.
+            # (docs/week02_structured_output_오류해결.md 참고)
+            response_format=ToolStrategy(StructuredRequestBatch),
             system_prompt=week02_system_prompt(),
         )
     # TODO: 생성 또는 재사용한 _WEEK02_AGENT를 반환하세요.
