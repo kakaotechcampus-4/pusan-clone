@@ -99,12 +99,24 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
-    # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
-    # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
+    kind : RequestKind = Field(description = "일정의 종류 입니다" +
+                                        "personal_schedule/group_schedule/todo/reminder/unknown 이 값중 하나를 가집니다")
+    
+    # pydantic은 타입을 엄격하게 검사한다. default로 기본값 자체는 None으로 설정 가능하지만. | None을 적어주지 않으면 타입 자체를 허용하지 않아서 오류가 발생한다 
+    title : str | None = Field(default = None, description ="일정의 제목을 저장합니다")
+    date : str | None = Field(default = None, description ="일정의 날짜 YYYY-MM-DD 형식으로 저장합니다")
+    start_time : str | None = Field(default = None, description ="일정의 시작 시간을 HH:MM 형식으로 저장합니다")
+    end_time : str | None = Field(default = None, description ="일정의 종료 시간을 HH:MM 형식으로 저장합니다")
+    
+    # mutable default argument 문제 발생이 가능, 모든 인스턴스가 하나의 리스트를 공유할 수 있는 문제를 방지하기 위해서 
+    # 클래스를 정의하는 시점에 특정 메모리의 리스트 주소가 할당되기 때문에 공유 문제가 발생한다.
+    # default_factory를 사용하여. 인스턴스 생성 시점에 새 리스트를 만들도록 한다. 
+    members : list[str] = Field(default_factory=list, description ="일정에 참석자명을 저장합니다")
+    
+    priority : str | None = Field(default = None , description ="일정의 우선순위를 저장합니다 ")
+    reason : str | None = Field(default = None, description="이 요청을 이렇게 분류/추출한 판단 근거를 저장합니다.")
+    
+    original_text : str = Field(default = "", description= "사용자의 원문 요청을 저장해둡니다.")
     ...
 
 
