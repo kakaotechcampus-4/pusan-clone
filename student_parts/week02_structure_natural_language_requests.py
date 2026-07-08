@@ -159,11 +159,12 @@ def week02_tools() -> list[Any]:
 def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
 
-    # TODO: join_system_prompt(...)로 week02_prompt_parts()와 Week 2 structured_response 최종 답변 규칙을 합치세요.
-    
-    # TODO: StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 지시하세요.
-    # TODO: personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채우도록 지시하세요.
-    ...
+    structured_response_rules = [
+        "자연어를 StructuredRequestBatch로 출력한다.",
+        "사용자의 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나만을 담는다.",
+        "personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채운다.",
+    ]
+    return join_system_prompt([*week02_prompt_parts(), *structured_response_rules])
 
 
 def week02_prompt_parts() -> list[str]:
