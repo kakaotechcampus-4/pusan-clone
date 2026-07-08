@@ -148,7 +148,7 @@ def extract_schedule_request(query: str) -> str:
     ...
 
 
-def week02_tools() -> list[Any]:
+def week02_tools() -> list[function]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
     # TODO: Week 1에서 구현한 tool 목록을 그대로 반환하세요.
@@ -170,9 +170,15 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
+        "당신의 역할은 사용자의 요청(비정형 데이터)를 JSON 형식의 정형 데이터로 변환하는 것이다.",
+        f"사용자가 날짜를 명시적으로 밝히지 않았을 경우 오늘 날짜를 참고하여라. 오늘 날짜는 {current_app_date_iso()}이다.",
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
+        "사용자의 요청은 자연어, 즉 비정형 데이터이다. 이를 StructuredRequest를 이용하여 구조화하라.",
+        f"사용자의 요청사항에 대한 종류로는 다음과 같은 것들이 있다 : {",".join(RequestKind.__args__)}",
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
+        "만약 tool JSON을 입력받은 경우, 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어라",
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
+        "현재 너의 역할상으로 SQLite 저장, RAG 사용, 외부 멤버 일정 조율을 하지 않음에 주의하여라."
     ]
 
 
