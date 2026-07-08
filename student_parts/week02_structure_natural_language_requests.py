@@ -185,7 +185,12 @@ def week02_prompt_parts() -> list[str]:
         "인사말, 확인 문구, 요약 등 어떤 자연어 텍스트도 JSON 앞뒤에 덧붙이지 않습니다."
         "대화 기록에 이전 턴의 StructuredRequestBatch 결과가 보이더라도, 그것은 과거 턴의 최종 응답일 뿐입니다. "
         "이번 턴에서는 오직 가장 최근 사용자 메시지(및 그에 대한 이번 턴의 tool 결과)만 새로운 StructuredRequestBatch로 만들고, "
-        "이전 턴에 이미 만들어졌던 요청과 절대 합치거나 이어붙이지 않습니다."
+        "이전 턴에 이미 만들어졌던 요청과 절대 합치거나 이어붙이지 않습니다. "
+        "Requestkind를 결정하는 경우 personal_schedule은 다른 사람의 이름 없는 단순 일정입니다. "
+        "Requestkind를 결정하는 경우 group_schedule은 다른 사람의 이름이 포함되어 있거나 팀이름이 포함되어 있는 일정입니다. "
+        "RequestKind를 결정하는 경우 todo는 참석이 필요한 일정이 아니라, 특정 날짜/시간까지 완료해야 하는 작업입니다. "
+        "RequestKind를 결정하는 경우 reminder는 매주, 매달 처럼 특정 주기마다 해야 하는 일 또는 특정 일정 전에 알려달라는 요청입니다. "
+        "만약 RequestKind가 앞에서 나온 어느 예시에도 해당되지 않는 경우에는 unknown입니다. "
     ]
 
 
