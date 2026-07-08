@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain.agents.structured_output import ToolStrategy
 from pydantic import BaseModel, Field
 
 from fixed.config import CONFIG
@@ -185,11 +186,10 @@ def build_week02_agent() -> object:
         _WEEK02_AGENT = create_agent(
             model=chat_model(),
             tools=week02_tools(),
-            response_format=StructuredRequestBatch,
+            response_format=ToolStrategy(StructuredRequestBatch),
             system_prompt=week02_system_prompt(),
         )
     return _WEEK02_AGENT
-    ...
 
 
 def build_week_agent() -> object:
