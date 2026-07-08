@@ -158,7 +158,7 @@ def week02_system_prompt() -> str:
     return join_system_prompt(
         [
             *week02_prompt_parts(),
-            "StructuredRequestBatch에는 StructuredRequest가 하나라도 requests 목록에 담아야 해.",
+            "요청이 하나뿐이어도 StructuredRequestBatch에는 반드시 requests 목록 안에 StructuredRequest로 담아야 해.",
             "personal_create_schedule() tool의 결과 JSON의 created_schedule 필드를 읽어서 StructuredRequest 필드를 채워줘.",
         ]
     )
