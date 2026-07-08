@@ -34,8 +34,6 @@ CHAT_MEMORY_PROMPT = """
 현재 대화에 없는 정보가 필요하면 추측하지 말고 사용자에게 짧게 질문한다.
 """.strip()
 
-today = current_app_date_iso()
-
 DATE_TIME_FORMAT_PROMPT = """
 현재 앱 날짜는 {today}이다.
 
@@ -267,7 +265,7 @@ def week01_prompt_parts() -> list[str]:
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
         CHAT_MEMORY_PROMPT,
-        DATE_TIME_FORMAT_PROMPT,
+        DATE_TIME_FORMAT_PROMPT.format(today=current_app_date_iso()),
     ]
 
 
