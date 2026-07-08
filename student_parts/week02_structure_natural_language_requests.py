@@ -128,7 +128,10 @@ class StructuredRequestBatch(BaseModel):
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
     requests: list[StructuredRequest] = Field(default_factory=list, description="요청된 schedule을 리스트로 관리함")
-    base_date: str = Field(default_factory=current_app_date_iso(), description="상대적인 날짜의 기준이 되는 base 날짜")
+    base_date: str = Field(default_factory=current_app_date_iso, description="상대적인 날짜의 기준이 되는 base 날짜")
+
+    #current_app_date_iso() 하면 함수를 호출해서 리턴값을 넘김
+    # default_factory는 나중에 호출할 함수를 받는 자리이기 때문에 함수 이름을 작성해야 함(호출X)
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
@@ -165,6 +168,7 @@ def week02_system_prompt() -> str:
     prompt_parts = week02_prompt_parts()
     prompt_parts.append("StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 해.")
     prompt_parts.append("personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채워.")
+    prompt_parts.append("요청이 여러 개여도 반드시 StructuredRequestBatch 하나만 출력해. 각 요청을 requests 리스트의 원소로 넣어. JSON 객체를 두 개 이상 출력하지 마.")
 
     return join_system_prompt(prompt_parts)
 
@@ -181,9 +185,11 @@ def week02_prompt_parts() -> list[str]:
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
         f"""- 오늘의 날짜는 {today}야.
-        - 사용자의 자연어 요청은 반드시 클래스 StructuredRequestBatch의 format에 맞게 구조화해.
-        - week1의 tool JSON을 받은 경우, tool을 절대 호출하지 마. 그 대신 payload를 읽어서 structured_response로 만들어.
-        - week2에서는 절대 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지마.
+        - 사용자의 자연어 요청은 반드시 클래스 StructuredRequestBatch의 format에 맞게 구조화해야 한다.
+        - week1의 tool JSON을 받은 경우, tool을 다시 호출하면 안된다. 그 대신 payload를 읽어서 structured_response로 만들어야 한다.
+        - week2에서는 절대로 SQLite 저장하지마
+        - week2에서 RAG를 하지마
+        - week2에서는 절대 외부 멤버 일정 조율을 하지마.
         """
     ]
 
