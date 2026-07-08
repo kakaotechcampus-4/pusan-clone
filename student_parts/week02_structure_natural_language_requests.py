@@ -38,15 +38,6 @@ _WEEK02_AGENT: Any | None = None
 #     Week 2 구조화 지시를 추가합니다.
 #
 # 구현 대상
-#   1. StructuredRequest 스키마
-#      - kind/title/date/start_time/end_time/members/priority/reason/original_text 필드가
-#        이후 Week 3 저장 payload의 기준이 됩니다.
-#      - kind는 RequestKind Literal에 들어 있는 값만 허용합니다.
-#      - 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 붙입니다.
-#
-#   2. StructuredRequestBatch 스키마
-#      - requests에는 StructuredRequest 목록을 담고, 요청이 하나뿐이어도 list 형태를 유지합니다.
-#      - base_date에는 상대 날짜 해석 기준일(current_app_date_iso)을 담습니다.
 #
 #   3. Week 2 agent 세로 슬라이스
 #      - week02_tools()는 Week 1 tool 목록을 그대로 반환합니다.
@@ -95,18 +86,37 @@ _WEEK02_AGENT: Any | None = None
 #     response_format=StructuredRequestBatch가 설정된 agent를 만들고 재사용합니다.
 #     build_week_agent()는 실행기가 찾는 표준 entry point입니다.
 
+#   1. StructuredRequest 스키마
+#      - kind/title/date/start_time/end_time/members/priority/reason/original_text 필드가
+#        이후 Week 3 저장 payload의 기준이 됩니다.
+#      - kind는 RequestKind Literal에 들어 있는 값만 허용합니다.
+#      - 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 붙입니다.
+
+
 
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
+    kind: RequestKind = Field(description="요청의 종류(개인 일정, 그룹 일정, 할 일, 리마인더 등)")
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
+    title: str | None = Field(default=None, description="요청된 주제")
+    date: str | None = Field(default=None, description="예정된 날짜")
+    start_time: str | None = Field(default=None, description="요청의 시작 시간")
+    end_time: str | None = Field(default=None, description="요청의 끝나는 시간")
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
+    members: list[str] = Field(default_factory=list, description="요청된 주제의 참여하는 사람들")
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
+    priority: str | None = Field(default=None, description="요청된 주제의 우선순위")
+    reason: str | None = Field(default=None, description="요청된 주제의 배경 이유")
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
+    original_text: str = Field(default="", description="가공되지 않은 사용자의 원문")
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
     ...
 
+#   2. StructuredRequestBatch 스키마
+#      - requests에는 StructuredRequest 목록을 담고, 요청이 하나뿐이어도 list 형태를 유지합니다.
+#      - base_date에는 상대 날짜 해석 기준일(current_app_date_iso)을 담습니다.
 
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 2차 과제 스키마입니다."""
