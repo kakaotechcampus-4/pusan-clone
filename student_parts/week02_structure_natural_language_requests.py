@@ -16,6 +16,7 @@ from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
 _WEEK02_AGENT: Any | None = None
 
+_UNKNOWN_TIME_MARKERS = ["미정", "모름", "없음", "unknown", ""]
 
 # [2주차 1회차 수강생 구현 가이드]
 #
@@ -101,8 +102,8 @@ class StructuredRequest(BaseModel):
 
     kind : RequestKind = Field(description = 
         "일정의 종류입니다. 다음 중 하나의 값을 가집니다: "
-        "personal_schedule=시작/종료 시각이 있는 개인 일정, "
-        "group_schedule=여러 명이 참가하는 일정, "
+        "personal_schedule=본인 혼자 진행하는 일정으로 다른 참석자 언급이 없는 경우, "
+        "group_schedule=본인 외에 다른 참석자가 한 명이라도 명시된 일정, "
         "todo=제출/완료 등 마감기한이 있는 작업, "
         "reminder=사용자가 잊지 않도록 다시 확인해야 하는 항목, "
         "unknown=위 분류에 명확히 들어가지 않는 경우. "
@@ -112,8 +113,20 @@ class StructuredRequest(BaseModel):
     # pydantic은 타입을 엄격하게 검사한다. default로 기본값 자체는 None으로 설정 가능하지만. | None을 적어주지 않으면 타입 자체를 허용하지 않아서 오류가 발생한다 
     title : str | None = Field(default = None, description ="일정의 제목을 저장합니다")
     date : str | None = Field(default = None, description ="일정의 날짜 YYYY-MM-DD 형식으로 저장합니다")
-    start_time : str | None = Field(default = None, description ="일정의 시작 시간을 HH:MM 형식으로 저장합니다")
-    end_time : str | None = Field(default = None, description ="일정의 종료 시간을 HH:MM 형식으로 저장합니다")
+    start_time : str | None = Field(
+        default = None, 
+        description = (
+            "일정의 시작 시간을 HH:MM 형식으로 저장합니다"
+            "시작 시간이 언급되지 않았으면 '미정' 이나 다른 자연어 텍스트를 사용하지 않고 반드시 None으로 남깁니다"
+            )
+        )
+    end_time : str | None = Field(
+        default = None, 
+        description = (
+            "일정의 종료 시간을 HH:MM 형식으로 저장합니다"
+            "종료 시간이 언급되지 않았으면 '미정' 이나 다른 자연어 텍스트를 사용하지 않고 반드시 None으로 남깁니다"
+        )
+    )
     
     # mutable default argument 문제 발생이 가능, 모든 인스턴스가 하나의 리스트를 공유할 수 있는 문제를 방지하기 위해서 
     # 클래스를 정의하는 시점에 특정 메모리의 리스트 주소가 할당되기 때문에 공유 문제가 발생한다.
@@ -132,6 +145,14 @@ class StructuredRequest(BaseModel):
     @classmethod
     def checkMember(cls,v):
         return [] if v is None else v
+
+    
+    @field_validator("start_time", "end_time", mode="before")
+    @classmethod
+    def checkEndTime(cls,v):
+        if isinstance(v, str) and v.strip() in _UNKNOWN_TIME_MARKERS:
+            return None
+        return v
     
 
 
