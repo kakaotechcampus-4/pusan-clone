@@ -183,6 +183,9 @@ def week02_prompt_parts() -> list[str]:
         "SQLite 저장, RAG, 외부 멤버 일정 조율은 수행하지 않습니다."
         "최종 응답은 반드시 StructuredRequestBatch 구조화 출력(JSON)만 반환합니다. "
         "인사말, 확인 문구, 요약 등 어떤 자연어 텍스트도 JSON 앞뒤에 덧붙이지 않습니다."
+        "대화 기록에 이전 턴의 StructuredRequestBatch 결과가 보이더라도, 그것은 과거 턴의 최종 응답일 뿐입니다. "
+        "이번 턴에서는 오직 가장 최근 사용자 메시지(및 그에 대한 이번 턴의 tool 결과)만 새로운 StructuredRequestBatch로 만들고, "
+        "이전 턴에 이미 만들어졌던 요청과 절대 합치거나 이어붙이지 않습니다."
     ]
 
 
