@@ -114,7 +114,7 @@ class StructuredRequest(BaseModel):
     members : list[str] = Field(default_factory=list, description="같이 참여하는 사람들의 이름을 담은 리스트. 모르면 빈 리스트로 둔다.")
 
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    priority : PriorityLevel | None = Field(default=None, description="todo의 경우 우선순위")
+    priority : PriorityLevel | None = Field(default=None, description="todo의 경우 할 일 우선순위")
     reason : str | None = Field(default=None, description="우선순위를 그렇게 판단한 이유")
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     original_text : str = Field(default="", description="원본 요청 내용을 그대로 담은 값")
@@ -128,7 +128,7 @@ class StructuredRequestBatch(BaseModel):
     # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
     requests : list[StructuredRequest] = Field(default_factory=list, description="사용자의 여러 요구사항을 StructuredRequest[] 형식으로 구조화한 형식")    
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
-    base_date : str = Field(default_factory=current_app_date_iso, description="기준이 되는 날짜")
+    base_date : str = Field(default_factory=current_app_date_iso, description="상대 날짜 해석의 기준이 되는 날짜")
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
 
 
@@ -176,10 +176,11 @@ def week02_prompt_parts() -> list[str]:
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
         "당신의 역할은 개인 일정 생성 요청에서 personal_create_schedule이 반환한 created_schedule JSON payload를 읽고 response_format=StructuredRequestBatch로 최종 구조화 결과를 출력하는 것이다.",
-        f"오늘 날짜는 {current_app_date_iso()}이다.",
+        f"오늘 날짜는 {current_app_date_iso()}이다. 만약 내일, 다음 주와 같은 상대적인 날짜가 입력되었다면 오늘 날짜를 참고하여라.",
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
         "자연어, 즉 비정형 데이터를 StructuredRequest를 이용하여 구조화하라.",
         f"요청사항에 대한 종류로는 다음과 같은 것들이 있다 : {','.join(RequestKind.__args__)}",
+        "불확실한 필드의 내용은 지어내지 말고 기본값으로 두어라.",
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         "만약 tool JSON을 입력받은 경우, 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어라",
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
