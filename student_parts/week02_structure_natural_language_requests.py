@@ -161,7 +161,7 @@ def week02_system_prompt() -> str:
         "개인 일정 생성 요청이라면 personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 StructuredRequest의 필드(title/date/start_time/end_time 등)를 채워"
     ]
     
-    return join_system_prompt([*week02_prompt_parts, *final_answer_rules])
+    return join_system_prompt([*week02_prompt_parts(), *final_answer_rules])
     
     
 
