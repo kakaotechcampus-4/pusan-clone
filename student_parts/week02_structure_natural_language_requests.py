@@ -101,13 +101,13 @@ class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
     kind : RequestKind = Field(description = 
-        "일정의 종류입니다. 다음 중 하나의 값을 가집니다: "
-        "personal_schedule=본인 혼자 진행하는 일정으로 다른 참석자 언급이 없는 경우, "
-        "group_schedule=본인 외에 다른 참석자가 한 명이라도 명시된 일정, "
-        "todo=제출/완료 등 마감기한이 있는 작업, "
-        "reminder=사용자가 잊지 않도록 다시 확인해야 하는 항목, "
-        "unknown=위 분류에 명확히 들어가지 않는 경우. "
-        "시간 범위와 마감기한이 동시에 있으면 마감기한 여부(todo)를 우선합니다."
+        "일정의 종류입니다. 다음 순서로 판단합니다: "
+        "1) 본인 외의 다른 참석자가 한 명이라도 언급되면, 다른 조건과 무관하게 반드시 group_schedule을 선택합니다. "
+        "(예: '철수랑 회의 잡아줘' → 시작/종료 시각이 있어도 personal_schedule이 아니라 group_schedule입니다) "
+        "2) 참석자가 없고 마감기한이 있는 작업이면 todo, "
+        "3) 참석자가 없고 다시 확인해야 하는 항목이면 reminder, "
+        "4) 참석자가 없고 본인이 진행하는 일정이면 personal_schedule, "
+        "5) 위 어디에도 해당하지 않으면 unknown입니다."
     )
     
     # pydantic은 타입을 엄격하게 검사한다. default로 기본값 자체는 None으로 설정 가능하지만. | None을 적어주지 않으면 타입 자체를 허용하지 않아서 오류가 발생한다 
@@ -142,7 +142,14 @@ class StructuredRequest(BaseModel):
             )
         )
     
-    original_text : str = Field(default = "", description= "사용자의 원문 요청을 저장해둡니다.")
+    original_text : str = Field(
+        default = "", 
+        description= (
+            "이 요청과 직접 관련된 사용자 원문 조각을 저장합니다, "
+            "한 문장에 여러 일정이 섞여 있으면 전체 문장이 아니라, "
+            "이 항목에 해당하는 부분만 잘라서 저장합니다."
+            )
+        )
     
     # 타입 검사 전에 필드 validate 진행
     # 참석자를 전달하지 않은 경우 발생하는 문제 대응 
