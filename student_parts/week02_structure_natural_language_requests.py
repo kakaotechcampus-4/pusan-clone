@@ -98,7 +98,7 @@ _WEEK02_AGENT: Any | None = None
 
 
 class StructuredRequest(BaseModel):
-    """사용자의 자연어 요청에 대한 구조화 형식"""
+    """사용자의 자연어 요청을 구조화하는 형식"""
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
     kind : RequestKind = Field(description="내용에 맞는 종류")
@@ -120,14 +120,13 @@ class StructuredRequest(BaseModel):
 
 
 class StructuredRequestBatch(BaseModel):
-    """여러 자연어 의도를 StructuredRequest 목록으로 나누는 2차 과제 스키마입니다."""
+    """자연어에 존재하는 여러 요구사항을 구조화하여 저장하는 형식"""
 
     # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
-    requests : list[StructuredRequest] = Field(default_factory=list, description="")    
+    requests : list[StructuredRequest] = Field(default_factory=list, description="사용자의 여러 요구사항을 StructuredRequest[] 형식으로 구조화한 형식")    
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
-    base_date : str = Field(default_factory=current_app_date_iso, description="")
+    base_date : str = Field(default_factory=current_app_date_iso, description="기준이 되는 날짜")
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
-    ...
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
@@ -153,7 +152,7 @@ def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
     # TODO: Week 1에서 구현한 tool 목록을 그대로 반환하세요.
-    ...
+    return week01_tools()
 
 
 def week02_system_prompt() -> str:
