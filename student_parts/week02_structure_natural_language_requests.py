@@ -116,14 +116,14 @@ class StructuredRequest(BaseModel):
     start_time : str | None = Field(
         default = None, 
         description = (
-            "일정의 시작 시간을 HH:MM 형식으로 저장합니다"
+            "일정의 시작 시간을 HH:MM 형식으로 저장합니다, "
             "시작 시간이 언급되지 않았으면 '미정' 이나 다른 자연어 텍스트를 사용하지 않고 반드시 None으로 남깁니다"
             )
         )
     end_time : str | None = Field(
         default = None, 
         description = (
-            "일정의 종료 시간을 HH:MM 형식으로 저장합니다"
+            "일정의 종료 시간을 HH:MM 형식으로 저장합니다, "
             "종료 시간이 언급되지 않았으면 '미정' 이나 다른 자연어 텍스트를 사용하지 않고 반드시 None으로 남깁니다"
         )
     )
@@ -134,7 +134,13 @@ class StructuredRequest(BaseModel):
     members : list[str] = Field(default_factory=list, description ="일정에 참석자명을 저장합니다")
     
     priority : str | None = Field(default = None , description ="일정의 우선순위를 저장합니다 ")
-    reason : str | None = Field(default = None, description="이 요청을 이렇게 분류/추출한 판단 근거를 저장합니다.")
+    reason : str | None = Field(
+        default = None, 
+        description=(
+            "이 요청을 이렇게 분류/추출한 판단 근거를 저장합니다. "
+            "title/date와 달리 , 확실성과 무관하게 항상 한두 문장으로 채웁니다"
+            )
+        )
     
     original_text : str = Field(default = "", description= "사용자의 원문 요청을 저장해둡니다.")
     
@@ -212,6 +218,7 @@ def week02_prompt_parts() -> list[str]:
         "각 requests 항목은 StructuredRequest 형식(kind/title/date/start_time/end_time/members/priority/reason/original_text)을 따라야 해.",
         "상대적 시간 개념이 사용자 요청에 포함되어 있다면 StructuredRequestBatch의 base_date 필드를 기준으로 계산해",
         "날짜, 시간, 멤버 등 값이 확실하지 않으면 임의로 추측해서 채우지 말고 None(또는 빈 리스트)으로 남겨",
+        "reason은 확실성과 무관하게 항상 채워, 이 요청을 왜 그 kind로 분류했는지 한두 문장으로 근거를 남겨",
         "Week 1 tool(personal_create_schedule 등) 결과 JSON을 이미 받았다면 tool을 재호출하지 말고, 그 payload(created_schedule)를 읽어 StructuredRequestBatch 형식으로 변환해",
         "현재 단계에서는 SQLite 저장, RAG, 외부 멤버 일정 조율은 하지 않을거야",
     ]
