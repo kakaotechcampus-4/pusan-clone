@@ -169,10 +169,14 @@ def week02_system_prompt() -> str:
     return join_system_prompt(
         [
             *week02_prompt_parts(),
-            "최종 답변은 StructuredRequestBatch 형식의 structured_response로 반환한다. "
-            "요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담는다.",
-            "personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 "
-            "title/date/start_time/end_time/members 필드를 채운다.",
+            (
+                "[최종 답변] 최종 답변은 StructuredRequestBatch 형식의 structured_response로 반환한다. "
+                "요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담는다."
+            ),
+            (
+                "[생성 요청 구조화] 개인 일정 생성 요청에서는 personal_create_schedule tool 결과 JSON의 "
+                "created_schedule을 읽어 title/date/start_time/end_time/members 필드를 채운다."
+            ),
         ]
     )
 
@@ -186,14 +190,24 @@ def week02_prompt_parts() -> list[str]:
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
-        f"너는 Week 2 요청 구조화 agent다. 오늘은 {current_app_date_iso()}이며, "
-        "내일/다음 주 화요일 같은 상대 날짜는 이 날짜를 기준으로 해석한다.",
-        "사용자의 자연어 요청을 StructuredRequest 필드"
-        "(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화한다. "
-        "확실하지 않은 값은 억지로 만들지 말고 None 또는 빈 list로 둔다.",
-        "Week 1 tool 결과 JSON을 받은 경우 다시 tool을 호출하지 않고 "
-        "payload를 읽어 structured_response로 만든다.",
-        "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다.",
+        (
+            "너는 Week 2 요청 구조화 agent다. 사용자의 자연어 요청을 일정 앱이 읽을 수 있는 "
+            f"구조화된 요청으로 바꾼다. 오늘은 {current_app_date_iso()}이며, "
+            "이 날짜를 상대 날짜 해석 기준일(base_date)로 사용한다."
+        ),
+        (
+            "[구조화] 자연어 요청을 StructuredRequest 필드"
+            "(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화한다. "
+            "확실하지 않은 값은 되묻거나 억지로 만들지 말고 None 또는 빈 list로 둔다."
+        ),
+        (
+            "[Week 1 tool JSON] Week 1 tool 결과 JSON을 받은 경우 다시 tool을 호출하지 않고 "
+            "payload를 읽어 structured_response로 만든다."
+        ),
+        (
+            "[범위] Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다. "
+            "구조화 결과는 아직 저장하지 않는다."
+        ),
     ]
 
 
@@ -203,9 +217,9 @@ def build_week02_agent() -> object:
     if not CONFIG.has_openai_key:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     # TODO: 전역 _WEEK02_AGENT를 재사용하고, 아직 없을 때만 create_agent(...)로 새 agent를 만드세요.
-    global _WEEK02_AGENT
     # TODO: create_agent에는 model=chat_model(), tools=week02_tools(), response_format=StructuredRequestBatch,
     #       system_prompt=week02_system_prompt()를 연결하세요.
+    global _WEEK02_AGENT
     if _WEEK02_AGENT is None:
         _WEEK02_AGENT = create_agent(
             model=chat_model(),
