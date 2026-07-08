@@ -105,7 +105,20 @@ class StructuredRequest(BaseModel):
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    ...
+    kind: RequestKind = Field(description="일정 종류")
+
+    title: str | None = Field(default=None, description="일정 제목")
+    date: str | None = Field(default=None, description="YYYY-MM-DD")
+    start_time: str | None = Field(default=None, description="HH:MM")
+    end_time: str | None = Field(default=None, description="HH:MM")
+
+    members: list[str] = Field(default_factory=list, description="일정 목록")
+
+    priority: str | None = Field(default=None, description="일정 우선순위")
+    reason: str | None = Field(default=None, description="이유")
+
+    original_text: str | "" = Field(default=None, description="사용자의 자연어 요청")
+
 
 
 class StructuredRequestBatch(BaseModel):
@@ -140,6 +153,7 @@ def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
     # TODO: Week 1에서 구현한 tool 목록을 그대로 반환하세요.
+
     ...
 
 
