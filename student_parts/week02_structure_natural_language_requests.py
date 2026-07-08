@@ -99,13 +99,15 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
-    # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
-    # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    ...
+    kind: RequestKind = Field(description="일정 종류")
+    title: str | None = Field(default=None, description="일정 제목")
+    date: str | None = Field(default=None, description="일정 날짜")
+    start_time: str | None = Field(default=None, description="일정 시작 시간")
+    end_time: str | None = Field(default=None, description="일정 종료 시간")
+    members: list[str] = Field(default_factory=list, description="일정 멤버")
+    priority: str | None = Field(default=None, description="일정 우선순위")
+    reason: str | None = Field(default=None, description="일정 사유")
+    original_text: str = Field(default="", description="사용자 요청 원문")
 
 
 class StructuredRequestBatch(BaseModel):
