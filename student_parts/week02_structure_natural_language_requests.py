@@ -99,22 +99,88 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
-    # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
-    # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    ...
+    kind: RequestKind = Field(
+        description=(
+            "요청 종류. personal_schedule(개인 일정), group_schedule(여러 명이 함께하는 일정), "
+            "todo(할 일), reminder(리마인더/알림), unknown(위 네 가지로 분류하기 어려운 경우) 중 하나만 사용한다."
+        )
+    )
+    title: str | None = Field(
+        default=None,
+        description=(
+            "일정 또는 할 일의 제목. 원문에 등장하는 핵심 명사구를 그대로 활용한다"
+            "(예: '철수랑 여행 일정 잡아줘' -> '철수와 여행'). 제목을 유추할 단서가 전혀 없으면 None으로 둔다."
+        ),
+    )
+    date: str | None = Field(
+        default=None,
+        description=(
+            "일정 날짜. YYYY-MM-DD 형식. '내일', '다음주 화요일' 같은 상대 표현은 "
+            "StructuredRequestBatch.base_date를 오늘 날짜로 삼아 계산한 절대 날짜로 변환한다. "
+            "기준으로 삼을 날짜 표현 자체가 없으면 추측하지 말고 None으로 둔다."
+        ),
+    )
+    start_time: str | None = Field(
+        default=None,
+        description=(
+            "시작 시각. HH:MM 24시간제 형식으로 변환해서 채운다"
+            "(예: '오후 3시' -> '15:00', '아침 9시' -> '09:00'). "
+            "원문에 시각 표현이 전혀 없다면 추측하지 말고 None으로 둔다."
+        ),
+    )
+    end_time: str | None = Field(
+        default=None,
+        description=(
+            "종료 시각. HH:MM 24시간제 형식으로 변환해서 채운다. "
+            "원문에 종료 시각이 없다면 시작 시각으로부터 임의로 추정하지 말고 None으로 둔다."
+        ),
+    )
+    members: list[str] = Field(
+        default_factory=list,
+        description=(
+            "일정에 함께하는 참석자 또는 관련 인물 이름 목록. 요청자 본인('나', '저')은 포함하지 않고 "
+            "상대방/제3자 이름만 담는다. 아무도 언급되지 않았으면 빈 리스트로 둔다."
+        ),
+    )
+    priority: str | None = Field(
+        default=None,
+        description=(
+            "할 일이나 요청의 우선순위. '높음'/'보통'/'낮음' 중 하나로만 채우고, "
+            "원문에 긴급함/중요도를 판단할 단서가 없으면 None으로 둔다."
+        ),
+    )
+    reason: str | None = Field(
+        default=None,
+        description="kind/date/start_time 등 다른 필드 값을 이렇게 판단한 근거를 한두 문장으로 설명한다.",
+    )
+    original_text: str = Field(
+        default="",
+        description=(
+            "이 요청을 추출한 근거가 된 원본 사용자 발화. 한 메시지에 여러 요청이 섞여 있어도 "
+            "메시지 전체를 그대로 넣어도 된다."
+        ),
+    )
 
 
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 2차 과제 스키마입니다."""
 
-    # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
-    # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
-    # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
-    ...
+    requests: list[StructuredRequest] = Field(
+        default_factory=list,
+        description=(
+            "사용자 발화에서 추출한 StructuredRequest 목록. 한 메시지에 요청이 여러 개 섞여 있으면 "
+            "요청 단위로 나누어 각각 하나의 StructuredRequest로 담고, 요청이 하나뿐이어도 "
+            "원소가 하나인 리스트 형태를 유지한다."
+        ),
+    )
+    base_date: str = Field(
+        default_factory=current_app_date_iso,
+        description=(
+            "오늘 날짜(YYYY-MM-DD). 이 값을 출발점 삼아 '내일', '다음주 화요일' 같은 "
+            "상대 날짜 표현을 각 StructuredRequest.date의 절대 날짜로 계산한다. "
+            "값 자체는 자동으로 채워지므로 LLM이 임의로 수정하지 않는다."
+        ),
+    )
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
@@ -139,17 +205,25 @@ def extract_schedule_request(query: str) -> str:
 def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
-    # TODO: Week 1에서 구현한 tool 목록을 그대로 반환하세요.
-    ...
+    return week01_tools()
 
 
 def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
 
-    # TODO: join_system_prompt(...)로 week02_prompt_parts()와 Week 2 structured_response 최종 답변 규칙을 합치세요.
-    # TODO: StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 지시하세요.
-    # TODO: personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채우도록 지시하세요.
-    ...
+    return join_system_prompt(
+        [
+            *week02_prompt_parts(),
+            (
+                "최종 답변은 반드시 StructuredRequestBatch 형식의 structured_response로만 반환한다. "
+                "요청이 하나뿐이어도 requests 목록 안에 StructuredRequest 하나를 담아 리스트 형태를 유지한다."
+            ),
+            (
+                "개인 일정 생성 요청에서는 personal_create_schedule tool을 호출한 뒤, "
+                "그 결과 JSON 안의 created_schedule 필드를 읽어 StructuredRequest의 각 필드를 채운다."
+            ),
+        ]
+    )
 
 
 def week02_prompt_parts() -> list[str]:
@@ -157,22 +231,40 @@ def week02_prompt_parts() -> list[str]:
 
     return [
         *week01_prompt_parts(),
-        # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
-        # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
-        # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
+        (
+            f"너는 사용자의 한국어 자연어 요청을 StructuredRequestBatch로 구조화하는 Week 2 agent다. "
+            f"오늘 날짜는 {current_app_date_iso()}이며, 이 날짜를 base_date로 삼아 "
+            f"'내일', '다음주 화요일' 같은 상대 날짜 표현을 절대 날짜로 계산한다."
+        ),
+        (
+            "사용자 발화 하나에서 요청 종류(kind), 제목(title), 날짜(date), 시작/종료 시각(start_time/end_time), "
+            "참석자(members), 우선순위(priority), 판단 근거(reason), 원문(original_text)을 뽑아 "
+            "StructuredRequest 필드로 구조화한다. 확실하지 않은 값은 추측해서 채우지 말고 None 또는 빈 리스트로 둔다."
+        ),
+        (
+            "Week 1 tool이 반환한 JSON payload(created_schedule 등)를 이미 받았다면 tool을 다시 호출하지 말고, "
+            "그 payload를 읽어 StructuredRequestBatch로 변환하기만 한다. "
+            "이때 created_schedule.end_time이 '미정'처럼 값을 모른다는 뜻의 placeholder라면 "
+            "그 문자열을 그대로 복사하지 말고 StructuredRequest.end_time을 None으로 채운다."
+        ),
+        "Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조율을 하지 않는다.",
     ]
 
 
 def build_week02_agent() -> object:
     """Week 2 대화에서 structured_response를 직접 반환하는 단일 LangChain agent를 만듭니다."""
 
-    # TODO: CONFIG.has_openai_key가 없으면 RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")를 발생시키세요.
-    # TODO: 전역 _WEEK02_AGENT를 재사용하고, 아직 없을 때만 create_agent(...)로 새 agent를 만드세요.
-    # TODO: create_agent에는 model=chat_model(), tools=week02_tools(), response_format=StructuredRequestBatch,
-    #       system_prompt=week02_system_prompt()를 연결하세요.
-    # TODO: 생성 또는 재사용한 _WEEK02_AGENT를 반환하세요.
-    ...
+    if not CONFIG.has_openai_key:
+        raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
+    global _WEEK02_AGENT
+    if _WEEK02_AGENT is None:
+        _WEEK02_AGENT = create_agent(
+            model=chat_model(),
+            tools=week02_tools(),
+            response_format=StructuredRequestBatch,
+            system_prompt=week02_system_prompt(),
+        )
+    return _WEEK02_AGENT
 
 
 def build_week_agent() -> object:
