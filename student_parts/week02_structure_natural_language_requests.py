@@ -98,7 +98,10 @@ _WEEK02_AGENT: Any | None = None
 
 
 class StructuredRequest(BaseModel):
-    """사용자의 자연어 요청을 구조화하는 형식"""
+    """
+    사용자의 자연어 요청을 구조화하는 형식이다.
+    모르는 값을 억지로 만들지 않는 것이 중요하다. 확실하지 않으면 기본값인 None 또는 빈 list로 둔다.
+    """
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
     kind : RequestKind = Field(description="내용에 맞는 종류")
@@ -108,7 +111,7 @@ class StructuredRequest(BaseModel):
     start_time : str | None = Field(default=None, description="HH:MM, 24시간제 형식의 시작 시간")
     end_time : str | None = Field(default=None, description="HH:MM, 24시간제 형식의 종료 시간")
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
-    members : list[str] = Field(default_factory=list, description="같이 참여하는 사람들의 이름을 담은 리스트")
+    members : list[str] = Field(default_factory=list, description="같이 참여하는 사람들의 이름을 담은 리스트. 모르면 빈 리스트로 둔다.")
 
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     priority : PriorityLevel | None = Field(default=None, description="todo의 경우 우선순위")
