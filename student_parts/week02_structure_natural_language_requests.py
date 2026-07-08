@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -102,8 +102,11 @@ class StructuredRequest(BaseModel):
 
     kind : RequestKind = Field(description = 
         "일정의 종류입니다. 다음 순서로 판단합니다: "
-        "1) 본인 외의 다른 참석자가 한 명이라도 언급되면, 다른 조건과 무관하게 반드시 group_schedule을 선택합니다. "
-        "(예: '철수랑 회의 잡아줘' → 시작/종료 시각이 있어도 personal_schedule이 아니라 group_schedule입니다) "
+        "1) 사람 이름 뒤에 '랑', '와', '과', '하고' 같은 조사가 붙어 함께 시간을 보내는 활동으로 "
+        "언급되면 (예: '철수랑 회의', '영희와 저녁') 참석자가 있는 것으로 보고, "
+        "다른 조건과 무관하게 반드시 group_schedule을 선택합니다. "
+        "'~한테', '~에게'처럼 단순히 지시나 메시지를 전달할 대상으로만 언급된 사람은 "
+        "참석자로 보지 않습니다 (예: '철수한테 전달해줘'의 철수는 참석자가 아닙니다). "
         "2) 참석자가 없고 마감기한이 있는 작업이면 todo, "
         "3) 참석자가 없고 다시 확인해야 하는 항목이면 reminder, "
         "4) 참석자가 없고 본인이 진행하는 일정이면 personal_schedule, "
@@ -167,6 +170,13 @@ class StructuredRequest(BaseModel):
             return None
         return v
     
+    @model_validator(mode="after")
+    def enforce_group_scehdule_when_members_present(self):
+        # member 추출 및 빈 리스트 할당이 이제까지 틀린적없음. 
+        # kind 판단 중 personal, group의 판단이 불안정하므로, members 검증을 통해서 kind를 모델 생성 후 검증 
+        if self.members and self.kind == "personal_schedule":
+            self.kind = "group_schedule"
+        return self
 
 
 class StructuredRequestBatch(BaseModel):
