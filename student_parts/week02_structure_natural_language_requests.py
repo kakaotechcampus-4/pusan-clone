@@ -152,7 +152,10 @@ _WEEK02_AGENT: Any | None = None
 
 
 class StructuredRequest(BaseModel):
-    """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
+    """
+    사용자의 자연어 요청을 구조화하는 형식이다.
+    모르는 값을 억지로 만들지 않는 것이 중요하다. 확실하지 않으면 기본값인 None 또는 빈 list로 둔다.
+    """
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
@@ -164,7 +167,7 @@ class StructuredRequest(BaseModel):
 
 
 class StructuredRequestBatch(BaseModel):
-    """여러 자연어 의도를 StructuredRequest 목록으로 나누는 메인과제 스키마입니다."""
+    """자연어에 존재하는 여러 요구사항을 구조화하여 저장하는 형식"""
 
     # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
