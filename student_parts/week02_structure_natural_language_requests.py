@@ -14,6 +14,7 @@ from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_
 
 
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
+PriorityLevel = Literal["high", "medium", "low"]
 _WEEK02_AGENT: Any | None = None
 
 
@@ -97,23 +98,23 @@ _WEEK02_AGENT: Any | None = None
 
 
 class StructuredRequest(BaseModel):
-    """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
+    """사용자의 자연어 요청에 대한 구조화 형식"""
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    kind : RequestKind = Field(description="")
+    kind : RequestKind = Field(description="내용에 맞는 종류")
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    title : str | None = Field(default=None, description="")
+    title : str | None = Field(default=None, description="내용을 잘 표현하는 제목")
     date : str | None = Field(default=None, description="YYYY-MM-DD 형식의 날짜")
-    start_time : str | None = Field(default=None, description="")
-    end_time : str | None = Field(default=None, description="")
+    start_time : str | None = Field(default=None, description="HH:MM, 24시간제 형식의 시작 시간")
+    end_time : str | None = Field(default=None, description="HH:MM, 24시간제 형식의 종료 시간")
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
-    members : list[str] = Field(default_factory=list, description="")
+    members : list[str] = Field(default_factory=list, description="group_schedule의 경우, 같이 참여하는 사람들의 이름을 담은 리스트")
 
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    priority : str | None = Field(default=None, description="")
-    reason : str | None = Field(default=None, description="")
+    priority : PriorityLevel | None = Field(default=None, description="todo의 경우 우선순위")
+    reason : str | None = Field(default=None, description="우선순위를 그렇게 판단한 이유")
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
-    original_text : str = Field(default="", description="")
+    original_text : str = Field(default="", description="원본 요청 내용을 그대로 담은 값")
 
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
 
