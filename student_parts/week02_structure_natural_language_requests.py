@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -99,7 +99,15 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    kind : RequestKind = Field(description = "일정의 종류 입니다 personal_schedule/group_schedule/todo/reminder/unknown 이 값중 하나를 가집니다")
+    kind : RequestKind = Field(description = 
+        "일정의 종류입니다. 다음 중 하나의 값을 가집니다: "
+        "personal_schedule=시작/종료 시각이 있는 개인 일정, "
+        "group_schedule=여러 명이 참가하는 일정, "
+        "todo=제출/완료 등 마감기한이 있는 작업, "
+        "reminder=사용자가 잊지 않도록 다시 확인해야 하는 항목, "
+        "unknown=위 분류에 명확히 들어가지 않는 경우. "
+        "시간 범위와 마감기한이 동시에 있으면 마감기한 여부(todo)를 우선합니다."
+    )
     
     # pydantic은 타입을 엄격하게 검사한다. default로 기본값 자체는 None으로 설정 가능하지만. | None을 적어주지 않으면 타입 자체를 허용하지 않아서 오류가 발생한다 
     title : str | None = Field(default = None, description ="일정의 제목을 저장합니다")
@@ -116,6 +124,14 @@ class StructuredRequest(BaseModel):
     reason : str | None = Field(default = None, description="이 요청을 이렇게 분류/추출한 판단 근거를 저장합니다.")
     
     original_text : str = Field(default = "", description= "사용자의 원문 요청을 저장해둡니다.")
+    
+    # 타입 검사 전에 필드 validate 진행
+    # 참석자를 전달하지 않은 경우 발생하는 문제 대응 
+    # requests.1.members Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    @field_validator("members", mode ="before")
+    @classmethod
+    def checkMember(cls,v):
+        return [] if v is None else v
     
 
 
