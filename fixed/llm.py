@@ -17,4 +17,8 @@ def chat_model(*, temperature: float = 0) -> ChatOpenAI:
         api_key=CONFIG.proxy_token,
         base_url=CONFIG.chat_proxy_url,
         temperature=temperature,
+        # 프록시 무응답 시 SDK 기본(600초 + 재시도 2회)만큼 pending에 갇히지 않게 제한한다.
+        # (docs/week02_프록시_pending_오류해결.md 참고)
+        timeout=60,
+        max_retries=1,
     )
