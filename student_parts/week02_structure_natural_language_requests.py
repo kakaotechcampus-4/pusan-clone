@@ -295,6 +295,38 @@ def week02_prompt_parts() -> list[str]:
             "[범위] Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다. "
             "구조화 결과는 아직 저장하지 않는다."
         ),
+        # Week 1 답변 포맷 지시가 ToolStrategy 강제와 충돌해 같은 tool을 반복 호출하는
+        # 문제를 막는다. (docs/week02_프롬프트충돌_중복호출_오류해결.md 참고)
+        (
+            "[Week 1 답변 규칙 무효화] Week 1의 '일정 한 줄 포맷' 답변 규칙과 "
+            "'~가 완료되었습니다' 문장 규칙은 Week 2에서는 적용하지 않는다. "
+            "최종 답변은 텍스트가 아니라 항상 StructuredRequestBatch 구조화 결과다."
+        ),
+        (
+            "[tool 호출 규칙] 같은 tool을 같은 인자로 두 번 이상 호출하지 않는다. "
+            "조회는 한 번이면 충분하며, tool 결과를 받았으면 바로 구조화 결과를 반환한다."
+        ),
+        (
+            "[조회 요청 구조화] 조회 요청 한 문장은 requests에 StructuredRequest 하나로만 "
+            "구조화한다. 필드에는 사용자가 말한 조회 조건만 담는다: date는 요청한 날짜, "
+            "title은 사용자가 특정 제목을 말했을 때만 채우고, start_time 등 말하지 않은 값은 "
+            "None으로 둔다. personal_list_schedules 결과의 일정들을 requests에 옮겨 담지 "
+            "않는다. 조회 결과가 여러 건이어도 requests는 요청 1건이다. "
+            "예: '오늘 전체 회의 알려줘' → requests에 {kind: personal_schedule, "
+            "date: 오늘 날짜, title: None, start_time: None, end_time: None, "
+            "original_text: '오늘 전체 회의 알려줘', reason: '오늘 개인 일정 조회 요청'} "
+            "하나만 담는다. 조회 결과에 '디자인 회의 09:00'이 있어도 "
+            "title과 start_time은 None 그대로다."
+        ),
+        (
+            "[원문 보존] 요청 종류와 관계없이 모든 StructuredRequest의 original_text에는 "
+            "사용자 입력 문장을 그대로 넣고, reason에는 구조화 근거를 한 문장으로 채운다. "
+            "이 두 필드는 비워 두지 않는다."
+        ),
+        (
+            "[end_time 정규화] StructuredRequest의 end_time에는 HH:MM 또는 None만 쓴다. "
+            "created_schedule의 end_time이 '미정'이면 StructuredRequest에는 None으로 담는다."
+        ),
     ]
 
 
