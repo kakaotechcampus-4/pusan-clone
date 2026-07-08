@@ -117,23 +117,99 @@ return _WEEK02_AGENT
 
 `build_week_agent()`는 이미 구현되어 있다(실행기가 찾는 표준 entry point).
 
-## 구현하지 않는 것 (예약 함수)
+※ 실제 구현에서는 프록시 환경에서 native json_schema 강제가 깨져
+`response_format=ToolStrategy(StructuredRequestBatch)`를 사용한다
+(`docs/week02_structured_output_오류해결.md` 참고).
+
+---
+
+## 추가 과제 — Week 3 이상에서 재사용하는 구조화 bridge
 
 `_coerce_structured_request`, `extract_structured_request`, `extract_schedule_request`(@tool)는
-이후 회차에서 사용할 예약 함수이므로 `...` 그대로 둔다.
+Week 2 agent에 공개되는 tool은 아니고, Week 3 이상 저장/조율 흐름이 재사용하는 bridge다.
+파일 주석의 "추가 과제 구현 대상"에 해당하며, 아래 순서로 구현한다.
+
+### 작업 7. `_coerce_structured_request()` (193행)
+
+LangChain structured output 결과를 `StructuredRequest` 하나로 정규화한다.
+
+- `value`가 이미 `StructuredRequest`이면 그대로 반환한다.
+- `dict`이면 `StructuredRequest.model_validate(...)`로 검증해 반환한다.
+- 그 외 타입이면 `RuntimeError`를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 않는다.
+
+```python
+if isinstance(value, StructuredRequest):
+    return value
+if isinstance(value, dict):
+    return StructuredRequest.model_validate(value)
+raise RuntimeError(f"StructuredRequest로 해석할 수 없는 LLM 응답입니다: {type(value).__name__}")
+```
+
+### 작업 8. `extract_structured_request()` (202행)
+
+agent loop를 새로 만들지 않고 `with_structured_output`만으로
+자연어 또는 JSON 문자열 하나를 `StructuredRequest`로 구조화한다.
+
+- `chat_model().with_structured_output(StructuredRequest, method="function_calling")`으로
+  structured LLM을 만든다. `method="function_calling"`은 tool calling 기반이라
+  `ToolStrategy`와 같은 이유로 프록시 환경에서도 안전하다
+  (`docs/week02_structured_output_오류해결.md` 참고).
+- system 메시지에는 `join_system_prompt(week02_prompt_parts())`,
+  user 메시지에는 `text`를 넣어 invoke한다.
+- 결과를 `_coerce_structured_request(...)`로 정규화해 반환한다.
+
+```python
+structured_llm = chat_model().with_structured_output(StructuredRequest, method="function_calling")
+result = structured_llm.invoke(
+    [
+        ("system", join_system_prompt(week02_prompt_parts())),
+        ("user", text),
+    ]
+)
+return _coerce_structured_request(result)
+```
+
+### 작업 9. `extract_schedule_request()` (211행)
+
+Week 3 이상 agent가 저장/조율 전에 호출하는 `@tool`.
+Week 1 tool들이 `ok`/`tool_name`을 담은 dict를 `ensure_ascii=False` JSON 문자열로
+반환하는 규칙(`_json(...)` 패턴)을 그대로 따른다.
+
+- `extract_structured_request(query)`로 자연어 또는 Week 1 JSON payload를 구조화한다.
+- `ok`/`tool_name`/`base_date`/`structured_request` 키를 가진 dict를 만든다.
+  `structured_request`에는 `model_dump()` 결과, `base_date`에는 `current_app_date_iso()`를 넣는다.
+- `json.dumps(..., ensure_ascii=False)`로 JSON 문자열을 반환한다.
+
+```python
+structured_request = extract_structured_request(query)
+return json.dumps(
+    {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": current_app_date_iso(),
+        "structured_request": structured_request.model_dump(),
+    },
+    ensure_ascii=False,
+)
+```
 
 ---
 
 ## 작업 순서 요약
 
-1. `StructuredRequest` 필드 9개 선언 + 한국어 description
-2. `StructuredRequestBatch` 필드 2개 선언 (`requests`, `base_date`)
-3. `week02_tools()` → `week01_tools()` 그대로 반환
-4. `week02_prompt_parts()` → Week 2 지시 4조각 추가
-5. `week02_system_prompt()` → `join_system_prompt(...)`로 합치기
-6. `build_week02_agent()` → Week 1 패턴 + `response_format=StructuredRequestBatch`
+1. `StructuredRequest` 필드 9개 선언 + 한국어 description ✅
+2. `StructuredRequestBatch` 필드 2개 선언 (`requests`, `base_date`) ✅
+3. `week02_tools()` → `week01_tools()` 그대로 반환 ✅
+4. `week02_prompt_parts()` → Week 2 지시 4조각 추가 ✅
+5. `week02_system_prompt()` → `join_system_prompt(...)`로 합치기 ✅
+6. `build_week02_agent()` → Week 1 패턴 + `response_format=ToolStrategy(StructuredRequestBatch)` ✅
+7. `_coerce_structured_request()` → StructuredRequest/dict 정규화, 그 외 `RuntimeError` ✅
+8. `extract_structured_request()` → `with_structured_output(..., method="function_calling")` bridge ✅
+9. `extract_schedule_request()` → `ok`/`tool_name`/`base_date`/`structured_request` JSON 반환 ✅
 
 ## 검증 방법
+
+### 메인과제
 
 ```bash
 ./run.sh --week2
@@ -145,3 +221,16 @@ return _WEEK02_AGENT
 - `kind == "personal_schedule"`, `date`/`start_time`이 기준일 대비 올바르게 해석됐는지,
   `members`에 "철수"가 들어갔는지 확인.
 - 확실하지 않은 필드가 `None`/빈 list로 남는지도 확인 (예: "언젠가 책 읽기" → date는 None).
+
+### 추가 과제
+
+- Week 3을 실행한 뒤 trace에서 `extract_schedule_request` 이후
+  `save_structured_request`가 호출되는지 확인.
+- `extract_schedule_request`의 반환 JSON에
+  `ok`/`tool_name`/`base_date`/`structured_request`가 들어 있는지 확인.
+- Week 3 실행 전에는 REPL에서도 확인할 수 있다:
+
+```python
+from student_parts.week02_structure_natural_language_requests import extract_schedule_request
+print(extract_schedule_request.invoke({"query": "내일 오후 3시에 철수랑 회의"}))
+```
