@@ -105,11 +105,13 @@ class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    kind: RequestKind = Field(
-        description="요청의 종류입니다. 개인 일정이면 personal_schedule, 단체 일정이면 group_schedule, 할 일이면 todo, 알림이면 reminder, 판단하기 어려우면 unknown을 사용합니다."
+    kind: RequestKind = (
+        Field(  # kind는 아무 문자열이나 되는 걸 막아준다 (LLM이 실수로 "schedule"이라고 반환하면 스키마 검증에서 걸린다)
+            description="요청의 종류입니다. 개인 일정이면 personal_schedule, 단체 일정이면 group_schedule, 할 일이면 todo, 알림이면 reminder, 판단하기 어려우면 unknown을 사용합니다."
+        )
     )
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    title: str | None = Field(
+    title: str | None = Field(  # "철수랑 회의 잡아줘" -> 날짜가 없음 -> date=None
         default=None,
         description="일정, 할 일, 알림의 제목입니다. 예: 회의, 병원 가기, 과제 제출. 확실하지 않으면 None입니다.",
     )
@@ -130,7 +132,7 @@ class StructuredRequest(BaseModel):
 
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
     members: list[str] = Field(
-        default_factory=list,
+        default_factory=list,  # 리스트 기본값은 이렇게 해야 안전, 파이썬에서 mutable 기본값은 여러 객체가 같은 리스트를 공유하는 문제가 생길 수 있음
         description="요청에 등장하는 참석자나 관련 멤버 목록입니다. 없거나 알 수 없으면 빈 리스트입니다.",
     )
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
@@ -154,9 +156,17 @@ class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 2차 과제 스키마입니다."""
 
     # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
+    requests: list[StructuredRequest] = Field(
+        default_factory=list,
+        description="사용자의 자연어 요청 또는 tool JSON에서 추출한 StructuredRequest 목록입니다. 요청이 하나뿐이어도 리스트에 하나의 항목으로 담습니다.",
+    )
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
-    ...
+    base_date: str = Field(
+        default_factory=current_app_date_iso,  # 기본값을 함수로부터 생성하도록 하는 옵션, current_app_date_iso() 호출하여 반환값을 넣음
+        description="상대 날짜 표현을 해석할 때 기준이 되는 앱의 현재 날짜입니다. YYYY-MM-DD 형식입니다.",
+    )
+    # base_date를 사용하는 이유? -> "내일 오후 3시에 회의 잡아줘"일 경우 현재 날짜를 불러와야 함 -> agent가 오늘 날짜가 뭔지 기준을 계속 알려줘야 함
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
