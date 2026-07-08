@@ -10,10 +10,15 @@ from pydantic import BaseModel, Field
 from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
-from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_parts, week01_tools
+from student_parts.week01_wake_up_nana import (
+    join_system_prompt,
+    week01_prompt_parts,
+    week01_tools,
+)
 
-
-RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
+RequestKind = Literal[
+    "personal_schedule", "group_schedule", "todo", "reminder", "unknown"
+]
 _WEEK02_AGENT: Any | None = None
 
 
@@ -100,12 +105,49 @@ class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
+    kind: RequestKind = Field(
+        description="요청의 종류입니다. 개인 일정이면 personal_schedule, 단체 일정이면 group_schedule, 할 일이면 todo, 알림이면 reminder, 판단하기 어려우면 unknown을 사용합니다."
+    )
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
+    title: str | None = Field(
+        default=None,
+        description="일정, 할 일, 알림의 제목입니다. 예: 회의, 병원 가기, 과제 제출. 확실하지 않으면 None입니다.",
+    )
+    date: str | None = Field(
+        default=None,
+        description="요청에서 추출한 날짜입니다. 확실할 때만 YYYY-MM-DD 형식으로 작성합니다. 예: 2026-07-08. 알 수 없으면 None입니다.",
+    )
+
+    start_time: str | None = Field(
+        default=None,
+        description="시작 시간입니다. 확실할 때만 HH:MM 24시간 형식으로 작성합니다. 예: 15:00. 알 수 없으면 None입니다.",
+    )
+
+    end_time: str | None = Field(
+        default=None,
+        description="종료 시간입니다. 확실할 때만 HH:MM 24시간 형식으로 작성합니다. 알 수 없으면 None입니다.",
+    )
+
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
+    members: list[str] = Field(
+        default_factory=list,
+        description="요청에 등장하는 참석자나 관련 멤버 목록입니다. 없거나 알 수 없으면 빈 리스트입니다.",
+    )
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
+    priority: str | None = Field(
+        default=None,
+        description="할 일이나 알림의 우선순위입니다. 예: 높음, 보통, 낮음. 명시되지 않았으면 None입니다.",
+    )
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
+    reason: str | None = Field(
+        default=None,
+        description="이 구조화 결과를 만든 판단 근거입니다. 사용자의 표현이나 tool JSON에서 어떤 부분을 근거로 삼았는지 간단히 설명합니다.",
+    )
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    ...
+    original_text: str = Field(
+        default="",
+        description="구조화에 사용한 원문 사용자 요청 또는 tool 결과 텍스트입니다.",
+    )
 
 
 class StructuredRequestBatch(BaseModel):
