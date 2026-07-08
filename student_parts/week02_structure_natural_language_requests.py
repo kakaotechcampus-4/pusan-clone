@@ -217,14 +217,7 @@ class StructuredRequestBatch(BaseModel):
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """LangChain structured output 결과를 StructuredRequest로 정규화합니다."""
-    # 공부용 주석:
-    # Agent 전체를 띄우지 않고, LLM에게 "이 입력 하나를 StructuredRequest로 구조화해줘"라고 직접 요청하는 Bridge 역할이다.
-    # 여기서는 create_agent(...) 기반 agent loop를 돌리지 않는다.
-    # 즉 tool 호출 여부를 판단하지 않고, personal_create_schedule 같은 Week 1 tool도 호출하지 않는다.
-    # 대신 chat_model().with_structured_output(StructuredRequest, method="function_calling")로
-    # StructuredRequest 스키마를 강제한 뒤, system prompt와 user text를 바로 LLM에 넘긴다.
-    # 결과는 StructuredRequest 하나이며, StructuredRequestBatch가 아니다.
-    
+
     # TODO: value가 이미 StructuredRequest이면 그대로 반환하세요.
     # TODO: value가 dict이면 StructuredRequest.model_validate(...)로 검증해 반환하세요.
     # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
