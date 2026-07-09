@@ -18,6 +18,9 @@ from student_parts.week01_wake_up_nana import (
 RequestKind = Literal[
     "personal_schedule", "group_schedule", "todo", "reminder", "unknown"
 ]
+
+Priority = Literal["높음", "보통", "낮음"]
+
 _WEEK02_AGENT: Any | None = None
 
 
@@ -133,9 +136,9 @@ class StructuredRequest(BaseModel):
         description="요청에 등장하는 참석자나 관련 멤버 목록입니다. 없거나 알 수 없으면 빈 리스트입니다.",
     )
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    priority: str | None = Field(
-        default=None,
-        description="할 일이나 알림의 우선순위입니다. 예: 높음, 보통, 낮음. 명시되지 않았으면 None입니다.",
+
+    priority: Priority | None = Field(
+        default=None, description="할 일이나 알림의 우선순위입니다."
     )
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     reason: str | None = Field(
