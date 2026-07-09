@@ -196,7 +196,7 @@ def personal_create_schedule(
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
-    """"선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다.""""
+    """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
     # 현재 세션의 schedule을 먼저 불러오기 , 딕셔너리 리스트를 받아옴
     schedules = _current_session_schedules()
