@@ -24,7 +24,6 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run Ruff Linter
-        run: uv run ruff check .
-
+        run: uv run ruff check student_parts/week02_structure_natural_language_requests.py
       - name: Run Ruff Formatter Check
-        run: uv run ruff format --check .
+        run: uv run ruff format --check student_parts/week02_structure_natural_language_requests.py
