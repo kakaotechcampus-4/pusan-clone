@@ -70,3 +70,24 @@ uv add "package-name>=1.0"
 uv remove package-name
 uv lock
 ```
+
+## 개발 규칙
+
+프로젝트의 코드 일관성을 유지하기 위해 아키텍처, 파일명, 코드 스타일, Formatter/Linter, Git Pre-hook, GitHub Actions 검증 규칙을 정리했습니다.
+
+자세한 내용은 [DEVELOPMENT.md](DEVELOPMENT.md)를 참고하세요.
+
+현재 프로젝트는 다음 기준을 따릅니다.
+
+- Formatter/Linter 도구로 `ruff`를 사용합니다.
+- 로컬 commit 전 검증을 위해 `pre-commit`을 사용합니다.
+- PR 및 `main` 브랜치 push 시 GitHub Actions에서 lint/format 검사를 수행합니다.
+- 학생 구현 코드는 주차별 파일 구조를 따릅니다.
+- 수강생은 기본적으로 `student_parts/` 안의 지정된 파일을 수정합니다.
+
+로컬에서 직접 검사하려면 아래 명령을 사용할 수 있습니다.
+
+```bash
+uv run ruff check student_parts/week02_structure_natural_language_requests.py
+uv run ruff format student_parts/week02_structure_natural_language_requests.py
+```
