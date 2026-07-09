@@ -39,3 +39,7 @@ ignore = ["E501", "E402"]
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
