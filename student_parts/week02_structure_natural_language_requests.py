@@ -220,8 +220,12 @@ def week02_system_prompt() -> str:
         "StructuredRequestBatch에 요청이 하나만 있더라도, requests 목록 안에 StructuredRequest 하나를 담아서 반환해",
         "개인 일정 생성 요청이라면 personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 StructuredRequest의 필드(title/date/start_time/end_time 등)를 채워"
     ]
-    
-    return join_system_prompt([*week02_prompt_parts(), *final_answer_rules])
+
+    prompt = join_system_prompt([*week02_prompt_parts(), *final_answer_rules])
+    print("\n=== Week02 System Prompt ===")
+    print(prompt)
+    print("=== End ===\n")
+    return prompt
     
     
 
@@ -229,9 +233,9 @@ def week02_system_prompt() -> str:
 def week02_prompt_parts() -> list[str]:
     """2주차 structured output agent가 따르는 system prompt 조각입니다."""
 
-    return [
+    parts = [
         *week01_prompt_parts(),
-        "너는 사용자의 자연어 요청이나 Week 1 tool 결과를 StructuredRequestBatch 형식(requests 리스트, base_date)으로 구조화하는 역할을 맡아. "
+        "너는 사용자의 자연어 요청이나 Week 1 tool 결과를 StructuredRequestBatch 형식(requests 리스트, base_date)으로 구조화하는 역할을 맡아.",
         "각 requests 항목은 StructuredRequest 형식(kind/title/date/start_time/end_time/members/priority/reason/original_text)을 따라야 해.",
         "상대적 시간 개념이 사용자 요청에 포함되어 있다면 StructuredRequestBatch의 base_date 필드를 기준으로 계산해",
         "날짜, 시간, 멤버 등 값이 확실하지 않으면 임의로 추측해서 채우지 말고 None(또는 빈 리스트)으로 남겨",
@@ -239,6 +243,11 @@ def week02_prompt_parts() -> list[str]:
         "Week 1 tool(personal_create_schedule 등) 결과 JSON을 이미 받았다면 tool을 재호출하지 말고, 그 payload(created_schedule)를 읽어 StructuredRequestBatch 형식으로 변환해",
         "현재 단계에서는 SQLite 저장, RAG, 외부 멤버 일정 조율은 하지 않을거야",
     ]
+    print("\n=== Week02 Prompt Parts (before join) ===")
+    for i, part in enumerate(parts, 1):
+        print(f"[Part {i}] {repr(part)}")
+    print("=== End ===\n")
+    return parts
 
 
 def build_week02_agent() -> object:
