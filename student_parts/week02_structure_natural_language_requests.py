@@ -174,13 +174,14 @@ class StructuredRequest(BaseModel):
     # requests.1.members Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
     @field_validator("members", mode ="before")
     @classmethod
-    def checkMember(cls,v):
+    def nomalize_members(cls,v):
         return [] if v is None else v
 
     
     @field_validator("start_time", "end_time", mode="before")
     @classmethod
-    def checkEndTime(cls,v):
+    def normalize_time_markers(cls, v):
+        """start_time, end_time에서 '미정' 같은 값을 None으로 정규화합니다."""
         if isinstance(v, str) and v.strip() in _UNKNOWN_TIME_MARKERS:
             return None
         return v
