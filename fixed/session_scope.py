@@ -10,9 +10,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-
 DEFAULT_SESSION_SCOPE = "__direct_tool_call__"
-_ACTIVE_CONVERSATION_ID: ContextVar[str | None] = ContextVar("kanana_active_conversation_id", default=None)
+_ACTIVE_CONVERSATION_ID: ContextVar[str | None] = ContextVar(
+    "kanana_active_conversation_id", default=None
+)
 
 
 def current_session_scope() -> str:

@@ -119,9 +119,13 @@ class ConversationRAGStore:
         fetch_limit = min(collection_count, max(normalized_limit * 5, normalized_limit))
         where = {"conversation_id": conversation_id} if conversation_id else None
         if where:
-            result = self.collection.query(query_texts=[query_text], n_results=fetch_limit, where=where)
+            result = self.collection.query(
+                query_texts=[query_text], n_results=fetch_limit, where=where
+            )
         else:
-            result = self.collection.query(query_texts=[query_text], n_results=fetch_limit)
+            result = self.collection.query(
+                query_texts=[query_text], n_results=fetch_limit
+            )
 
         documents = result.get("documents", [[]])[0]
         metadatas = result.get("metadatas", [[]])[0]
@@ -132,7 +136,11 @@ class ConversationRAGStore:
         for index, document in enumerate(documents):
             metadata = metadatas[index] or {}
             hit_conversation_id = str(metadata.get("conversation_id") or "")
-            if not conversation_id and exclude_conversation_id and hit_conversation_id == exclude_conversation_id:
+            if (
+                not conversation_id
+                and exclude_conversation_id
+                and hit_conversation_id == exclude_conversation_id
+            ):
                 continue
             hits.append(
                 {
@@ -171,7 +179,9 @@ class ConversationRAGStore:
             title = hit.get("title") or "새 대화"
             conversation_id = hit.get("conversation_id") or "unknown"
             updated_at = metadata.get("updated_at") or "시간 미정"
-            lines.append(f"[{index}] {title} | conversation_id={conversation_id} | updated_at={updated_at}")
+            lines.append(
+                f"[{index}] {title} | conversation_id={conversation_id} | updated_at={updated_at}"
+            )
             lines.append(str(hit.get("content") or "").strip())
         return "\n\n".join(lines)
 
@@ -179,9 +189,13 @@ class ConversationRAGStore:
         result = self.collection.get(include=["metadatas"])
         ids = result.get("ids", [])
         metadatas = result.get("metadatas", [])
-        return {chunk_id: (metadatas[index] or {}) for index, chunk_id in enumerate(ids)}
+        return {
+            chunk_id: (metadatas[index] or {}) for index, chunk_id in enumerate(ids)
+        }
 
-    def _conversation_chunks(self, sqlite_store: AppSQLiteStore) -> list[dict[str, Any]]:
+    def _conversation_chunks(
+        self, sqlite_store: AppSQLiteStore
+    ) -> list[dict[str, Any]]:
         conversations: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         with sqlite_store.connect() as conn:
@@ -283,5 +297,7 @@ class ConversationRAGStore:
             "updated_at": conversation.get("updated_at"),
             "messages": conversation.get("messages") or [],
         }
-        encoded = json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        encoded = json.dumps(
+            source, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()

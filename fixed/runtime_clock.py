@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-
 APP_STARTED_AT = datetime.now().astimezone()
 APP_TODAY = APP_STARTED_AT.date()
 

@@ -137,7 +137,9 @@ class AppSQLiteStore(SQLiteFileStore):
             )
         return {"conversation_id": conversation_id, "title": title[:80] or "새 대화"}
 
-    def append_message(self, conversation_id: str, role: str, content: str) -> dict[str, Any]:
+    def append_message(
+        self, conversation_id: str, role: str, content: str
+    ) -> dict[str, Any]:
         """대화에 user/assistant 메시지를 추가하고 대화의 최근 갱신 시각을 갱신합니다.
 
         새 대화의 기본 제목이 아직 "새 대화"라면 첫 메시지 앞부분으로 제목도 자동 설정합니다.
@@ -272,8 +274,13 @@ class AppSQLiteStore(SQLiteFileStore):
         if not conversation_id:
             return {"conversation_id": "", "deleted": False}
         with self.connect() as conn:
-            conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
-            cur = conn.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+            conn.execute(
+                "DELETE FROM messages WHERE conversation_id = ?", (conversation_id,)
+            )
+            cur = conn.execute(
+                "DELETE FROM conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            )
         return {"conversation_id": conversation_id, "deleted": cur.rowcount > 0}
 
     # Week 3 structured output persistence
@@ -319,8 +326,16 @@ class AppSQLiteStore(SQLiteFileStore):
                         "request_id": existing_schedule["request_id"],
                         "kind": kind,
                         "saved_rows": [
-                            {"table": "structured_requests", "id": existing_schedule["request_id"], "existing": True},
-                            {"table": "schedules", "id": existing_schedule["schedule_id"], "existing": True},
+                            {
+                                "table": "structured_requests",
+                                "id": existing_schedule["request_id"],
+                                "existing": True,
+                            },
+                            {
+                                "table": "schedules",
+                                "id": existing_schedule["schedule_id"],
+                                "existing": True,
+                            },
                         ],
                         "shared_sync": None,
                         "already_exists": True,
@@ -399,7 +414,15 @@ class AppSQLiteStore(SQLiteFileStore):
                     INSERT INTO reminders (reminder_id, request_id, title, date, start_time, reason, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (reminder_id, request_id, title, date, start_time, reason, created_at),
+                    (
+                        reminder_id,
+                        request_id,
+                        title,
+                        date,
+                        start_time,
+                        reason,
+                        created_at,
+                    ),
                 )
                 saved_rows.append({"table": "reminders", "id": reminder_id})
 
@@ -411,7 +434,12 @@ class AppSQLiteStore(SQLiteFileStore):
             else:
                 shared_sync = sync_personal_schedule_to_shared(schedule_for_shared)
 
-        return {"request_id": request_id, "kind": kind, "saved_rows": saved_rows, "shared_sync": shared_sync}
+        return {
+            "request_id": request_id,
+            "kind": kind,
+            "saved_rows": saved_rows,
+            "shared_sync": shared_sync,
+        }
 
     # Structured request lookup
 
@@ -447,11 +475,15 @@ class AppSQLiteStore(SQLiteFileStore):
         """request_id로 저장된 structured request 하나를 조회합니다."""
 
         with self.connect() as conn:
-            cur = conn.execute("SELECT * FROM structured_requests WHERE request_id = ?", (request_id,))
+            cur = conn.execute(
+                "SELECT * FROM structured_requests WHERE request_id = ?", (request_id,)
+            )
             row = cur.fetchone()
             return dict(row) if row else None
 
-    def search_saved_requests(self, query: str, kind: str | None = None, limit: int = 5) -> list[dict[str, Any]]:
+    def search_saved_requests(
+        self, query: str, kind: str | None = None, limit: int = 5
+    ) -> list[dict[str, Any]]:
         """저장된 요청 원문/제목/근거를 단순 LIKE 검색으로 찾습니다.
 
         Week 4의 RAG 보조 도구가 SQLite 기록에서 일정/할 일/알림 근거를 찾을 때 사용합니다.
@@ -489,7 +521,9 @@ class AppSQLiteStore(SQLiteFileStore):
         where: list[str] = []
         params: list[Any] = []
         if kind:
-            where.append("(SELECT kind FROM structured_requests WHERE request_id = schedules.request_id) = ?")
+            where.append(
+                "(SELECT kind FROM structured_requests WHERE request_id = schedules.request_id) = ?"
+            )
             params.append(kind)
         if date_from:
             where.append("date >= ?")
@@ -542,13 +576,19 @@ class AppSQLiteStore(SQLiteFileStore):
                 return None
 
             current = decode_schedule_row(dict(row))
-            next_attendees = attendees if attendees is not None else current.get("attendees", [])
+            next_attendees = (
+                attendees if attendees is not None else current.get("attendees", [])
+            )
             updated = {
                 **current,
                 "title": title if title is not None else current.get("title"),
                 "date": date if date is not None else current.get("date"),
-                "start_time": start_time if start_time is not None else current.get("start_time"),
-                "end_time": end_time if end_time is not None else current.get("end_time"),
+                "start_time": start_time
+                if start_time is not None
+                else current.get("start_time"),
+                "end_time": end_time
+                if end_time is not None
+                else current.get("end_time"),
                 "attendees": next_attendees,
             }
             attendees_json = json.dumps(next_attendees, ensure_ascii=False)
@@ -657,7 +697,9 @@ class AppSQLiteStore(SQLiteFileStore):
             where.append("start_time = ?")
             params.append(start_time)
         if time_unspecified:
-            where.append("(start_time IS NULL OR start_time = '' OR start_time = '미정')")
+            where.append(
+                "(start_time IS NULL OR start_time = '' OR start_time = '미정')"
+            )
 
         sql = f"""
             SELECT {SCHEDULE_COLUMNS}
@@ -697,10 +739,14 @@ class AppSQLiteStore(SQLiteFileStore):
                 (row["request_id"],),
             )
 
-        if decoded.get("request_kind") == "personal_schedule" and decoded.get("request_id"):
+        if decoded.get("request_kind") == "personal_schedule" and decoded.get(
+            "request_id"
+        ):
             # 개인 일정은 외부 공유 저장소에 복사본이 있으므로 앱 DB 삭제와 함께 제거합니다.
             delete_personal_schedule_from_shared(decoded["request_id"])
-        elif decoded.get("request_kind") == "group_schedule" and decoded.get("request_id"):
+        elif decoded.get("request_kind") == "group_schedule" and decoded.get(
+            "request_id"
+        ):
             delete_group_schedule_from_shared(decoded)
 
         return decoded
@@ -716,7 +762,9 @@ class AppSQLiteStore(SQLiteFileStore):
     ) -> list[dict[str, Any]]:
         """필터로 찾은 일정들을 모두 삭제하고 삭제된 row 목록을 반환합니다."""
 
-        if schedule_ids is None and not any([date, title, start_time, time_unspecified]):
+        if schedule_ids is None and not any(
+            [date, title, start_time, time_unspecified]
+        ):
             return []
 
         rows = self.find_schedules(

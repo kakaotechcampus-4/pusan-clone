@@ -19,8 +19,10 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from fixed.config import CONFIG
-from fixed.external_people_store import ExternalPeopleSQLiteStore, external_schedule_summary
-
+from fixed.external_people_store import (
+    ExternalPeopleSQLiteStore,
+    external_schedule_summary,
+)
 
 DB_PATH = Path(os.getenv("KANANA_EXTERNAL_DB_PATH", str(CONFIG.external_db_path)))
 STORE = ExternalPeopleSQLiteStore(DB_PATH)
@@ -28,7 +30,9 @@ mcp = FastMCP("kanana-sqlite-history")
 
 
 @mcp.tool()
-def search_previous_conversations(query: str, member_names: list[str] | None = None, limit: int = 5) -> str:
+def search_previous_conversations(
+    query: str, member_names: list[str] | None = None, limit: int = 5
+) -> str:
     """외부 Kanana SQLite 데이터베이스에서 이전 대화를 검색합니다.
 
     `query`에는 LLM이 직접 고른 핵심 검색 문자열을 넣습니다. 서버는 query를
@@ -37,8 +41,13 @@ def search_previous_conversations(query: str, member_names: list[str] | None = N
     멤버가 없는 요청으로 보아 빈 rows를 반환합니다. 반환 rows는 conversation_id와 메시지 content를 포함합니다.
     """
 
-    rows = STORE.search_previous_conversations(query=query, member_names=member_names, limit=limit)
-    return json.dumps({"ok": True, "tool_name": "search_previous_conversations", "rows": rows}, ensure_ascii=False)
+    rows = STORE.search_previous_conversations(
+        query=query, member_names=member_names, limit=limit
+    )
+    return json.dumps(
+        {"ok": True, "tool_name": "search_previous_conversations", "rows": rows},
+        ensure_ascii=False,
+    )
 
 
 @mcp.tool()
@@ -46,11 +55,16 @@ def load_conversation_messages(conversation_id: str) -> str:
     """특정 이전 대화의 모든 메시지를 시간순으로 불러옵니다."""
 
     rows = STORE.load_conversation_messages(conversation_id=conversation_id)
-    return json.dumps({"ok": True, "tool_name": "load_conversation_messages", "rows": rows}, ensure_ascii=False)
+    return json.dumps(
+        {"ok": True, "tool_name": "load_conversation_messages", "rows": rows},
+        ensure_ascii=False,
+    )
 
 
 @mcp.tool()
-def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
+def extract_schedules_from_history(
+    member_names: list[str], date_from: str, date_to: str
+) -> str:
     """이전 대화 기록에서 멤버별 일정을 추출하고 날짜/시간 포함 요약을 반환합니다.
 
     현재 수업 fixture에서는 실제 자연어 추출 대신 seed된 external_schedules 테이블을

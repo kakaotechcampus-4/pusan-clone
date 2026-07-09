@@ -41,9 +41,13 @@ class AgentRuntime:
         """앱 DB 저장소를 열고 실행할 주차를 설정합니다."""
 
         self.app_store = AppSQLiteStore(CONFIG.app_db_path)
-        self.active_week = active_week if active_week is not None else CONFIG.active_week
+        self.active_week = (
+            active_week if active_week is not None else CONFIG.active_week
+        )
 
-    def ensure_conversation(self, conversation_id: str | None, first_message: str) -> str:
+    def ensure_conversation(
+        self, conversation_id: str | None, first_message: str
+    ) -> str:
         """기존 대화 ID가 없으면 첫 사용자 메시지를 제목으로 새 대화를 만듭니다."""
 
         if conversation_id:
@@ -55,7 +59,11 @@ class AgentRuntime:
         """UI 챗봇 컴포넌트가 표시할 user/assistant 메시지만 불러옵니다."""
 
         rows = self.app_store.load_conversation(conversation_id)
-        return [{"role": row["role"], "content": row["content"]} for row in rows if row["role"] in {"user", "assistant"}]
+        return [
+            {"role": row["role"], "content": row["content"]}
+            for row in rows
+            if row["role"] in {"user", "assistant"}
+        ]
 
     def archive_conversation(self, conversation_id: str | None) -> None:
         """대화를 삭제하지 않고 목록에서 숨깁니다."""
@@ -68,7 +76,9 @@ class AgentRuntime:
 
         self.app_store.delete_conversation(conversation_id)
 
-    def run_agent(self, user_message: str, conversation_id: str | None) -> RuntimeResult:
+    def run_agent(
+        self, user_message: str, conversation_id: str | None
+    ) -> RuntimeResult:
         """사용자 메시지를 저장하고 선택된 주차 agent를 한 번 실행합니다.
 
         agent에는 현재 대화의 user/assistant 메시지를 넘깁니다. 실행 결과는
@@ -86,9 +96,13 @@ class AgentRuntime:
         trace["conversation_id"] = conversation_id
 
         self.app_store.append_message(conversation_id, "assistant", result.answer)
-        return RuntimeResult(answer=result.answer, trace=trace, conversation_id=conversation_id)
+        return RuntimeResult(
+            answer=result.answer, trace=trace, conversation_id=conversation_id
+        )
 
-    def stream_agent(self, user_message: str, conversation_id: str | None) -> Iterator[RuntimeStreamEvent]:
+    def stream_agent(
+        self, user_message: str, conversation_id: str | None
+    ) -> Iterator[RuntimeStreamEvent]:
         """stream 모드로 agent를 실행하며 tool 진행 상태와 최종 답변을 순서대로 yield합니다."""
 
         conversation_id = self.ensure_conversation(conversation_id, user_message)
@@ -108,8 +122,14 @@ class AgentRuntime:
             if event.result:
                 trace = dict(event.result.trace)
                 trace["conversation_id"] = conversation_id
-                result = RuntimeResult(answer=event.result.answer, trace=trace, conversation_id=conversation_id)
-                self.app_store.append_message(conversation_id, "assistant", result.answer)
+                result = RuntimeResult(
+                    answer=event.result.answer,
+                    trace=trace,
+                    conversation_id=conversation_id,
+                )
+                self.app_store.append_message(
+                    conversation_id, "assistant", result.answer
+                )
                 yield RuntimeStreamEvent(result=result)
                 return
 
@@ -120,11 +140,17 @@ class AgentRuntime:
             "events": [],
             "error": "stream_completed_without_result",
         }
-        result = RuntimeResult(answer="응답을 생성하지 못했습니다.", trace=trace, conversation_id=conversation_id)
+        result = RuntimeResult(
+            answer="응답을 생성하지 못했습니다.",
+            trace=trace,
+            conversation_id=conversation_id,
+        )
         self.app_store.append_message(conversation_id, "assistant", result.answer)
         yield RuntimeStreamEvent(result=result)
 
-    def _agent_messages(self, previous_messages: list[dict[str, Any]], user_message: str) -> list[dict[str, str]]:
+    def _agent_messages(
+        self, previous_messages: list[dict[str, Any]], user_message: str
+    ) -> list[dict[str, str]]:
         """agent 입력용 현재 대화 history를 만들고 현재 사용자 메시지를 마지막에 붙입니다."""
 
         messages = [

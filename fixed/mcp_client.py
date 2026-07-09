@@ -83,7 +83,9 @@ async def load_local_mcp_tools(db_path: str | Path | None = None) -> list[Any]:
 
     server_path = PACKAGE_ROOT / "mcp_server" / "sqlite_mcp_server.py"
     env = os.environ.copy()
-    selected_db_path = db_path or env.get("KANANA_EXTERNAL_DB_PATH") or CONFIG.external_db_path
+    selected_db_path = (
+        db_path or env.get("KANANA_EXTERNAL_DB_PATH") or CONFIG.external_db_path
+    )
     env["KANANA_EXTERNAL_DB_PATH"] = str(selected_db_path)
     client = MultiServerMCPClient(
         {
@@ -104,17 +106,25 @@ def load_local_mcp_tools_sync(db_path: str | Path | None = None) -> list[Any]:
     return _run_coroutine_sync(load_local_mcp_tools(db_path=db_path))
 
 
-async def call_local_mcp_tool(tool_name: str, args: dict[str, Any], db_path: str | Path | None = None) -> str:
+async def call_local_mcp_tool(
+    tool_name: str, args: dict[str, Any], db_path: str | Path | None = None
+) -> str:
     """이름으로 MCP tool 하나를 찾아 실행하고 결과를 문자열로 반환합니다."""
 
     tools = {item.name: item for item in await load_local_mcp_tools(db_path=db_path)}
     if tool_name not in tools:
         available = ", ".join(sorted(tools))
-        raise ValueError(f"Unknown MCP tool {tool_name!r}. Available tools: {available}")
+        raise ValueError(
+            f"Unknown MCP tool {tool_name!r}. Available tools: {available}"
+        )
     return _mcp_result_to_text(await tools[tool_name].ainvoke(args))
 
 
-def call_local_mcp_tool_sync(tool_name: str, args: dict[str, Any], db_path: str | Path | None = None) -> str:
+def call_local_mcp_tool_sync(
+    tool_name: str, args: dict[str, Any], db_path: str | Path | None = None
+) -> str:
     """동기 코드에서 MCP tool 하나를 호출하는 wrapper입니다."""
 
-    return _run_coroutine_sync(call_local_mcp_tool(tool_name=tool_name, args=args, db_path=db_path))
+    return _run_coroutine_sync(
+        call_local_mcp_tool(tool_name=tool_name, args=args, db_path=db_path)
+    )

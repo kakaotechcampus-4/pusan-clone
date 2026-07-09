@@ -12,7 +12,6 @@ from typing import Any
 
 from fixed.mcp_client import call_local_mcp_tool_sync
 
-
 PERSONAL_SHARED_MEMBER_NAME = "나"
 
 
@@ -77,7 +76,11 @@ def sync_group_schedule_to_shared(schedule: dict[str, Any]) -> dict[str, Any]:
             "reason": "공유 일정 등록에는 날짜가 필요합니다.",
         }
 
-    members = [str(member).strip() for member in (schedule.get("attendees") or []) if str(member).strip()]
+    members = [
+        str(member).strip()
+        for member in (schedule.get("attendees") or [])
+        if str(member).strip()
+    ]
     if not members:
         return {
             "ok": True,
@@ -153,7 +156,11 @@ def delete_group_schedule_from_shared(schedule: dict[str, Any]) -> dict[str, Any
 
     deleted: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
-    members = [str(member).strip() for member in (schedule.get("attendees") or []) if str(member).strip()]
+    members = [
+        str(member).strip()
+        for member in (schedule.get("attendees") or [])
+        if str(member).strip()
+    ]
     for member_name in members:
         try:
             payload = call_external_tool_payload(

@@ -11,9 +11,8 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 import gradio as gr
 
-from fixed.config import CONFIG, STATIC_DIR
 from fixed.agent_runtime import AgentRuntime
-
+from fixed.config import CONFIG, STATIC_DIR
 
 runtime = AgentRuntime()
 CSS_PATH = STATIC_DIR / "app.css"
@@ -197,8 +196,13 @@ def _chat_notice() -> list[dict[str, str]]:
     return []
 
 
-def _pending_assistant_message(status_text: str = DEFAULT_PENDING_STATUS) -> dict[str, str]:
-    return {"role": "assistant", "content": f"...\n\n<small>{html.escape(status_text)}</small>"}
+def _pending_assistant_message(
+    status_text: str = DEFAULT_PENDING_STATUS,
+) -> dict[str, str]:
+    return {
+        "role": "assistant",
+        "content": f"...\n\n<small>{html.escape(status_text)}</small>",
+    }
 
 
 def _is_pending_assistant_message(message: dict[str, Any] | None) -> bool:
@@ -210,14 +214,18 @@ def _is_pending_assistant_message(message: dict[str, Any] | None) -> bool:
     return content.startswith("...") and (has_default_status or has_tool_status)
 
 
-def _replace_pending_status(history: list[dict[str, Any]], status_text: str) -> list[dict[str, Any]]:
+def _replace_pending_status(
+    history: list[dict[str, Any]], status_text: str
+) -> list[dict[str, Any]]:
     pending_message = _pending_assistant_message(status_text)
     if history and _is_pending_assistant_message(history[-1]):
         return [*history[:-1], pending_message]
     return [*history, pending_message]
 
 
-def _replace_pending_with_answer(history: list[dict[str, Any]], answer: str) -> list[dict[str, Any]]:
+def _replace_pending_with_answer(
+    history: list[dict[str, Any]], answer: str
+) -> list[dict[str, Any]]:
     assistant_message = {"role": "assistant", "content": answer}
     if history and _is_pending_assistant_message(history[-1]):
         return [*history[:-1], assistant_message]
@@ -278,7 +286,9 @@ def queue_user_message(
             *_conversation_button_updates(conversation_id),
         )
 
-    active_conversation_id = runtime.ensure_conversation(conversation_id or None, message)
+    active_conversation_id = runtime.ensure_conversation(
+        conversation_id or None, message
+    )
     history = [
         *history,
         {"role": "user", "content": message},
@@ -346,12 +356,23 @@ def finish_agent_response(
 
 
 def new_chat() -> tuple:
-    return (_chat_notice(), {}, "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+    return (
+        _chat_notice(),
+        {},
+        "",
+        _saved_schedule_markdown(),
+        *_conversation_button_updates(None),
+    )
 
 
 def load_chat(conversation_id: str | None) -> tuple:
     if not conversation_id:
-        return (_chat_notice(), "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+        return (
+            _chat_notice(),
+            "",
+            _saved_schedule_markdown(),
+            *_conversation_button_updates(None),
+        )
     return (
         _saved_chatbot_history(conversation_id),
         conversation_id,
@@ -362,13 +383,25 @@ def load_chat(conversation_id: str | None) -> tuple:
 
 def archive_chat(conversation_id: str | None) -> tuple:
     runtime.archive_conversation(conversation_id)
-    return (_chat_notice(), {}, "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+    return (
+        _chat_notice(),
+        {},
+        "",
+        _saved_schedule_markdown(),
+        *_conversation_button_updates(None),
+    )
 
 
 def delete_chat(conversation_id: str | None) -> tuple:
     if conversation_id:
         runtime.delete_conversation(conversation_id)
-    return (_chat_notice(), {}, "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+    return (
+        _chat_notice(),
+        {},
+        "",
+        _saved_schedule_markdown(),
+        *_conversation_button_updates(None),
+    )
 
 
 def conversation_id_at(index: int) -> str:
@@ -380,10 +413,12 @@ def conversation_id_at(index: int) -> str:
 
 def build_demo() -> gr.Blocks:
     with gr.Blocks(title="Kanana Schedule Agent") as demo:
-        conversation_id = gr.Textbox(value="", visible=False, elem_id="selected-conversation-id", container=False)
+        conversation_id = gr.Textbox(
+            value="", visible=False, elem_id="selected-conversation-id", container=False
+        )
         pending_message = gr.State("")
         gr.HTML(
-            f"""
+            """
             <div class="kanana-topbar">
               <div class="brand-lockup">
                 <span>Smart Schedule Agent</span>
@@ -396,7 +431,10 @@ def build_demo() -> gr.Blocks:
                 with gr.Row(elem_id="kanana-shell"):
                     with gr.Column(scale=1, min_width=250, elem_classes=["sidebar"]):
                         new_btn = gr.Button("새 대화", elem_classes=["primary-action"])
-                        gr.HTML("<div class='conversation-list-title'>대화</div>", container=False)
+                        gr.HTML(
+                            "<div class='conversation-list-title'>대화</div>",
+                            container=False,
+                        )
                         conversation_buttons = [
                             gr.Button(
                                 "",
@@ -405,15 +443,22 @@ def build_demo() -> gr.Blocks:
                             )
                             for _ in range(MAX_CONVERSATION_BUTTONS)
                         ]
-                        gr.HTML("<div class='conversation-list-title'>저장된 일정</div>", container=False)
+                        gr.HTML(
+                            "<div class='conversation-list-title'>저장된 일정</div>",
+                            container=False,
+                        )
                         saved_schedules = gr.Markdown(
                             value=_saved_schedule_markdown(),
                             show_label=False,
                             elem_id="saved-schedule-list",
                             elem_classes=["saved-schedule-list"],
                         )
-                        archive_btn = gr.Button("현재 대화 보관", elem_classes=["ghost-action"])
-                        delete_btn = gr.Button("저장된 대화 삭제", elem_classes=["danger-action"])
+                        archive_btn = gr.Button(
+                            "현재 대화 보관", elem_classes=["ghost-action"]
+                        )
+                        delete_btn = gr.Button(
+                            "저장된 대화 삭제", elem_classes=["danger-action"]
+                        )
                     with gr.Column(scale=4, min_width=560, elem_classes=["chat-panel"]):
                         chatbot = gr.Chatbot(
                             value=_chat_notice(),
@@ -429,11 +474,19 @@ def build_demo() -> gr.Blocks:
                                 lines=2,
                                 elem_id="kanana-input",
                             )
-                            send_btn = gr.Button("↑", elem_id="kanana-send", elem_classes=["send-button"])
+                            send_btn = gr.Button(
+                                "↑", elem_id="kanana-send", elem_classes=["send-button"]
+                            )
             with gr.Tab("상세"):
                 with gr.Row(elem_classes=["details-layout"]):
-                    with gr.Column(scale=1, min_width=720, elem_classes=["detail-card", "trace-detail-card"]):
-                        gr.HTML("<div class='trace-title'>마지막 에이전트 실행 Trace</div>")
+                    with gr.Column(
+                        scale=1,
+                        min_width=720,
+                        elem_classes=["detail-card", "trace-detail-card"],
+                    ):
+                        gr.HTML(
+                            "<div class='trace-title'>마지막 에이전트 실행 Trace</div>"
+                        )
                         trace_json = gr.JSON(
                             label="trace 페이로드",
                             value={},
@@ -474,16 +527,37 @@ def build_demo() -> gr.Blocks:
             outputs=finish_outputs,
             show_progress="hidden",
         )
-        new_btn.click(new_chat, outputs=[chatbot, trace_json, conversation_id, saved_schedules, *conversation_buttons])
+        new_btn.click(
+            new_chat,
+            outputs=[
+                chatbot,
+                trace_json,
+                conversation_id,
+                saved_schedules,
+                *conversation_buttons,
+            ],
+        )
         archive_btn.click(
             archive_chat,
             inputs=[conversation_id],
-            outputs=[chatbot, trace_json, conversation_id, saved_schedules, *conversation_buttons],
+            outputs=[
+                chatbot,
+                trace_json,
+                conversation_id,
+                saved_schedules,
+                *conversation_buttons,
+            ],
         )
         delete_btn.click(
             delete_chat,
             inputs=[conversation_id],
-            outputs=[chatbot, trace_json, conversation_id, saved_schedules, *conversation_buttons],
+            outputs=[
+                chatbot,
+                trace_json,
+                conversation_id,
+                saved_schedules,
+                *conversation_buttons,
+            ],
             js=DELETE_CONVERSATION_CONFIRM_JS,
             queue=False,
         )
@@ -495,7 +569,12 @@ def build_demo() -> gr.Blocks:
             ).then(
                 load_chat,
                 inputs=[conversation_id],
-                outputs=[chatbot, conversation_id, saved_schedules, *conversation_buttons],
+                outputs=[
+                    chatbot,
+                    conversation_id,
+                    saved_schedules,
+                    *conversation_buttons,
+                ],
                 show_progress="hidden",
             )
         demo.load(
