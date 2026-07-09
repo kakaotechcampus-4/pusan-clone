@@ -184,7 +184,29 @@ class StructuredRequest(BaseModel):
         if isinstance(v, str) and v.strip() in _UNKNOWN_TIME_MARKERS:
             return None
         return v
-    
+
+    @field_validator("date", mode="after")
+    @classmethod
+    def validate_date_format(cls, v):
+        """date가 None이 아니면 YYYY-MM-DD 형식인지 검증합니다."""
+        if v is None:
+            return v
+        import re
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
+            raise ValueError("날짜는 반드시 YYYY-MM-DD 형태여야 합니다")
+        return v
+
+    @field_validator("start_time", "end_time", mode="after")
+    @classmethod
+    def validate_time_format(cls, v):
+        """start_time, end_time이 None이 아니면 HH:MM 형식인지 검증합니다."""
+        if v is None:
+            return v
+        import re
+        if not re.match(r'^\d{2}:\d{2}$', v):
+            raise ValueError("시간은 반드시 HH:MM 형태여야 합니다")
+        return v
+
     @model_validator(mode="after")
     def enforce_group_scehdule_when_members_present(self):
         # member 추출 및 빈 리스트 할당이 이제까지 틀린적없음. 
