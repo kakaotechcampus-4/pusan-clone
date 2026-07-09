@@ -201,9 +201,6 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     # 현재 세션의 schedule을 먼저 불러오기 , 딕셔너리 리스트를 받아옴
     schedules = _current_session_schedules()
 
-    # 현재 세션의 schedule을 먼저 불러오기 , 딕셔너리 리스트를 받아옴
-    schedules = _current_session_schedules()
-
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     schedules = [
         s for s in schedules
