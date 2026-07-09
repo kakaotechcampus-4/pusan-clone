@@ -21,7 +21,6 @@ from fixed.config import CONFIG
 #     normalize_messages_value,
 #     stream_chunk_messages,
 # )
-
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope

@@ -67,7 +67,9 @@ def date_range(date_from: str, date_to: str) -> list[str]:
     return days
 
 
-def busy_rows_overlap(rows: list[dict[str, Any]], day: str, start_minutes: int, end_minutes: int) -> list[dict[str, Any]]:
+def busy_rows_overlap(
+    rows: list[dict[str, Any]], day: str, start_minutes: int, end_minutes: int
+) -> list[dict[str, Any]]:
     """후보 시간과 겹치는 busy row 목록을 찾습니다."""
 
     blockers: list[dict[str, Any]] = []
@@ -106,7 +108,9 @@ def normalize_llm_candidate_slots(
             if isinstance(candidate, CommonSlotCandidate):
                 slot = candidate.model_dump()
             elif hasattr(candidate, "model_dump"):
-                slot = CommonSlotCandidate.model_validate(candidate.model_dump()).model_dump()
+                slot = CommonSlotCandidate.model_validate(
+                    candidate.model_dump()
+                ).model_dump()
             else:
                 slot = CommonSlotCandidate.model_validate(candidate).model_dump()
         except (TypeError, ValidationError, ValueError):
@@ -117,7 +121,11 @@ def normalize_llm_candidate_slots(
         end_minutes = parse_time_minutes(slot.get("end_time"), -1)
         if day not in valid_days:
             continue
-        if start_minutes < work_start or end_minutes > work_end or end_minutes <= start_minutes:
+        if (
+            start_minutes < work_start
+            or end_minutes > work_end
+            or end_minutes <= start_minutes
+        ):
             continue
         if end_minutes - start_minutes < requested_duration:
             continue
@@ -130,7 +138,9 @@ def normalize_llm_candidate_slots(
                 "start_time": format_time_minutes(start_minutes),
                 "end_time": format_time_minutes(end_minutes),
                 "duration_minutes": end_minutes - start_minutes,
-                "reason": slot.get("reason") or llm_reason or "LLM이 tool description 계약에 따라 고른 공통 가능 시간입니다.",
+                "reason": slot.get("reason")
+                or llm_reason
+                or "LLM이 tool description 계약에 따라 고른 공통 가능 시간입니다.",
             }
         )
         if len(slots) >= limit:
@@ -148,7 +158,11 @@ def slot_to_text(slot: Any) -> str:
     date_text = slot.get("date") or "날짜 미정"
     start_time = slot.get("start_time") or "시간 미정"
     end_time = slot.get("end_time")
-    return f"{date_text} {start_time}-{end_time}" if end_time else f"{date_text} {start_time}"
+    return (
+        f"{date_text} {start_time}-{end_time}"
+        if end_time
+        else f"{date_text} {start_time}"
+    )
 
 
 def find_common_available_slots_payload(
@@ -220,7 +234,9 @@ def decide_final_slot_payload(
             else:
                 invalid_selection = True
 
-    resolved_final_slot = final_slot or (slot_to_text(selected) if selected is not None else None)
+    resolved_final_slot = final_slot or (
+        slot_to_text(selected) if selected is not None else None
+    )
     if reason:
         final_reason = reason
     elif invalid_selection:
@@ -228,7 +244,9 @@ def decide_final_slot_payload(
     elif isinstance(selected, dict) and selected.get("reason"):
         final_reason = str(selected["reason"])
     elif resolved_final_slot:
-        final_reason = "LLM이 tool description 계약에 따라 후보를 최종 시간으로 선택했습니다."
+        final_reason = (
+            "LLM이 tool description 계약에 따라 후보를 최종 시간으로 선택했습니다."
+        )
     elif candidates:
         final_reason = "후보는 전달됐지만 final_slot 또는 selected_index가 없어 최종 확정하지 않았습니다."
     else:

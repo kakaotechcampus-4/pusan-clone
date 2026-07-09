@@ -13,7 +13,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PACKAGE_ROOT
 DATA_DIR = PACKAGE_ROOT / "data"
@@ -21,7 +20,9 @@ STATIC_DIR = PACKAGE_ROOT / "static"
 BRAND_DIR = STATIC_DIR / "brand"
 PROXY_TOKEN_PLACEHOLDER = "여기에 api key 입력"
 DEFAULT_CHAT_PROXY_URL = "https://mlapi.run/4bbd0c4d-bf02-4e59-a635-457b1c30c56a/v1"
-DEFAULT_EMBEDDING_PROXY_URL = "https://mlapi.run/b54ff33e-6d14-42df-93f9-0f1132160ee8/v1"
+DEFAULT_EMBEDDING_PROXY_URL = (
+    "https://mlapi.run/b54ff33e-6d14-42df-93f9-0f1132160ee8/v1"
+)
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,9 @@ def load_config() -> AppConfig:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     proxy_token = os.getenv("PROXY_TOKEN")
     use_llm = os.getenv("KANANA_USE_LLM", "0").lower() in {"1", "true", "yes", "on"}
-    llm_assist = os.getenv("KANANA_LLM_ASSIST", os.getenv("KANANA_USE_LLM", "0")).lower() in {
+    llm_assist = os.getenv(
+        "KANANA_LLM_ASSIST", os.getenv("KANANA_USE_LLM", "0")
+    ).lower() in {
         "1",
         "true",
         "yes",
@@ -79,9 +82,13 @@ def load_config() -> AppConfig:
     return AppConfig(
         proxy_token=proxy_token,
         chat_proxy_url=os.getenv("CHAT_PROXY_URL", DEFAULT_CHAT_PROXY_URL),
-        embedding_proxy_url=os.getenv("EMBEDDING_PROXY_URL", DEFAULT_EMBEDDING_PROXY_URL),
+        embedding_proxy_url=os.getenv(
+            "EMBEDDING_PROXY_URL", DEFAULT_EMBEDDING_PROXY_URL
+        ),
         openai_model=os.getenv("OPENAI_MODEL", "openai/gpt-4.1-mini"),
-        openai_embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", "openai/text-embedding-3-small"),
+        openai_embedding_model=os.getenv(
+            "OPENAI_EMBEDDING_MODEL", "openai/text-embedding-3-small"
+        ),
         use_llm=use_llm,
         llm_assist=llm_assist,
         active_week=active_week,
