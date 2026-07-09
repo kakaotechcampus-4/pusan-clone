@@ -6,6 +6,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from pydantic import ValidationError
+
 from fixed.runtime_clock import current_app_date_iso
 from student_parts import week02_structure_natural_language_requests as week02
 
@@ -20,6 +22,11 @@ class Week02StructuredRequestTest(unittest.TestCase):
 
         self.assertEqual(batch.requests, [])
         self.assertEqual(batch.base_date, current_app_date_iso())
+
+    def test_structured_request_requires_kind(self) -> None:
+        #kind는 LLM이 반드시 분류해야 하므로 기본값으로 조용히 채우지 않는지 테스트
+        with self.assertRaises(ValidationError):
+            week02.StructuredRequest(title="보고서 제출")
 
     def test_coerce_structured_request_accepts_model_and_dict(self) -> None:
         #structured LLM 결과가 model 또는 dict로 와도 같은 스키마로 정규화 테스트
