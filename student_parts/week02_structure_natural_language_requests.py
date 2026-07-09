@@ -14,6 +14,7 @@ from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_
 
 
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
+PriorityLevel = Literal["매우 급함", "급함", "보통", "여유로움", "매우 여유로움"]
 _WEEK02_AGENT: Any | None = None
 
 _UNKNOWN_TIME_MARKERS = ["미정", "모름", "없음", "unknown", ""]
@@ -100,7 +101,9 @@ _UNKNOWN_TIME_MARKERS = ["미정", "모름", "없음", "unknown", ""]
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    kind : RequestKind = Field(description = 
+    kind : RequestKind = Field(
+        default="unknown",
+        description =
         "일정의 종류입니다. 다음 순서로 판단합니다: "
         "1) 사람 이름 뒤에 '랑', '와', '과', '하고' 같은 조사가 붙어 함께 시간을 보내는 활동으로 "
         "언급되면 (예: '철수랑 회의', '영희와 저녁') 참석자가 있는 것으로 보고, "
@@ -110,7 +113,8 @@ class StructuredRequest(BaseModel):
         "2) 참석자가 없고 마감기한이 있는 작업이면 todo, "
         "3) 참석자가 없고 다시 확인해야 하는 항목이면 reminder, "
         "4) 참석자가 없고 본인이 진행하는 일정이면 personal_schedule, "
-        "5) 위 어디에도 해당하지 않으면 unknown입니다."
+        "5) 위 어디에도 해당하지 않으면 unknown입니다. "
+        "응답에서 생략되면 unknown으로 자동 분류되어 추후 필터링·재분류가 가능합니다."
     )
     
     # pydantic은 타입을 엄격하게 검사한다. default로 기본값 자체는 None으로 설정 가능하지만. | None을 적어주지 않으면 타입 자체를 허용하지 않아서 오류가 발생한다 
@@ -136,7 +140,18 @@ class StructuredRequest(BaseModel):
     # default_factory를 사용하여. 인스턴스 생성 시점에 새 리스트를 만들도록 한다. 
     members : list[str] = Field(default_factory=list, description ="일정에 참석자명을 저장합니다")
     
-    priority : str | None = Field(default = None , description ="일정의 우선순위를 저장합니다 ")
+    priority : PriorityLevel = Field(
+        default="보통",
+        description=(
+            "일정의 우선순위를 저장합니다. 다음 기준으로 분류합니다: "
+            "'매우 급함' - 오늘 또는 내일까지 반드시 완료해야 함 (예: '3시간 뒤 제출 마감', '내일 면접'). "
+            "'급함' - 일주일 내 필요함 (예: '이번 주 금요일까지 보고서 제출', '다음주 월요일 발표'). "
+            "'보통' - 특별한 마감이 없거나 일반적인 일정 (예: '언젠가 해야 할 일', '정기 회의') (기본값). "
+            "'여유로움' - 2주 이상 여유가 있음 (예: '다음달 중에 프로젝트 시작'). "
+            "'매우 여유로움' - 한 달 이상 여유가 있음 (예: '분기별 계획', '장기 프로젝트 준비'). "
+            "일관된 우선순위 값으로 추후 필터링·정렬·알림 기능을 구현할 수 있습니다."
+        )
+    )
     reason : str | None = Field(
         default = None, 
         description=(
