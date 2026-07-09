@@ -83,6 +83,26 @@ def week02_final_response_rules_prompt() -> str:
         """).strip()
 
 
+class Week02AgentProvider:
+    """Week 2 agent를 한 번만 생성해 재사용하는 Singleton provider입니다."""
+
+    _agent: Any | None = None
+
+    @classmethod
+    def get_agent(cls) -> object:
+        """생성된 Week 2 agent가 있으면 재사용하고, 없으면 새로 생성합니다."""
+
+        if cls._agent is None:
+            cls._agent = create_agent(
+                model=chat_model(),
+                tools=week02_tools(),
+                response_format=StructuredRequestBatch,
+                system_prompt=week02_system_prompt(),
+            )
+
+        return cls._agent
+
+
 # [2주차 1회차 수강생 구현 가이드]
 #
 # 목표
@@ -285,28 +305,10 @@ def week02_prompt_parts() -> list[str]:
 def build_week02_agent() -> object:
     """Week 2 대화에서 structured_response를 직접 반환하는 단일 LangChain agent를 만듭니다."""
 
-    # TODO: CONFIG.has_openai_key가 없으면 RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")를 발생시키세요.
-    # TODO: 전역 _WEEK02_AGENT를 재사용하고, 아직 없을 때만 create_agent(...)로 새 agent를 만드세요.
-    # TODO: create_agent에는 model=chat_model(), tools=week02_tools(), response_format=StructuredRequestBatch,
-    #       system_prompt=week02_system_prompt()를 연결하세요.
-    # TODO: 생성 또는 재사용한 _WEEK02_AGENT를 반환하세요.
-
-    # create_agent()는 비교적 비용이 큰 작업이므로
-    # 모듈 전역 변수를 이용해 한 번만 생성하고 재사용합니다.
-    # (GoF Singleton과 동일한 목적이지만, 별도의 Singleton 클래스를 만들지는 않았습니다.)
-    global _WEEK02_AGENT  # 왜 전역 변수를 재사용할까? -> agent 생성은 무거운 작업 -> 고로 한번 만든 게 있을 경우 재사용
-
     if not CONFIG.has_openai_key:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
 
-    if _WEEK02_AGENT is None:
-        _WEEK02_AGENT = create_agent(
-            model=chat_model(),
-            tools=week02_tools(),
-            response_format=StructuredRequestBatch,  # 해당 옵션으로 agent 최종 결과가 자유 텍스트가 아닌 구조화된 아웃풋으로 나온다.
-            system_prompt=week02_system_prompt(),
-        )
-    return _WEEK02_AGENT
+    return Week02AgentProvider.get_agent()
 
 
 def build_week_agent() -> object:
