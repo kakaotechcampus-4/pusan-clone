@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Literal
 
 from langchain.agents import create_agent
@@ -105,10 +104,8 @@ class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    kind: RequestKind = (
-        Field(  # kind는 아무 문자열이나 되는 걸 막아준다 (LLM이 실수로 "schedule"이라고 반환하면 스키마 검증에서 걸린다)
-            description="요청의 종류입니다. 개인 일정이면 personal_schedule, 단체 일정이면 group_schedule, 할 일이면 todo, 알림이면 reminder, 판단하기 어려우면 unknown을 사용합니다."
-        )
+    kind: RequestKind = Field(  # kind는 아무 문자열이나 되는 걸 막아준다 (LLM이 실수로 "schedule"이라고 반환하면 스키마 검증에서 걸린다)
+        description="요청의 종류입니다. 개인 일정이면 personal_schedule, 단체 일정이면 group_schedule, 할 일이면 todo, 알림이면 reminder, 판단하기 어려우면 unknown을 사용합니다."
     )
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     title: str | None = Field(  # "철수랑 회의 잡아줘" -> 날짜가 없음 -> date=None
