@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from textwrap import dedent
 from typing import Any, Literal
 
 from langchain.agents import create_agent
@@ -22,6 +23,64 @@ RequestKind = Literal[
 Priority = Literal["높음", "보통", "낮음"]
 
 _WEEK02_AGENT: Any | None = None
+
+
+def week02_structured_response_prompt() -> str:
+    """Week 2 구조화 agent가 따르는 상세 프롬프트를 반환합니다."""
+
+    return dedent(f"""
+        당신은 Week 2 요청 구조화 agent입니다.
+
+        현재 앱 기준 날짜는 {current_app_date_iso()}입니다.
+        사용자의 한국어 자연어 요청이나 Week 1 tool 결과 JSON을 읽고,
+        최종 답변을 반드시 StructuredRequestBatch 형태의 structured_response로 반환해야 합니다.
+
+        구조화 규칙:
+        - 요청이 하나뿐이어도 StructuredRequestBatch.requests 리스트 안에 StructuredRequest 하나를 담습니다.
+        - kind는 personal_schedule, group_schedule, todo, reminder, unknown 중 하나만 사용합니다.
+        - 개인 일정 생성 요청은 personal_schedule로 분류합니다.
+        - 여러 사람이 함께 조율해야 하는 단체 일정은 group_schedule로 분류합니다.
+        - 해야 할 작업은 todo로 분류합니다.
+        - 특정 시점에 알려달라는 요청은 reminder로 분류합니다.
+        - 판단하기 어렵거나 정보가 부족하면 unknown을 사용합니다.
+
+        필드 추출 규칙:
+        - title은 일정, 할 일, 알림의 핵심 제목으로 작성합니다.
+        - date는 확실할 때만 YYYY-MM-DD 형식으로 작성합니다.
+        - start_time과 end_time은 확실할 때만 HH:MM 24시간 형식으로 작성합니다.
+        - members는 요청에 등장한 참석자나 관련 사람 이름을 리스트로 작성합니다.
+        - priority는 사용자가 급함, 중요함, 우선 처리 등을 표현한 경우에만 작성합니다.
+        - priority 값은 반드시 높음, 보통, 낮음 중 하나만 사용합니다.
+        - 급함, 긴급, 중요, 우선 처리 같은 표현은 높음으로 정규화합니다.
+        - 여유 있음, 낮은 우선순위 같은 표현은 낮음으로 정규화합니다.
+        - reason에는 어떤 표현이나 JSON 필드를 근거로 구조화했는지 간단히 작성합니다.
+        - original_text에는 구조화에 사용한 사용자 원문이나 tool 결과의 핵심 원문을 보존합니다.
+        - 모르는 값은 추측하지 말고 None 또는 빈 리스트로 둡니다.
+
+        Week 1 tool JSON 처리 규칙:
+        - personal_create_schedule tool 결과 JSON이 있으면 created_schedule 객체를 읽어 title/date/start_time/end_time 등의 필드를 채웁니다.
+        - 이미 Week 1 tool 결과 JSON을 받은 경우, 같은 목적의 tool을 다시 호출하지 말고 payload를 읽어 structured_response를 만듭니다.
+        - tool 결과와 사용자 원문이 함께 있으면 tool 결과를 우선 근거로 사용하되, 누락된 정보는 사용자 원문에서 보완합니다.
+
+        Week 2 범위 제한:
+        - Week 2에서는 SQLite 저장을 하지 않습니다.
+        - Week 2에서는 RAG 검색을 하지 않습니다.
+        - Week 2에서는 외부 멤버의 실제 일정을 조회하거나 조율하지 않습니다.
+        - Week 2에서는 최종 구조화 결과만 반환합니다.
+        """).strip()
+
+
+def week02_final_response_rules_prompt() -> str:
+    """Week 2 structured_response 최종 답변 규칙 프롬프트를 반환합니다."""
+
+    return dedent("""
+        최종 답변 규칙:
+        - 최종 응답은 반드시 StructuredRequestBatch structured_response로 반환합니다.
+        - 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담습니다.
+        - base_date에는 현재 앱 기준 날짜를 YYYY-MM-DD 형식으로 담습니다.
+        - personal_create_schedule tool 결과 JSON이 있으면 created_schedule을 읽어 StructuredRequest 필드를 채웁니다.
+        - 확실하지 않은 date/start_time/end_time/title/members/priority는 추측하지 않습니다.
+        """).strip()
 
 
 # [2주차 1회차 수강생 구현 가이드]
@@ -136,9 +195,13 @@ class StructuredRequest(BaseModel):
         description="요청에 등장하는 참석자나 관련 멤버 목록입니다. 없거나 알 수 없으면 빈 리스트입니다.",
     )
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-
     priority: Priority | None = Field(
-        default=None, description="할 일이나 알림의 우선순위입니다."
+        default=None,
+        description=(
+            "할 일이나 알림의 우선순위입니다. "
+            "사용 가능한 값은 높음, 보통, 낮음입니다. "
+            "명시되지 않았으면 None입니다."
+        ),
     )
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     reason: str | None = Field(
@@ -204,14 +267,7 @@ def week02_system_prompt() -> str:
     return join_system_prompt(
         [
             *week02_prompt_parts(),  # week02_prompt_parts는 list[str]를 반환, *로 리스트 펼쳐줘야 함 아니면 이차원 리스트가 돼버린다
-            """
-            최종 답변 규칙:
-            - 최종 응답은 반드시 StructuredRequestBatch structured_response로 반환합니다.
-            - 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담습니다.
-            - base_date에는 현재 앱 기준 날짜를 YYYY-MM-DD 형식으로 담습니다.
-            - personal_create_schedule tool 결과 JSON이 있으면 created_schedule을 읽어 StructuredRequest 필드를 채웁니다.
-            - 확실하지 않은 date/start_time/end_time/title/members/priority는 추측하지 않습니다.
-            """,
+            week02_final_response_rules_prompt(),
         ]
     )
     # week02_prompt_parts 결과 + 최종 답변 규칙을 하나의 문자열로 합치기
@@ -222,56 +278,7 @@ def week02_prompt_parts() -> list[str]:
 
     return [
         *week01_prompt_parts(),
-        # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
-        # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
-        # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
-        # 1. 너는 Week 2 구조화 agent다.
-        # 2. 현재 날짜는 `current_app_date_iso()` 기준이다.
-        # 3. 자연어 요청을 `StructuredRequestBatch`로 바꿔라.
-        # 4. 요청이 하나여도 `requests` 리스트에 넣어라.
-        # 5. 모르는 값은 만들지 마라.
-        # 6. Week 1 tool JSON이 있으면 `created_schedule`을 읽어라.
-        # 7. Week 2에서는 DB 저장, RAG, 외부 일정 조율을 하지 않는다.
-        f"""
-        당신은 Week 2 요청 구조화 agent입니다.
-
-        현재 앱 기준 날짜는 {current_app_date_iso()}입니다.
-        사용자의 한국어 자연어 요청이나 Week 1 tool 결과 JSON을 읽고,
-        최종 답변을 반드시 StructuredRequestBatch 형태의 structured_response로 반환해야 합니다.
-
-        구조화 규칙:
-        - 요청이 하나뿐이어도 StructuredRequestBatch.requests 리스트 안에 StructuredRequest 하나를 담습니다.
-        - kind는 personal_schedule, group_schedule, todo, reminder, unknown 중 하나만 사용합니다.
-        - 개인 일정 생성 요청은 personal_schedule로 분류합니다.
-        - 여러 사람이 함께 조율해야 하는 단체 일정은 group_schedule로 분류합니다.
-        - 해야 할 작업은 todo로 분류합니다.
-        - 특정 시점에 알려달라는 요청은 reminder로 분류합니다.
-        - 판단하기 어렵거나 정보가 부족하면 unknown을 사용합니다.
-
-        필드 추출 규칙:
-        - title은 일정, 할 일, 알림의 핵심 제목으로 작성합니다.
-        - date는 확실할 때만 YYYY-MM-DD 형식으로 작성합니다.
-        - start_time과 end_time은 확실할 때만 HH:MM 24시간 형식으로 작성합니다.
-        - members는 요청에 등장한 참석자나 관련 사람 이름을 리스트로 작성합니다.
-        - priority는 사용자가 급함, 중요함, 우선 처리 등을 표현한 경우에만 작성합니다.
-        - reason에는 어떤 표현이나 JSON 필드를 근거로 구조화했는지 간단히 작성합니다.
-        - original_text에는 구조화에 사용한 사용자 원문이나 tool 결과의 핵심 원문을 보존합니다.
-        - 모르는 값은 추측하지 말고 None 또는 빈 리스트로 둡니다.
-
-        Week 1 tool JSON 처리 규칙:
-        - personal_create_schedule tool 결과 JSON이 있으면 created_schedule 객체를 읽어 title/date/start_time/end_time 등의 필드를 채웁니다.
-        - 이미 Week 1 tool 결과 JSON을 받은 경우, 같은 목적의 tool을 다시 호출하지 말고 payload를 읽어 structured_response를 만듭니다.
-        - tool 결과와 사용자 원문이 함께 있으면 tool 결과를 우선 근거로 사용하되, 누락된 정보는 사용자 원문에서 보완합니다.
-
-        Week 2 범위 제한:
-        - Week 2에서는 SQLite 저장을 하지 않습니다.
-        - Week 2에서는 RAG 검색을 하지 않습니다.
-        - Week 2에서는 외부 멤버의 실제 일정을 조회하거나 조율하지 않습니다.
-        - Week 2에서는 최종 구조화 결과만 반환합니다.
-        """,
-        # 프롬프트는 "친절한 설명"이 아닌 출력 계약서라고 보자.
-        # "모르는 값은 추측하지 말고 None 또는 빈 리스트로 둡니다." <- 이런 문장이 중요함(LLM은 모르는 것도 자연스럽게 만들어 냄, 특히 일정 앱)
+        week02_structured_response_prompt(),
     ]
 
 
