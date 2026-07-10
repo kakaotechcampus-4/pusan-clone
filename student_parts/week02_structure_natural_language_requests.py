@@ -110,9 +110,15 @@ class StructuredRequest(BaseModel):
 
     kind: RequestKind = Field(description="일정 종류")
     title: str | None = Field(default=None, description="일정 제목")
-    date: str | None = Field(default=None, description="일정 날짜")
-    start_time: str | None = Field(default=None, description="일정 시작 시간 (HH:MM)")
-    end_time: str | None = Field(default=None, description="일정 종료 시간 (HH:MM)")
+    date: str | None = Field(
+        default=None, description="일정 날짜 (YYYY-MM-DD, 모르면 None)"
+    )
+    start_time: str | None = Field(
+        default=None, description="일정 시작 시간 (HH:MM, 모르면 None)"
+    )
+    end_time: str | None = Field(
+        default=None, description="일정 종료 시간 (HH:MM, 모르면 None)"
+    )
     members: list[str] = Field(default_factory=list, description="일정 멤버")
     priority: str | None = Field(default=None, description="일정 우선순위")
     reason: str | None = Field(default=None, description="판단 근거")
