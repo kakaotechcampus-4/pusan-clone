@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
+from fixed.runtime_clock import current_app_date_iso, app_started_at_iso
 from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_parts, week01_tools
 
 
@@ -99,22 +99,22 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    kind: RequestKind = Field(description="personal_schedule: 개인일정, group_schedule: 2명 이상이 참여하는 일정, todo: 할일, reminder: 알림, unknown: 기타 분류가 애매한 것")
+    kind: RequestKind = Field(description="personal_schedule: 개인일정, group_schedule: 2명 이상이 참여하는 일정, todo: 할일, reminder: 알림/리마인드가 필요한 일정, unknown: 기타 분류가 애매한 것")
     title: str | None = Field(default=None, description="사용자에게 받은 요청의 제목")
     date: str | None = Field(default=None, description="YYYY-MM-DD")
     start_time: str | None = Field(default=None, description="HH:MM, 24시간 형식. 사용자가 지정하지 않았을 경우 임의로 문자열 넣지 말고 null.")
     end_time: str | None = Field(default=None, description="HH:MM, 24시간 형식. 사용자가 지정하지 않았을 경우 임의로 문자열 넣지 말고 null.")
     members: list[str] = Field(default_factory=list, description="참석자 목록. 이름에서 랑/이랑/와/하고 등의 조사는 제거하고 저장할 것. 예시: 수호랑 -> 수호")
-    priority: str | None = Field(default=None, description="할 일 우선순위. low/medium/high 중 하나")
-    reason: str | None = Field(default=None, description="판단 근거")
+    priority: Literal["low", "medium", "high"] | None = Field(default=None, description="할 일 우선순위. low/medium/high 중 하나. 명시하지 않았으면 null.")
+    reason: list[str] = Field(default_factory=list, description="각 필드에 대한 판단 근거")
     original_text: str = Field(default="", description="원문 보존용 필드")
 
 
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 2차 과제 스키마입니다."""
 
-    requests: list[StructuredRequest] = Field(default_factory=list, description="받은 요청들 목록")
-    base_date: str = Field(default_factory=current_app_date_iso, description="오늘 날짜")
+    requests: list[StructuredRequest] = Field(default_factory=list, description="자연어에서 분리한 개별 요청들 목록. 요청이 하나라도 리스트에 하나 담는다.")
+    base_date: str = Field(default_factory=current_app_date_iso, description="상대 날짜 해석 기준일")
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
@@ -161,10 +161,12 @@ def week02_prompt_parts() -> list[str]:
         *week01_prompt_parts(),
         "너는 사용자의 일정을 정리하는 개인 비서 agent야. 사용자의 요청을 정형화하여 구조에 맞게 정해야해.",
         f"현재 날짜는 {current_app_date_iso()}야. 모든 상대적인 날짜 표현은 현재 날짜를 기준으로 계산해.",
+        f"현재 시각은 {app_started_at_iso()}야. 모든 상대적인 시간 표현은 현재 시각을 기준으로 계산해. (예: 20분 뒤, 1시간 전)",
         "사용자의 요청을 StructuredRequest의 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화해야해. 단, 사용자가 명시하지 않은 필드는 임의로 채우지 말고 기본값을 유지해.",
         "week1 tool JSON을 받은 경우, 다시 tool을 호출하지 말고 payload를 읽어 structured_response로 만들어.",
         "week2에서는 sqlite저장, RAG, 외부 멤버 일정 조율을 하지 않을거야.",
         "최종 답변은 StructuredRequestBatch JSON 객체를 정확히 하나만 출력해. 같은 JSON을 반복하거나 JSON 앞뒤에 다른 텍스트, 줄바꿈 후 추가 출력을 덧붙이지 마.",
+        "reason필드를 빈 리스트로 두지 말고 kind, proirity 필드에 대한 판단 근거를 작성해. 각 필드에 대한 근거를 하나의 원소로 분리해서 저장해.(예: kind: 다시 리마인드 해줘야하므로 remind로 판단)"
     ]
 
 
@@ -183,7 +185,6 @@ def build_week02_agent() -> object:
             system_prompt = week02_system_prompt(),
         )
     return _WEEK02_AGENT
-    
 
 
 def build_week_agent() -> object:
