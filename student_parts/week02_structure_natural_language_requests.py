@@ -99,10 +99,20 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     # 요청 종류를 제한해 LLM이 임의의 분류 값을 생성하지 못하게 한다.
     kind: RequestKind = Field(
-        description=(
-            "요청 종류입니다. personal_schedule, group_schedule, todo, reminder, unknown 중 하나입니다."
-        )
+    description=(
+        "사용자가 원하는 핵심 동작의 종류입니다. "
+        "personal_schedule은 사용자의 개인 일정이나 약속을 등록하려는 요청입니다. "
+        "예: '내일 오후 3시에 치과 예약 일정 잡아줘'. "
+        "group_schedule은 다른 사람과 가능한 시간을 확인하거나 "
+        "여러 사람이 참여하는 일정을 조율하려는 요청입니다. "
+        "예: '철수랑 다음 주에 가능한 시간 찾아서 회의 잡아줘'. "
+        "todo는 일정 등록이나 알림 요청 없이 수행해야 할 작업입니다. "
+        "예: '회의 준비해야 해'. "
+        "reminder는 특정 시점에 알려 달라거나 잊지 않도록 해 달라는 요청입니다. "
+        "예: '모레까지 보고서 제출하는 거 잊지마'. "
+        "unknown은 핵심 의도를 확실히 판단할 수 없는 요청입니다."
     )
+)
     # 사용자 요청에서 핵심 행동이나 일정 이름만 추출한다.
     title: str | None = Field(
         default=None,
@@ -162,22 +172,58 @@ class StructuredRequestBatch(BaseModel):
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
-    """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
+    """LangChain structured output 결과를 StructuredRequest로 정규화합니다."""
 
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+
+    raise RuntimeError(
+        "StructuredRequest로 변환할 수 없는 LLM 응답입니다: "
+        f"{type(value).__name__}"
+    )
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    """Week 3 이상에서 agent를 새로 띄우지 않고 자연어를 StructuredRequest로 바꿉니다."""
 
-    ...
+    structured_llm = chat_model().with_structured_output(
+        StructuredRequest,
+        method="function_calling",
+    )
+
+    result = structured_llm.invoke(
+        [
+            (
+                "system",
+                join_system_prompt(week02_prompt_parts()),
+            ),
+            (
+                "user",
+                text,
+            ),
+        ]
+    )
+
+    return _coerce_structured_request(result)
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """Week 3 이상 agent가 저장/조율 전에 호출하는 구조화 bridge tool입니다."""
 
-    ...
+    structured_request = extract_structured_request(query)
+
+    payload = {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": current_app_date_iso(),
+        "structured_request": structured_request.model_dump(),
+    }
+
+    return json.dumps(payload, ensure_ascii=False)
 
 # Week 1에서 구현한 도구를 Week 2 Agent에서도 재사용한다.
 def week02_tools() -> list[Any]:
@@ -197,36 +243,73 @@ def week02_system_prompt() -> str:
         ]
     )
   
-# 자연어 요청을 구조화하기 위한 Week 2 전용 판단 규칙을 반환한다.
 def week02_prompt_parts() -> list[str]:
+    """2주차 structured output agent가 따르는 system prompt 조각입니다."""
+
     return [
         *week01_prompt_parts(),
         f"""
-        너는 사용자의 한국어 자연어 요청과 Week 1 tool JSON을 구조화하는 Week 2 agent다.
-        현재 앱 기준 날짜는 {current_app_date_iso()}이다.
+너는 사용자의 한국어 자연어 요청과 Week 1 tool JSON을 구조화하는 Week 2 agent다.
+현재 앱 기준 날짜는 {current_app_date_iso()}이다.
 
-        요청을 다음 필드로 구조화한다.
-        - kind: personal_schedule, group_schedule, todo, reminder, unknown 중 하나
-        - title: 핵심 제목
-        - date: 확실한 경우 YYYY-MM-DD
-        - start_time, end_time: 확실한 경우 HH:MM
-        - members: 요청에 실제로 등장한 멤버 목록
-        - priority: 사용자가 명시한 우선순위
-        - reason: 판단 근거
-        - original_text: 구조화에 사용한 원문
+요청을 다음 필드로 구조화한다.
+- kind: personal_schedule, group_schedule, todo, reminder, unknown 중 하나
+- title: 핵심 제목
+- date: 확실한 경우 YYYY-MM-DD
+- start_time, end_time: 확실한 경우 HH:MM
+- members: 요청에 실제로 등장한 멤버 목록
+- priority: 사용자가 명시한 우선순위
+- reason: 판단 근거
+- original_text: 구조화에 사용한 원문
 
-        한 문장에 독립된 요청이 여러 개면 requests에 각각 나누어 담는다.
-        상대 날짜는 현재 앱 기준 날짜를 기준으로 계산한다.
-        사용자가 말하지 않은 날짜, 시간, 멤버, 우선순위는 추측하지 않는다.
+kind는 사용자가 최종적으로 원하는 핵심 동작을 기준으로 선택한다.
 
-        Week 1 tool 결과 JSON이 주어지면 같은 tool을 다시 호출하지 않는다.
-        personal_create_schedule의 created_schedule에서 title, date, start_time,
-        end_time, attendees를 읽고 attendees는 members로 옮긴다.
-        end_time이 "미정"이면 None으로 처리한다.
+- personal_schedule:
+  사용자의 개인 일정이나 약속을 등록하려는 요청이다.
+  예: "내일 오후 3시에 치과 예약 일정 잡아줘"
 
-        Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조회나 조율을 하지 않는다.
-        구조화된 StructuredRequestBatch만 최종 결과로 반환한다.
-        """,
+- group_schedule:
+  다른 사람과 가능한 시간을 확인하거나 여러 사람이 참여하는
+  일정을 조율하려는 요청이다.
+  예: "철수랑 다음 주에 가능한 시간 찾아서 회의 잡아줘"
+
+- todo:
+  일정 등록이나 알림 요청 없이 수행해야 할 작업이다.
+  예: "회의 준비해야 해"
+
+- reminder:
+  특정 시점에 알려 달라거나 잊지 않도록 해 달라는 요청이다.
+  예: "모레까지 보고서 제출하는 거 잊지마"
+
+- unknown:
+  요청 목적이 불분명해 다른 kind로 확실하게 분류할 수 없는 요청이다.
+  예: "그거 나중에 어떻게 좀 해줘"
+
+분류할 때 다음 규칙을 지킨다.
+
+- "알려줘", "잊지마", "리마인드해줘"처럼 알림 의도가
+  명시되어 있으면 reminder를 우선한다.
+- 다른 사람의 가능한 시간을 확인하거나 일정을 조율해야 하면
+  group_schedule로 분류한다.
+- 사람 이름이 등장했다는 이유만으로 group_schedule로 분류하지 않는다.
+- 일정 등록이나 알림 요청 없이 해야 할 작업만 말하면 todo로 분류한다.
+- 사용자의 개인 일정이나 약속을 등록하는 요청은
+  personal_schedule로 분류한다.
+- 핵심 의도를 확실히 판단할 수 없을 때만 unknown을 사용한다.
+
+한 문장에 독립된 요청이 여러 개면 requests에 각각 나누어 담는다.
+상대 날짜는 현재 앱 기준 날짜를 기준으로 계산한다.
+사용자가 말하지 않은 날짜, 시간, 멤버, 우선순위는 추측하지 않는다.
+확실하지 않은 값은 None 또는 빈 목록으로 둔다.
+
+Week 1 tool 결과 JSON이 주어지면 같은 tool을 다시 호출하지 않는다.
+personal_create_schedule의 created_schedule에서 title, date, start_time,
+end_time, attendees를 읽고 attendees는 members로 옮긴다.
+end_time이 "미정"이면 None으로 처리한다.
+
+Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조회나 조율을 하지 않는다.
+구조화된 StructuredRequestBatch만 최종 결과로 반환한다.
+""",
     ]
 
 # Week 2 구조화 응답을 생성하는 Agent를 최초 한 번만 생성한다.
