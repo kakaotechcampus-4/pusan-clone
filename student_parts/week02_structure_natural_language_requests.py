@@ -263,7 +263,7 @@ def week02_prompt_parts() -> list[str]:
         "사용자 자연어 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화하는 역할을 수행합니다.",
         "오늘 날짜가 필요하거나 상대 날짜 계산이 필요한 경우 get_current_date tool을 호출해 확인한 뒤 상대 날짜를 해석합니다.",
         "Week 1 tool JSON을 받은 경우, 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만듭니다.",
-        "SQLite 저장, RAG, 외부 멤버 일정 조율은 수행하지 않습니다."
+        "SQLite 저장, RAG, 외부 멤버 일정 조율은 수행하지 않습니다.",
         
         # JSON 형식 외의 출력 예방 프롬프트
         "최종 응답은 반드시 StructuredRequestBatch 구조화 출력(JSON)만 반환합니다.",
@@ -286,7 +286,7 @@ def week02_prompt_parts() -> list[str]:
         "아래 지침은 1주차 지침 중 서로 충돌하는 부분을 명시적으로 덮어쓴다.",
         "1주차의 '도구 호출 뒤 짧게 답한다', '빠른 날짜 순으로 답한다',",
         "'삭제 후 personal_list_schedules를 호출해 확인한다'는 지침은",
-        "이번 주차에서는 자연어 응답을 만듫라는 뜻이 아니라,",
+        "이번 주차에서는 자연어 응답을 만들라는 뜻이 아니라,",
         "그 정보를 structured_response의 근거로만 사용하라는 뜻으로 재해석한다.",
 
         # 1주차 코드와의 충돌 해결 프롬프트 (시간이 모호할 경우 재질문 방지)
@@ -336,6 +336,10 @@ def build_week02_agent() -> object:
         _WEEK02_AGENT = create_agent(
             model=chat_model(),
             tools=week02_tools(),
+            # response_format=StructuredRequestBatch를 사용했을 때 런타임 에러가 발생
+            # (AutoStrategy가 ChatOpenAI로 판단해 ProviderStrategy(native json_schema)를 선택하는데,
+            #  커스텀 proxy가 이를 완전히 지원하지 않아 발생하는 문제로 추정)
+            # ToolStrategy를 사용했을땐 정상적으로 동작되는 것이 확인됨.
             response_format=ToolStrategy(StructuredRequestBatch),
             system_prompt=week02_system_prompt()
         )
