@@ -11,7 +11,7 @@ from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_parts, week01_tools
-
+from pydantic import PositiveInt
 
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
 _WEEK02_AGENT: Any | None = None
@@ -155,7 +155,7 @@ class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    kind: RequestKind = Field(description="요청 종류(personal_schedule, group_schedule, todo, reminder, unknown)")
+    kind: RequestKind = Field(description="요청 종류(personal_schedule : , group_schedule, todo, reminder, unknown)")
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     title: str | None = Field(default=None, description="일정의 제목")
     date: str | None = Field(default=None, description="일정 날짜(YYYY-MM-DD)")
@@ -164,7 +164,7 @@ class StructuredRequest(BaseModel):
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
     members: list[str] = Field(default_factory=list, description="참석자 목록")
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    priority: str | None = Field(default=None, description="일정 우선순위")
+    priority: PositiveInt | None = Field(default=None, description="일정 우선순위")
     reason: str | None = Field(default=None, description="요청 종류나 필드 값을 판단한 근거")
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     original_text: str = Field(default="", description="구조화 이전 사용자 원문을 그대로 보존")
@@ -214,9 +214,16 @@ def extract_schedule_request(query: str) -> str:
     """Week 3 이상 agent가 저장/조율 전에 호출하는 구조화 bridge tool입니다."""
 
     # TODO: extract_structured_request(query)를 호출해 자연어 또는 Week 1 JSON payload를 구조화하세요.
+    payload = extract_structured_request(query)
     # TODO: ok/tool_name/base_date/structured_request 키를 가진 dict를 만들고 structured_request에는 model_dump() 결과를 넣으세요.
+    result = {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": current_app_date_iso(),
+        "structured_request": payload.model_dump()
+    }
     # TODO: json.dumps(..., ensure_ascii=False)로 JSON 문자열을 반환하세요.
-    ...
+    return json.dumps(result, ensure_ascii=False)
 
 
 def week02_tools() -> list[Any]:
