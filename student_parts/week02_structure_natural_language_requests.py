@@ -158,7 +158,7 @@ class StructuredRequest(BaseModel):
     kind: RequestKind = Field(
         description=(
             "요청 종류(personal_schedule: 개인 일정 생성 요청, "
-            "group_schedule: members가 있는 일정 생성 요청, "
+            "group_schedule: 사용자 외에 다른 참석자(이름, 사람, 팀원 등)가 함께 참여하는 일정 생성 요청, "
             "todo: 완료해야 하는 작업 등록 요청, "
             "reminder: start_time에 한 번, end_time에 한 번 알림 등록 요청, "
             "unknown: 분류할 수 없는 요청)"
