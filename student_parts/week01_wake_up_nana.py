@@ -191,8 +191,8 @@ def personal_create_schedule(
             "attendees": attendees if attendees is not None else [],
             "members": attendees if attendees is not None else [],
             "priority": priority,
-            "reason": None,
-            "original_text": "",
+            "reason": reason,
+            "original_text": original_text,
             "session_id": current_session_scope(),
             "created_at": _now_iso(),
         }
