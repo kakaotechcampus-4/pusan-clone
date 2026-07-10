@@ -157,8 +157,8 @@ class StructuredRequest(BaseModel):
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
     kind: RequestKind = Field(
         description=(
-            "요청 종류(personal_schedule: 개인 일정 생성 요청, "
-            "group_schedule: 사용자 외에 다른 참석자(이름, 사람, 팀원 등)가 함께 참여하는 일정 생성 요청, "
+            "요청 종류(personal_schedule: 사용자 외의 참석자가 없는 개인 일정 생성 요청, "
+            "group_schedule: 사용자 외의 참석자가 1명 이상 언급된 일정 생성 요청. 예) '철수랑 회의', '영희와 점심'"
             "todo: 완료해야 하는 작업 등록 요청, "
             "reminder: start_time에 한 번, end_time에 한 번 알림 등록 요청, "
             "unknown: 분류할 수 없는 요청)"
@@ -266,6 +266,7 @@ def week02_prompt_parts() -> list[str]:
         "Week 1 tool 결과 JSON을 이미 받은 경우에는 tool을 다시 호출하지 않고 payload를 읽어 structured_response로 변환한다.",
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
         "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다.",
+        "members 필드가 비어있지 않다면, kind 필드는 반드시 group_schedule로 설정한다.",
     ]
 
 
