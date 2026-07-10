@@ -204,7 +204,11 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
     # TODO: value가 이미 StructuredRequest이면 그대로 반환하세요.
     # TODO: value가 dict이면 StructuredRequest.model_validate(...)로 검증해 반환하세요.
     # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    raise RuntimeError(f"예상하지 못한 structured output 형태입니다: {type(value)}")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
@@ -213,8 +217,14 @@ def extract_structured_request(text: str) -> StructuredRequest:
     # TODO: chat_model().with_structured_output(StructuredRequest, method="function_calling")로 structured LLM을 만드세요.
     # TODO: system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고, user 메시지에는 text를 넣어 invoke하세요.
     # TODO: LLM 결과를 _coerce_structured_request(...)로 정규화해 StructuredRequest 하나로 반환하세요.
-    ...
-
+    structed_llm = chat_model().with_structured_output(StructuredRequest, method="function_calling")
+    result = structed_llm.invoke(
+        [
+            ("system", join_system_prompt(week02_prompt_parts())),
+            ("user", text),
+        ]
+    )
+    return _coerce_structured_request(result)
 
 @tool
 def extract_schedule_request(query: str) -> str:
@@ -223,7 +233,16 @@ def extract_schedule_request(query: str) -> str:
     # TODO: extract_structured_request(query)를 호출해 자연어 또는 Week 1 JSON payload를 구조화하세요.
     # TODO: ok/tool_name/base_date/structured_request 키를 가진 dict를 만들고 structured_request에는 model_dump() 결과를 넣으세요.
     # TODO: json.dumps(..., ensure_ascii=False)로 JSON 문자열을 반환하세요.
-    ...
+    structed_request = extract_structured_request(query)
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name" : "extract_schedule_request",
+            "base_date": current_app_date_iso(),
+            "structured_request": structed_request.model_dump()
+        },
+        ensure_ascii=False,
+    )
 
 
 def week02_tools() -> list[Any]:
