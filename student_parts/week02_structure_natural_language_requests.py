@@ -13,7 +13,6 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_parts, week01_tools
 
-
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
 _WEEK02_AGENT: Any | None = None
 
@@ -175,7 +174,18 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        "2주차 agent는 사용자의 자연어 요청을 읽고, 그것을 StructuredRequest 객체로 구조화하여 결과로 반환하는 역할을 수행합니다. current_app_date_iso() 함수를 사용하여 반환된 현재 날짜를 기준으로 상대적인 날짜 표현을 해석해야 합니다.",
+        "2주차 agent는 사용자의 자연어 요청을 읽고, 그것을 StructuredRequest 객체로 구조화하여 결과로 반환하는 역할을 수행합니다. ",
+        """
+        {
+            name:"current_app_date_iso",
+            description:"현재 날짜를 ISO 8601 형식으로 반환하는 함수입니다. 상대적인 날짜 표현을 해석할 때 해당 함수를 호출하여 기준 날짜를 확인하여야 합니다. 예: 2026-07-10, 2026-05-05",
+            parameters: {
+                type: "object",
+                properties: {},
+                required: []
+            }
+        }
+        """
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
         "자연어를 입력으로 받으면, StructuredRequest 객체의 kind, title, date, start_time, end_time, members, priority, reason, original_text 필드로 구조화하여 반환해야 합니다.",
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
