@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain.agents import create_agent
 from langchain.tools import tool
 from pydantic import BaseModel, Field, ValidationError
@@ -209,9 +209,15 @@ def extract_structured_request(text: str) -> StructuredRequest:
     """Week 3 이상에서 agent를 새로 띄우지 않고 자연어를 StructuredRequest로 바꿉니다."""
 
     # TODO: chat_model().with_structured_output(StructuredRequest, method="function_calling")로 structured LLM을 만드세요.
+    structured_LLM = chat_model().with_structured_output(StructuredRequest, method="function_calling")
     # TODO: system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고, user 메시지에는 text를 넣어 invoke하세요.
+    messages = [
+        SystemMessage(join_system_prompt(week02_prompt_parts())),
+        HumanMessage(text)
+    ]
+    res = structured_LLM.invoke(messages)
     # TODO: LLM 결과를 _coerce_structured_request(...)로 정규화해 StructuredRequest 하나로 반환하세요.
-    ...
+    return _coerce_structured_request(res)
 
 
 @tool
