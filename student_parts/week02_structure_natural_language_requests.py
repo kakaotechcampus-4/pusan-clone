@@ -101,7 +101,7 @@ class StructuredRequest(BaseModel):
     kind: RequestKind = Field(description="요청의 종류(개인 일정, 그룹 일정, 할 일, 리마인더 등)")
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     title: str | None = Field(default=None, description="요청된 주제")
-    date: str | None = Field(default=None, description=f"예정된 날짜 {current_app_date_iso}를 기준으로 일주일이면 7일뒤, 삼일 뒤면 3일뒤 등 상대적인 날짜")
+    date: str | None = Field(default=None, description=f"예정된 날짜 {current_app_date_iso()}를 기준으로 일주일이면 7일뒤, 삼일 뒤면 3일뒤 등 상대적인 날짜")
     start_time: str | None = Field(default=None, description="요청의 시작 시간")
     end_time: str | None = Field(default=None, description="요청의 끝나는 시간")
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
