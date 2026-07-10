@@ -177,6 +177,12 @@ class StructuredRequest(BaseModel):
     def nomalize_members(cls,v):
         return [] if v is None else v
 
+    @field_validator("priority", mode="before")
+    @classmethod
+    def normalize_priority(cls, v):
+        """LLM이 priority에 null을 명시적으로 반환하면 기본값 '보통'으로 정규화합니다."""
+        return "보통" if v is None else v
+
     
     @field_validator("start_time", "end_time", mode="before")
     @classmethod
