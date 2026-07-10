@@ -23,7 +23,8 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
-from student_parts.week02_structure_natural_language_requests import RequestKind
+from typing import Literal
+RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
 
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
