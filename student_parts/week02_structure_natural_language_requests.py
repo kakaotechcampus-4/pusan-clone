@@ -21,6 +21,7 @@ from student_parts.week01_wake_up_nana import (
 RequestKind = Literal[
     "personal_schedule", "group_schedule", "todo", "reminder", "unknown"
 ]
+Priority = Literal["high", "medium", "low"]
 _WEEK02_AGENT: Any | None = None
 
 
@@ -120,7 +121,9 @@ class StructuredRequest(BaseModel):
         default=None, description="일정 종료 시간 (HH:MM, 모르면 None)"
     )
     members: list[str] = Field(default_factory=list, description="일정 멤버")
-    priority: str | None = Field(default=None, description="일정 우선순위")
+    priority: Priority | None = Field(
+        default=None, description="일정 우선순위 (high/medium/low, 모르면 None)"
+    )
     reason: str | None = Field(default=None, description="판단 근거")
     original_text: str = Field(default="", description="사용자 요청 원문")
 
