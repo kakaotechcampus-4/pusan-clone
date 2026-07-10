@@ -168,6 +168,10 @@ def personal_create_schedule(
     start_time: str,
     end_time: str = "미정",
     attendees: list[str] | None = None,
+    kind: str = "personal_schedule",
+    priority: int | None = None,
+    reason: str | None = None,
+    original_text: str = "",
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
@@ -185,6 +189,10 @@ def personal_create_schedule(
             "start_time": start_time,
             "end_time": end_time,
             "attendees": attendees if attendees is not None else [],
+            "members": attendees if attendees is not None else [],
+            "priority": priority,
+            "reason": None,
+            "original_text": "",
             "session_id": current_session_scope(),
             "created_at": _now_iso(),
         }
