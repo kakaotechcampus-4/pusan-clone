@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain.agents.structured_output import ToolStrategy
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -101,6 +102,8 @@ _WEEK02_AGENT: Any | None = None
 #     response_format=StructuredRequestBatch가 설정된 agent를 만들고 재사용합니다.
 #     build_week_agent()는 실행기가 찾는 표준 entry point입니다.
 
+_TIME_REGEX = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
 
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
@@ -108,12 +111,22 @@ class StructuredRequest(BaseModel):
     kind: RequestKind = Field(description="일정 종류")
     title: str | None = Field(default=None, description="일정 제목")
     date: str | None = Field(default=None, description="일정 날짜")
-    start_time: str | None = Field(default=None, description="일정 시작 시간")
-    end_time: str | None = Field(default=None, description="일정 종료 시간")
+    start_time: str | None = Field(default=None, description="일정 시작 시간 (HH:MM)")
+    end_time: str | None = Field(default=None, description="일정 종료 시간 (HH:MM)")
     members: list[str] = Field(default_factory=list, description="일정 멤버")
     priority: str | None = Field(default=None, description="일정 우선순위")
     reason: str | None = Field(default=None, description="판단 근거")
     original_text: str = Field(default="", description="사용자 요청 원문")
+
+    @field_validator("start_time", "end_time", mode="before")
+    @classmethod
+    def _normalize_time(cls, v):
+        if v is None:
+            return None
+        v = str(v).strip()
+        if not _TIME_REGEX.match(v):
+            return None
+        return v
 
 
 class StructuredRequestBatch(BaseModel):
