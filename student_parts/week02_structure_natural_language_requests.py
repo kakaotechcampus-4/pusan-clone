@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
+
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -191,9 +192,17 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
     """LangChain structured output 결과를 StructuredRequest로 정규화합니다."""
 
     # TODO: value가 이미 StructuredRequest이면 그대로 반환하세요.
+    if isinstance(value, StructuredRequest):
+        return value
     # TODO: value가 dict이면 StructuredRequest.model_validate(...)로 검증해 반환하세요.
-    # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
-    ...
+    if isinstance(value, dict):
+        try:
+            return StructuredRequest.model_validate(value)
+        except ValidationError as err:
+            # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
+            raise RuntimeError("LLM 응답 형식이 잘못되었습니다: " + str(err))
+
+    
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
