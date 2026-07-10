@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain.tools import tool
 from pydantic import BaseModel, Field, ValidationError
 
@@ -160,7 +161,16 @@ class StructuredRequest(BaseModel):
     """
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    kind : RequestKind = Field(description="내용에 맞는 종류")
+    kind : RequestKind = Field(
+        description="""
+        분류된 요청 종류이다. 분류 기준은 다음과 같다.
+        - group_schedule : 참여자가 존재하는 일정
+        - personal_schedule : 참여자가 없는 일정
+        - todo : 해야 할 일
+        - reminder : 특정 시점에 잊지 않도록 알려줄 내용
+        - unknown : 위 내용 중 어느 것으로도 분류할 수 없는 것
+        """
+    )
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     title : str | None = Field(default=None, description="내용을 잘 표현하는 제목")
     date : str | None = Field(default=None, description="YYYY-MM-DD 형식의 날짜")
@@ -260,12 +270,16 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        "당신의 역할은 개인 일정 생성 요청에서 personal_create_schedule이 반환한 created_schedule JSON payload를 읽고 response_format=StructuredRequestBatch로 최종 구조화 결과를 출력하는 것이다.",
+        "당신의 역할은 일정 생성 요청에서 personal_create_schedule이 반환한 created_schedule JSON payload를 읽고 response_format=StructuredRequestBatch로 최종 구조화 결과를 출력하는 것이다.",
         f"오늘 날짜는 {current_app_date_iso()}이다. 만약 '내일', '다음 주'와 같은 상대적인 날짜가 입력되었다면 오늘 날짜를 참고하여라.",
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
         "자연어, 즉 비정형 데이터를 StructuredRequest를 이용하여 구조화하라.",
         f"요청사항에 대한 종류로는 다음과 같은 것들이 있다 : {','.join(RequestKind.__args__)}",
         "불확실한 필드의 내용은 지어내지 말고 기본값으로 두어라.",
+        "kind는 어떤 tool을 호출했는지나 tool 이름과 무관하게 결정한다. ",
+        "요청에 나 이외의 다른 사람이 등장하면 group_schedule, 나 혼자면 personal_schedule로 분류하라.",
+        "created_schedule의 attendees는 StructuredRequest의 members로 그대로 옮긴다. "
+        "members가 비어있지 않으면 kind는 group_schedule이다.",
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         "만약 tool JSON을 입력받은 경우, 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어라",
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
@@ -288,7 +302,7 @@ def build_week02_agent() -> object:
         _WEEK02_AGENT = create_agent(
             model=chat_model(),
             tools=week02_tools(),
-            response_format=StructuredRequestBatch,
+            response_format=ToolStrategy(StructuredRequestBatch),
             system_prompt=week02_system_prompt()
         )
     # TODO: 생성 또는 재사용한 _WEEK02_AGENT를 반환하세요.
