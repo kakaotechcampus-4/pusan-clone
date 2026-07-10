@@ -199,9 +199,14 @@ def extract_structured_request(text: str) -> StructuredRequest:
     """Week 3 이상에서 agent를 새로 띄우지 않고 자연어를 StructuredRequest로 바꿉니다."""
 
     # TODO: chat_model().with_structured_output(StructuredRequest, method="function_calling")로 structured LLM을 만드세요.
+    StructuredLLM = chat_model().with_structured_output(StructuredRequest, method="function_calling")
     # TODO: system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고, user 메시지에는 text를 넣어 invoke하세요.
+    result = StructuredLLM.invoke([
+        {"role": "system", "content": join_system_prompt(week02_prompt_parts())},
+        {"role": "user", "content": text},
+    ])
     # TODO: LLM 결과를 _coerce_structured_request(...)로 정규화해 StructuredRequest 하나로 반환하세요.
-    ...
+    return _coerce_structured_request(result)
 
 
 @tool
