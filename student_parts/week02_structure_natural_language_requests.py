@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -102,7 +102,10 @@ class StructuredRequest(BaseModel):
     kind: RequestKind = Field(
         description=(
             "요청 종류. personal_schedule(개인 일정), group_schedule(여러 명이 함께하는 일정), "
-            "todo(할 일), reminder(리마인더/알림), unknown(위 네 가지로 분류하기 어려운 경우) 중 하나만 사용한다."
+            "todo(할 일), reminder(리마인더/알림), unknown(위 네 가지로 분류하기 어려운 경우) 중 하나만 사용한다. "
+            "구체적인 날짜/시간에 실제로 열리는 이벤트 자체를 새로 잡아달라는 요청이면 personal_schedule/group_schedule로 "
+            "분류하고, 그 이벤트를 위한 사전 준비나 아직 시간이 정해지지 않은 해야 할 일(예: '회의 준비해야 해')이면 "
+            "todo로 분류한다."
         )
     )
     title: str | None = Field(
@@ -154,10 +157,9 @@ class StructuredRequest(BaseModel):
         description="kind/date/start_time 등 다른 필드 값을 이렇게 판단한 근거를 한두 문장으로 설명한다.",
     )
     original_text: str = Field(
-        default="",
         description=(
-            "이 요청을 추출한 근거가 된 원본 사용자 발화. 한 메시지에 여러 요청이 섞여 있어도 "
-            "메시지 전체를 그대로 넣어도 된다."
+            "이 요청을 추출한 근거가 된 원문 조각. 한 메시지에 요청이 여러 개 섞여 있으면 "
+            "메시지 전체가 아니라 이 요청 하나에 대응하는 문장/구절만 담는다. 항상 존재하는 값이므로 빈 문자열로 두지 않는다."
         ),
     )
 
@@ -181,6 +183,19 @@ class StructuredRequestBatch(BaseModel):
             "값 자체는 자동으로 채워지므로 LLM이 임의로 수정하지 않는다."
         ),
     )
+
+    @model_validator(mode="after")
+    def _check_original_text_not_duplicated(self) -> "StructuredRequestBatch":
+        """요청이 여러 개인데 original_text가 겹치면 메시지 전체를 복사한 것으로 보고 실패시킨다."""
+
+        if len(self.requests) > 1:
+            texts = [request.original_text.strip() for request in self.requests]
+            if len(set(texts)) < len(texts):
+                raise ValueError(
+                    "요청이 여러 개인데 서로 다른 StructuredRequest.original_text가 동일하다. "
+                    "메시지 전체를 복사하지 말고 각 요청에 해당하는 조각만 담아야 한다."
+                )
+        return self
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
@@ -232,9 +247,8 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         (
-            f"너는 사용자의 한국어 자연어 요청을 StructuredRequestBatch로 구조화하는 Week 2 agent다. "
-            f"오늘 날짜는 {current_app_date_iso()}이며, 이 날짜를 base_date로 삼아 "
-            f"'내일', '다음주 화요일' 같은 상대 날짜 표현을 절대 날짜로 계산한다."
+            "너는 사용자의 한국어 자연어 요청을 StructuredRequestBatch로 구조화하는 Week 2 agent다. "
+            "오늘 날짜를 base_date로 삼아 '내일', '다음주 화요일' 같은 상대 날짜 표현을 절대 날짜로 계산한다."
         ),
         (
             "사용자 발화 하나에서 요청 종류(kind), 제목(title), 날짜(date), 시작/종료 시각(start_time/end_time), "
@@ -245,7 +259,18 @@ def week02_prompt_parts() -> list[str]:
             "Week 1 tool이 반환한 JSON payload(created_schedule 등)를 이미 받았다면 tool을 다시 호출하지 말고, "
             "그 payload를 읽어 StructuredRequestBatch로 변환하기만 한다. "
             "이때 created_schedule.end_time이 '미정'처럼 값을 모른다는 뜻의 placeholder라면 "
-            "그 문자열을 그대로 복사하지 말고 StructuredRequest.end_time을 None으로 채운다."
+            "그 문자열을 그대로 복사하지 말고 StructuredRequest.end_time을 None으로 채운다. "
+            "또한 created_schedule.attendees 필드는 이름이 다르더라도 StructuredRequest.members 필드에 그대로 매핑한다."
+        ),
+        (
+            "한 메시지를 여러 StructuredRequest로 나눌지는 kind, date, start_time/end_time, members 중 "
+            "하나라도 서로 다른 별개의 요청인지로 판단한다. 단순히 문장이 길거나 쉼표로 나열됐다고 나누지 않는다."
+        ),
+        (
+            "각 StructuredRequest.original_text는 메시지 전체가 아니라 그 요청 하나에 대응하는 원문 조각만 "
+            "그대로(요약/의역 없이) 담는다. 예를 들어 '내일 오후 3시에 철수랑 회의 잡고, 발표자료도 준비해줘'는 "
+            "요청 1의 original_text에 '내일 오후 3시에 철수랑 회의 잡고', 요청 2의 original_text에 "
+            "'발표자료도 준비해줘'를 담아 서로 겹치지 않게 한다."
         ),
         "Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조율을 하지 않는다.",
     ]
