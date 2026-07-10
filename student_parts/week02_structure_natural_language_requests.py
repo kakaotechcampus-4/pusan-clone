@@ -255,6 +255,11 @@ def week02_prompt_parts() -> list[str]:
         "사용자의 자연어 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/"
         "members/priority/reason/original_text)로 구조화한다. 확실하지 않은 값은 억지로 만들지 말고 "
         "None 또는 빈 list로 둔다. date는 YYYY-MM-DD, start_time/end_time은 HH:MM 형식만 사용한다.",
+        "'~까지', '내일까지' 같은 마감 표현은 날짜만 date에 넣고, 구체적 시각이 없으면 "
+        "start_time/end_time을 절대 00:00~23:59나 하루 전체로 채우지 말고 None으로 둔다.",
+        "회의/개인 일정/할 일 등 종류와 무관하게, 원문에 '오후 3시', '14:00' 같은 명시적 시각이 "
+        "없으면 start_time/end_time을 임의로 추측해 채우지 말고 반드시 None으로 둔다. "
+        "'내일 회의 잡아줘'처럼 날짜만 있는 요청은 date만 채우고 시간 필드는 None이다.",
         "Week 1 tool 결과 JSON(created_schedule 등)을 받은 경우 tool을 다시 호출하지 않고 "
         "그 payload를 읽어 structured_response로 만든다.",
         "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다.",
