@@ -155,7 +155,15 @@ class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    kind: RequestKind = Field(description="요청 종류(personal_schedule : , group_schedule, todo, reminder, unknown)")
+    kind: RequestKind = Field(
+        description=(
+            "요청 종류(personal_schedule: 개인 일정 생성 요청, "
+            "group_schedule: members가 있는 일정 생성 요청, "
+            "todo: 완료해야 하는 작업 등록 요청, "
+            "reminder: start_time에 한 번, end_time에 한 번 알림 등록 요청, "
+            "unknown: 분류할 수 없는 요청)"
+        )
+    )
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     title: str | None = Field(default=None, description="일정의 제목")
     date: str | None = Field(default=None, description="일정 날짜(YYYY-MM-DD)")
