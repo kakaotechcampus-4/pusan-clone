@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -208,13 +208,20 @@ class StructuredRequest(BaseModel):
             raise ValueError("시간은 반드시 HH:MM 형태여야 합니다")
         return v
 
-    @model_validator(mode="after")
-    def enforce_group_scehdule_when_members_present(self):
-        # member 추출 및 빈 리스트 할당이 이제까지 틀린적없음. 
-        # kind 판단 중 personal, group의 판단이 불안정하므로, members 검증을 통해서 kind를 모델 생성 후 검증 
-        if self.members and self.kind == "personal_schedule":
-            self.kind = "group_schedule"
-        return self
+
+
+def check_schedule_is_group(req: StructuredRequest) -> StructuredRequest:
+    """members가 있는데 group_schedule이 아니면 group_schedule로 올린다.
+
+    프롬프트 규칙상 todo/reminder/personal_schedule은 모두 '참석자 없음'이 전제조건.
+    members가 존재하는데 이 세 가지로 분류되었다면 프롬프트 규칙과 모순이므로 보정한다.
+    unknown은 판단 불가 상태이므로 건드리지 않는다.
+    """
+    correctable_kinds = {"personal_schedule", "todo", "reminder"}
+    if req.members and req.kind in correctable_kinds:
+        req.kind = "group_schedule"
+        req.reason = f"{', '.join(req.members)}와 함께하는 일정이기 때문에 그룹 일정으로 분류합니다"
+    return req
 
 
 class StructuredRequestBatch(BaseModel):
@@ -232,9 +239,13 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    """단건 구조화 후 비즈니스 규칙(check_schedule_is_group)을 적용합니다.
 
-    ...
+    이후 회차에서 LLM 파싱이 구현되면 raw 결과를 받아 후처리합니다.
+    """
+    # TODO: LLM 파싱 구현 후 raw = llm_parse(text) 로 교체
+    raw = StructuredRequest(original_text=text)
+    return check_schedule_is_group(raw)
 
 
 @tool
