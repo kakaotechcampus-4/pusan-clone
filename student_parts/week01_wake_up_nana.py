@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from chromadb import logger
 from langchain.agents import create_agent
@@ -23,6 +23,7 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
+from student_parts.week02_structure_natural_language_requests import RequestKind
 
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
@@ -190,6 +191,7 @@ def personal_create_schedule(
             "end_time": end_time,
             "attendees": attendees if attendees is not None else [],
             "members": attendees if attendees is not None else [],
+            "kind": kind,
             "priority": priority,
             "reason": reason,
             "original_text": original_text,
