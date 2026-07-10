@@ -4,6 +4,7 @@ import json
 from typing import Any, Literal
 
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain.tools import tool
 from pydantic import BaseModel, Field
 
@@ -99,15 +100,55 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
     
-    kind: RequestKind = Field(default="unknown", description="요청 종류: personal_schedule, group_schedule, todo, reminder, unknown")
-    title: str | None = Field(default=None, description="요청 제목")
-    date: str | None = Field(default=None, description="요청 날짜 (YYYY-MM-DD 형식), 확실할 때만 채움")
-    start_time: str | None = Field(default=None, description="요청 시작 시간 (HH:MM 형식), 확실할 때만 채움")
-    end_time: str | None = Field(default=None, description="요청 종료 시간 (HH:MM 형식), 확실할 때만 채움")
-    members: list[str] = Field(default_factory=list, description="요청 관련 멤버 목록")
-    priority: str | None = Field(default=None, description="요청 우선순위")
-    reason: str | None = Field(default=None, description="요청 근거")
-    original_text: str = Field(default="", description="사용자 요청 원문")
+    kind: RequestKind = Field(
+        default="unknown", 
+        description=(
+            "요청 종류:\n"
+            "- personal_schedule: 개인 일정\n"
+            "- group_schedule: 2명 이상의 그룹 일정\n"
+            "- todo: 시각 없이 완료해야 할 일, 필요하면 date를 마감일로 사용\n"
+            "- reminder: 특정 시각 알림 필요, start_time과 reason(알림 이유)을 채움\n"
+            "- unknown: 위 4개에 해당하지 않거나 정보 부족으로 판단이 어려운 요청"
+        )
+    )
+    title: str | None = Field(
+        default=None,
+        description="요청 제목"
+    )
+    date: str | None = Field(
+        default=None,
+        description="요청 날짜 (YYYY-MM-DD 형식), 확실할 때만 채움"
+    )
+    start_time: str | None = Field(
+        default=None, 
+        description="요청 시작 시간 (HH:MM 형식), 확실할 때만 채움"
+    )
+    end_time: str | None = Field(
+        default=None, 
+        description="요청 종료 시간 (HH:MM 형식), 확실할 때만 채움"
+    )
+    members: list[str] = Field(
+        default_factory=list, 
+        description="요청에 명시적으로 언급된 참석자 이름만 채움 (예: '철수', '민수'). '팀원', '동료'처럼 구체적 이름이 없는 지칭만 있으면 채우지 않고 빈 list로 둠."
+    )
+    priority: Literal["high", "medium", "low"] | None = Field(
+        default=None,
+        description=(
+            "요청 우선순위:\n"
+            "- high: 급함, 긴급함, 최우선 등으로 표현된 요청\n"
+            "- medium: 우선순위 표현이 있지만 급하지 않은 요청\n"
+            "- low: 여유 있음, 나중에 해도 됨 등으로 표현된 요청\n"
+            "우선순위 언급이 전혀 없으면 None"
+        )
+    )
+    reason: str | None = Field(
+        default=None,
+        description="사용자가 명시적으로 밝힌 요청 이유/맥락만 채움 (예: '회의 준비 때문에'). 밝히지 않았으면 None, 추측해서 채우지 않음."
+    )
+    original_text: str = Field(
+        default="",
+        description="이 요청에 해당하는 사용자 발화 원문 그대로. 요약하거나 바꿔쓰지 않음."
+    )
 
 
 class StructuredRequestBatch(BaseModel):
@@ -163,6 +204,7 @@ def week02_prompt_parts() -> list[str]:
         "사용자가 요청한 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화해.",
         "확실하지 않은 요청(date/start_time/end_time의 부재)은 None 또는 빈 list로 두고, 억지로 만들지 마.",
         "tool 결과 JSON을 이미 받은 경우, 다시 tool을 호출하지 말고 payload를 읽어 structured_response로 만들어.",
+        "kind는 어떤 tool을 호출했는지와 무관하게 실제 members 수로 판단해: members가 1명 이하(본인만 해당하거나 없음)면 personal_schedule, 2명 이상의 이름이 있으면 group_schedule로 분류해. personal_create_schedule tool만 존재하더라도 이는 임시 저장용 도구일 뿐 kind 분류 기준이 아니야.",
         "SQLite 저장, RAG, 외부 멤버 일정 조율은 하지마.",
     ]
 
@@ -177,7 +219,7 @@ def build_week02_agent() -> object:
         _WEEK02_AGENT = create_agent(
             model=chat_model(),
             tools=week02_tools(),
-            response_format=StructuredRequestBatch,
+            response_format=ToolStrategy(schema=StructuredRequestBatch),
             system_prompt=week02_system_prompt(),
         )
     return _WEEK02_AGENT
