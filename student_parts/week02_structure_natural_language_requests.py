@@ -154,7 +154,16 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
     
-    kind: RequestKind = Field(description="요청 종류. personal_schedule, group_schedule, todo, reminder, unknown 중 하나로 분류한다.")
+    kind: RequestKind = Field(
+        description=(
+            "요청 종류를 아래 기준으로 하나 고른다. "
+            "personal_schedule: 나 혼자의 일정. "
+            "group_schedule: 참석자 각자의 일정에도 반영돼야 하는 일정. "
+            "todo: 마감일·우선순위 중심의 할 일. "
+            "reminder: 특정 시점 알림. "
+            "unknown: 위에 명확히 맞지 않는 경우."
+        )
+    )
     title: str | None = Field(default=None, description="일정이나 할 일의 제목. 모르면 None.")
     date: str | None = Field(default=None, description="YYYY-MM-DD 형식 날짜. 확실할 때만 채우고 모르면 None.")
     start_time: str | None = Field(default=None, description="HH:MM 형식 시작 시각. 모르면 None.")
@@ -239,7 +248,7 @@ def week02_prompt_parts() -> list[str]:
         *week01_prompt_parts(),
         f"너는 사용자의 자연어 요청을 구조화하는 Week 2 agent다. 현재 날짜는 {current_app_date_iso()}이며, '내일'·'다음 주' 같은 상대 날짜는 이 날짜를 기준으로 해석한다.",
         "사용자 요청을 kind/title/date/start_time/end_time/members 필드로 구조화한다. 확실하지 않은 값은 억지로 만들지 말고 None이나 빈 리스트로 둔다. date는 YYYY-MM-DD, 시간은 HH:MM 형식으로만 채운다.",
-        "이미 Week 1 tool의 JSON payload(created_schedule 등)를 받은 경우에는 tool을 다시 호출하지 말고, 그 payload를 읽어 구조화 결과로 변환한다.",
+        "이미 Week 1 tool의 JSON payload(created_schedule 등)를 받은 경우에는 tool을 다시 호출하지 말고, 그 payload를 읽어 구조화 결과로 변환한다. 이때 참석자는 created_schedule.attendees에 담겨 있으므로 StructuredRequest.members로 옮긴다.",
         "Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조율을 하지 않는다. 요청을 구조화하는 것까지만 한다.",
     ]
 
