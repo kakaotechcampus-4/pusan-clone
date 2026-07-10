@@ -195,13 +195,11 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
     if isinstance(value, StructuredRequest):
         return value
     # TODO: value가 dict이면 StructuredRequest.model_validate(...)로 검증해 반환하세요.
-    if isinstance(value, dict):
-        try:
-            return StructuredRequest.model_validate(value)
-        except ValidationError as err:
-            # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
-            raise RuntimeError("LLM 응답 형식이 잘못되었습니다: " + str(err))
-
+    elif isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
+    else:
+        raise RuntimeError("잘못된 형식입니다.")
     
 
 
