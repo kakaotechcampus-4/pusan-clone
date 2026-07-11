@@ -72,13 +72,13 @@ _WEEK02_AGENT: Any | None = None
 #      - LangChain structured output 결과가 이미 StructuredRequest이면 그대로 반환합니다.
 #      - dict이면 StructuredRequest.model_validate(...)로 검증해 반환합니다.
 #      - 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 않습니다.
-#
+
 #   2. extract_structured_request
 #      - chat_model().with_structured_output(StructuredRequest, method="function_calling")를 사용합니다.
 #      - system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고,
 #        user 메시지에는 text를 넣어 structured LLM을 호출합니다.
 #      - 자연어 또는 JSON 문자열을 StructuredRequest 하나로 검증/구조화합니다.
-#
+
 #   3. extract_schedule_request
 #      - extract_structured_request(query) 결과에 ok/tool_name/base_date를 붙입니다.
 #      - structured_request에는 model_dump() 결과를 넣고, json.dumps(..., ensure_ascii=False)로 반환합니다.
@@ -140,11 +140,11 @@ _WEEK02_AGENT: Any | None = None
 #   - _coerce_structured_request(value)
 #     LangChain structured output 결과가 이미 StructuredRequest이면 그대로 쓰고, dict이면 Pydantic 검증을 거쳐
 #     StructuredRequest로 바꿉니다. 예상한 형태가 아니면 오류를 내서 잘못된 LLM 응답을 조용히 통과시키지 않습니다.
-#
+
 #   - extract_structured_request(text)
 #     agent loop를 새로 만들지 않고 chat_model().with_structured_output(...)만 사용해 자연어 또는 JSON 문자열을
 #     StructuredRequest로 검증/구조화합니다. Week 3 이상에서 저장/조율 직전 입력을 구조화해야 할 때 재사용하는 bridge 함수입니다.
-#
+
 #   - extract_schedule_request(query)
 #     Week 3 이상 agent가 저장/조율 전에 호출하는 LangChain bridge tool입니다.
 #     extract_structured_request(...) 결과에 ok/tool_name/base_date를 붙여 JSON 문자열로 반환하므로,
@@ -160,19 +160,19 @@ class StructuredRequest(BaseModel):
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    kind: RequestKind = Field(description="일정 종류")
+    kind: RequestKind = Field(description="사용자가 요청한 일정의 종류이다. 반드시 personal_schedule, group_schedule, todo, reminder, unknown 중 하나로만 분류한다.")
 
-    title: str | None = Field(default=None, description="일정 제목")
-    date: str | None = Field(default=None, description="YYYY-MM-DD")
-    start_time: str | None = Field(default=None, description="HH:MM")
-    end_time: str | None = Field(default=None, description="HH:MM")
+    title: str | None = Field(default=None, description="사용자가 요청한 일정의 제목이나 핵심 내용이다(예시: 운영체제 중간고사). 사용자의 요청에서 확실하게 파악할 수 없으면 default값인 None으로 처리한다.")
+    date: str | None = Field(default=None, description="사용자가 요청한 일정의 날짜이다. YYYY-MM-DD 형식(예: 2026-07-11)을 반드시 준수한다. 사용자의 요청에서 확실하게 파악할 수 없으면 default값인 None으로 처리한다.")
+    start_time: str | None = Field(default=None, description="사용자가 요청한 일정의 시작 시간이다. HH:MM 형식(예: 13:54)을 반드시 준수한다. 사용자의 요청에서 확실하게 파악할 수 없으면 default값인 None으로 처리한다.")
+    end_time: str | None = Field(default=None, description="사용자가 요청한 일정의 종료 시간이다. HH:MM 형식(예: 13:54)을 반드시 준수한다. 사용자의 요청에서 확실하게 파악할 수 없으면 default값인 None으로 처리한다.")
 
-    members: list[str] = Field(default_factory=list, description="일정 참석자")
+    members: list[str] = Field(default_factory=list, description="사용자가 요청한 일정의 관련된 사람 혹은 일정 참석자이다. (예: 일정이 민지와의 산책 약속이면, 민지가 일정 참석자이다.) 사용자의 요청에서 확실하게 파악할 수 없으면 빈 list로 처리한다.")
 
-    priority: str | None = Field(default=None, description="일정 우선순위")
-    reason: str | None = Field(default=None, description="일정 우선순위 판단 근거")
+    priority: str | None = Field(default=None, description="사용자가 요청한 일정에 대한 우선순위이다. 5단계의 매우낮음/낮음/보통/높음/매우높음의 평가 척도로 분류한다. 사용자의 요청에서 확실하게 파악할 수 없으면 default값인 None으로 처리한다.")
+    reason: str | None = Field(default=None, description="일정 우선순위 판단 근거이다. 사용자의 요청에서 확실하게 파악할 수 없으면 default값인 None으로 처리한다.")
 
-    original_text: str = Field(default="", description="사용자의 자연어 요청 원문 보존")
+    original_text: str = Field(default="", description="사용자의 자연어 요청 원문 보존을 저장한다.")
 
 
 
