@@ -189,9 +189,9 @@ def week02_prompt_parts() -> list[str]:
             "우선순위나 이유가 드러나면 priority/reason에 기록하며, 원문은 original_text에 보존한다. "
             "모르는 값은 추측하지 말고 None 또는 빈 목록으로 둔다."
         ),
-        # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         (
-            "만약 Week 1 tool Json을 받은 경우 다시 tool을 호출하지 않고 payload를 읽고 structured_response를 만든다."
+            "Week 1 tool 결과 JSON을 입력받으면 tool을 다시 호출하지 말고 payload 객체를 직접 읽어 StructuredRequestBatch structured_response를 만든다. "
+            "payload 안의 created_schedule 값이 있으면 그 필드를 StructuredRequest의 kind/title/date/start_time/end_time/original_text 등에 맞게 옮긴다."
         ),
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
         (
