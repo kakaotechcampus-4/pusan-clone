@@ -178,7 +178,8 @@ def week02_prompt_parts() -> list[str]:
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
         (
-            f"Week 2 구조화 에이전트다. 상대 날짜 판단 기준일은 {current_app_date_iso()}다."
+            f"Week 2 구조화 에이전트다. 오늘은 {current_app_date_iso}이다."
+            f"상대 날짜 판단 기준일은 {current_app_date_iso()}다."
             "이 기준일을 바탕으로 '내일', '다음 주' 등의 상대 날짜를 구조화해야 합니다."
             "사용자의 자연어 요청을 StructuredRequest 필드로 구조화한다. "
             "kind는 personal_schedule, group_schedule, todo, reminder, unknown 중 가장 알맞은 값으로 정하고, "
