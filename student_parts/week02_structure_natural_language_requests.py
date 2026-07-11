@@ -188,6 +188,7 @@ def week02_prompt_parts() -> list[str]:
             "title에는 일정/할 일의 핵심 제목을 넣으며, date/start_time/end_time은 확실할 때만 "
             "YYYY-MM-DD와 HH:MM 형식으로 채운다. 참석자나 관련 인물은 members 목록에 넣고, "
             "우선순위가 드러나면 priority에 기록하며, 원문은 original_text에 보존한다. "
+            "'오프라인 회사 미팅실', '강남역 카페' 같은 회의나 약속의 물리적 장소 및 위치 정보는 절대 `reason` 필드에 포함해서는 안 됩니다."
             "reason은 요청된 주제의 순수한 배경 및 이유 (장소나 위치 정보는 여기에 넣지 마십시오)"
             "etc는 위에 들어가지 않는 모든 속성을 추가한다."
             "모르는 값은 추측하지 말고 None 또는 빈 목록으로 둔다."
