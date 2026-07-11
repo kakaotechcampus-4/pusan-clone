@@ -6,6 +6,7 @@ from typing import Any, Literal
 from langchain.agents import create_agent
 from langchain.tools import tool
 from pydantic import BaseModel, Field
+from datetime import datetime
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -101,18 +102,19 @@ class StructuredRequest(BaseModel):
 
     kind: RequestKind = Field(
         description=(
-            "요청 종류입니다. 단체 행사를 나타내는 단어(회사, 동아리, 산악회 등)가 들어있다면 group_schedule, 그 외 사적인 본인의 일정이면 "
-            "personal_schedule, 특정 시점 없이 해야 할 일이면 todo, 특정 시점에 알려줘야 하면 "
-            "reminder, 그 외에는 unknown으로 분류합니다."
+            "요청 종류입니다. 일정/할 일/리마인더와 관련 없는 대화나 감정 표현이면 unknown, "
+            "단체 행사를 나타내는 단어가 들어있으면 group_schedule, "
+            "개인 일정이면 personal_schedule, 해야할 일이면 todo, "
+            "특정 시점에 알려달라는 요청이 있으면 reminder로 분류합니다."
         )
     )
     title: str | None = Field(default=None, description="요청 제목을 나타내는 필드입니다.")
     date: str | None = Field(default=None, description="요청 날짜를 YYYY-MM-DD 형식으로 나타내는 필드입니다.")
-    start_time: str | None = Field(default=None, description="요청 시작 시간을 HH:MM 형식으로 나타내는 필드입니다.")
-    end_time: str | None = Field(default=None, description="요청 종료 시간을 HH:MM 형식으로 나타내는 필드입니다.")
-    members: list[str] = Field(default_factory=list, description="요청 관련 멤버를 나타내는 필드입니다.")
-    priority: str | None = Field(default=None, description="요청 우선순위를 나타내는 필드입니다.")
-    reason: str | None = Field(default=None, description="요청 근거를 나타내는 필드입니다.")
+    start_time: str | None = Field(default=None, description="요청 시작 시간을 HH:MM 형식으로 나타내는 필드입니다. 구체적인 시간 명시가 없으면 None으로 둡니다.")
+    end_time: str | None = Field(default=None, description="요청 종료 시간을 HH:MM 형식으로 나타내는 필드입니다. 구체적인 시간 명시가 없으면 None으로 둡니다.")
+    members: list[str] = Field(default_factory=list, description="요청 관련 멤버를 나타내는 필드입니다. 아무 멤버가 없을 경우에는 빈 list로 반환하세요.")
+    priority: str | None = Field(default=None, description="요청 우선순위를 나타내는 필드입니다. 우선순위에 대한 언급이 없으면 None으로 둡니다.")
+    reason: str | None = Field(default=None, description="요청 근거를 나타내는 필드입니다. 구체적인 근거가 없으면 None으로 둡니다.")
     original_text: str = Field(default="", description="원본 자연어 요청을 나타내는 필드입니다.")
 
 
@@ -157,12 +159,16 @@ def week02_prompt_parts() -> list[str]:
 
     return [
         *week01_prompt_parts(),
+        f"현재 시각은 {datetime.now().strftime('%H:%M')}입니다.",
+        "사용자가 '지금' 같은 표현을 쓰면 현재 시각을 기준으로 해석합니다.",
+        "한 입력에 여러 요청이 들어있으면 StructuredRequestBatch.requests에 여러 StructuredRequest를 담아 반환하세요.",
         "입력이 Week 1 tool 호출 결과 JSON이면 새 tool 호출을 하지 말고 payload/created_schedule 값을 그대로 읽어 StructuredRequestBatch structured_response를 만드세요.",
         "이번 주차 agent는 자연어 요청과 Week 1 tool JSON을 StructuredRequestBatch로 구조화하는 역할을 수행합니다.",
         f"현재 날짜 기준은 {current_app_date_iso()}입니다.",
         "자연어 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화합니다.",
-        "단체 행사를 나타내는 단어가 들어있는 일정이면 group_schedule, 개인의 일정이면 personal_schedule로 분류합니다.",
-        "특정 시점에 알려야 하는 일이면 reminder, 시점 없이 해야 할 일이면 todo로 분류합니다.",
+        "kind는 필드의 분류 규칙을 따라서 분류하세요.",
+        "모르는 값은 억지로 값을 만들지 마세요.",
+        "단, members는 모르면 빈 list로 만드세요.",
         "Week 1 tool JSON을 받은 경우에는 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어야 합니다.",
         "SQLite 저장, RAG, 외부 멤버 일정 조율은 이번 주차에서는 수행하지 않습니다."
     ]
