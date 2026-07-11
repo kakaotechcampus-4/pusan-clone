@@ -230,7 +230,7 @@ def week02_system_prompt() -> str:
     # TODO: personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채우도록 지시하세요.
 
     return join_system_prompt([
-        *week01_prompt_parts(),
+        *week02_prompt_parts(),
         "StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 해.",
         """personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 StructuredRequest 필드에 매핑해. 매핑시 필드 대응은 아래 규칙을 준수해.
         - created_schedule.title→title, created_schedule.date→date(YYYY-MM-DD)
@@ -257,10 +257,10 @@ def week02_prompt_parts() -> list[str]:
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
         f"""- 오늘의 날짜는 {today}야.
         - 사용자의 자연어 요청은 반드시 클래스 StructuredRequestBatch의 format에 맞게 구조화해야 한다.
+        - Week 2에서는 일정을 실제로 생성하거나 저장하지 않는다. personal_create_schedule 같은 생성 tool을 호출하지 말고, 사용자의 자연어를 곧바로 StructuredRequestBatch로 구조화해라.
+        - 여러 일정/할 일이 한 문장에 섞여 있으면 각각을 requests 리스트의 원소로 나눠 담아라.
         - week1의 tool JSON을 받은 경우, tool을 다시 호출하면 안된다. 그 대신 payload를 읽어서 structured_response로 만들어야 한다.
-        - week2에서는 절대로 SQLite 저장하지마
-        - week2에서 RAG를 하지마
-        - week2에서는 절대 외부 멤버 일정 조율을 하지마.
+        - [금지] week2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하면 안된다.
         """
     ]
 
