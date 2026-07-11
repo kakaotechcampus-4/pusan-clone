@@ -180,7 +180,8 @@ def week02_prompt_parts() -> list[str]:
         (
             f"Week 2 구조화 에이전트다. 오늘은 {current_app_date_iso}이다."
             f"상대 날짜 판단 기준일은 {current_app_date_iso()}다."
-            "이 기준일을 바탕으로 '내일', '다음 주' 등의 상대 날짜를 구조화해야 합니다."
+            "이 기준일을 바탕으로 ['내일', '다음 주'] 등의 상대 날짜를 구조화해야 합니다."
+            "[다음주, 2주 뒤, 3주 뒤] 등 요일을 지정하지 않고 모호한 표현으로 들어오면 가장 일반적으로 계산합니다. ex) 다음주: 7일 뒤, 2주 뒤: 14일 뒤, 한달 뒤에: 30일 뒤 등"
             "사용자의 자연어 요청을 StructuredRequest 필드로 구조화한다. "
             "kind는 personal_schedule, group_schedule, todo, reminder, unknown 중 가장 알맞은 값으로 정하고, "
             "title에는 일정/할 일의 핵심 제목을 넣으며, date/start_time/end_time은 확실할 때만 "
