@@ -121,22 +121,22 @@ class StructuredRequest(BaseModel):
     date: str | None = Field(
         default=None,
         description=(
-            "일정/할 일의 날짜입니다. 반드시 YYYY-MM-DD 형식으로 채웁니다."
-            "상대적인 표현은 base_date(오늘 날짜)를 기준으로 직접 계산해서 절대 날짜로 변환하세요."
+            "일정/할 일의 날짜입니다. 반드시 YYYY-MM-DD 형식으로 채웁니다. "
+            "상대적인 표현은 base_date(오늘 날짜)를 기준으로 직접 계산해서 절대 날짜로 변환하세요. "
             "날짜가 문장에 전혀 언급되지 않았다면 임의로 추측하지 말고 None으로 둡니다."
         )
     )
     start_time: str | None = Field(
         default=None,
         description=(
-            "일정/할 일의 시작 시각입니다. 반드시 HH:MM 형식으로 채웁니다."
+            "일정/할 일의 시작 시각입니다. 반드시 HH:MM 형식으로 채웁니다. "
             "문장에 시작 시각이 명시되지 않았다면 임의로 추측하지 말고 None으로 둡니다."
         )
     )
     end_time: str | None = Field(
         default=None,
         description=(
-            "일정/할 일의 종료 시각입니다. 반드시 HH:MM 형식으로 채웁니다."
+            "일정/할 일의 종료 시각입니다. 반드시 HH:MM 형식으로 채웁니다. "
             "문장에 종료 시각이 명시되지 않았다면 임의로 추측하지 말고 None으로 둡니다."
         )
     )
@@ -147,9 +147,9 @@ class StructuredRequest(BaseModel):
     priority: int | None = Field(
         default=None,
         description=(
-            "할 일 우선순위를 저장합니다. 정수만 허용하며, 작을 수록 높은 우선순위입니다.(0이 1보다 높음)"
-            "음수는 사용하지 않습니다."
-            "기존에 저장된 항목들의 우선순위와 비교해서 새 요청이 더 급하다고 판단되면, 새 요청에 그보다 높은 순위(더 작은 숫자)를 부여하고"
+            "할 일 우선순위를 저장합니다. 정수만 허용하며, 작을 수록 높은 우선순위입니다.(0이 1보다 높음) "
+            "음수는 사용하지 않습니다. "
+            "기존에 저장된 항목들의 우선순위와 비교해서 새 요청이 더 급하다고 판단되면, 새 요청에 그보다 높은 순위(더 작은 숫자)를 부여하고 "
             "기존 항목들의 우선순위는 각각 +1씩 밀어서 순위가 겹치지 않도록 조정하세요. "
             "확실하지 않으면 None으로 둡니다."
         ),
@@ -172,7 +172,7 @@ class StructuredRequestBatch(BaseModel):
     requests: list[StructuredRequest] = Field(
         default_factory=list,
         description=(
-            "구조화된 StructedRequest를 리스트로 저장한 목록입니다."
+            "구조화된 StructedRequest를 리스트로 저장한 목록입니다. "
             "요청이 단 하나뿐이더라도 반드시 원소가 1개인 리스트로 반환하세요."
         ),
     )
