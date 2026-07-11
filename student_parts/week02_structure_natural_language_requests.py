@@ -164,7 +164,15 @@ class StructuredRequest(BaseModel):
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    kind: RequestKind = Field(description="요청 종류입니다. personal_schedule/group_schedule/todo/reminder/unknown 중 하나입니다.")
+    kind: RequestKind = Field(description=(
+        "요청 종류입니다." 
+        "personal_schedule은 개인 일정(예: 병원 예약),"
+        "group_schedule은 단체 일정(예: 회의),"
+        "todo는 완료해야 하는 작업(예: 보고서 작성, 장보기),"
+        "reminder는 특정 시점에 알림을 요청하는 경우(예: 약 먹으라고 알려줘),"
+        "unknown은 어느 범주에도 명확히 속하지 않을 때 선택합니다."
+        )
+    )
     title: str | None = Field(default=None, description="일정/할 일 제목입니다. 확실하지 않으면 None으로 둡니다.")
     date: str | None = Field(default=None, description="일정 날짜입니다. 확실할 때만 YYYY-MM-DD 형식으로 채웁니다.")
     start_time: str | None = Field(default=None, description="시작 시간입니다. 확실할 때만 HH:MM 형식으로 채웁니다.")
@@ -182,7 +190,7 @@ class StructuredRequestBatch(BaseModel):
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
     requests: list[StructuredRequest] = Field(default_factory=list, description="StructuredRequest 목록을 담습니다. 요청이 하나뿐이어도 list 형태를 유지합니다.")
-    base_date: str = Field(default_factory=current_app_date_iso, description="상대 날짜 해석 기준일(current_app_date_iso)을 담습니다.")
+    base_date: str = Field(default_factory=current_app_date_iso, description="상대 날짜 해석 기준일을 담습니다.")
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
@@ -191,7 +199,12 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
     # TODO: value가 이미 StructuredRequest이면 그대로 반환하세요.
     # TODO: value가 dict이면 StructuredRequest.model_validate(...)로 검증해 반환하세요.
     # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+    elif isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    else:
+        raise RuntimeError(f"Unexpected structured output type: {type(value)}")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
@@ -200,7 +213,12 @@ def extract_structured_request(text: str) -> StructuredRequest:
     # TODO: chat_model().with_structured_output(StructuredRequest, method="function_calling")로 structured LLM을 만드세요.
     # TODO: system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고, user 메시지에는 text를 넣어 invoke하세요.
     # TODO: LLM 결과를 _coerce_structured_request(...)로 정규화해 StructuredRequest 하나로 반환하세요.
-    ...
+    structured_llm = chat_model().with_structured_output(StructuredRequest, method="function_calling")
+    response = structured_llm.invoke([
+        {"role": "system", "content": join_system_prompt(week02_prompt_parts())},
+        {"role": "user", "content": text}
+    ])
+    return _coerce_structured_request(response)
 
 
 @tool
@@ -210,7 +228,15 @@ def extract_schedule_request(query: str) -> str:
     # TODO: extract_structured_request(query)를 호출해 자연어 또는 Week 1 JSON payload를 구조화하세요.
     # TODO: ok/tool_name/base_date/structured_request 키를 가진 dict를 만들고 structured_request에는 model_dump() 결과를 넣으세요.
     # TODO: json.dumps(..., ensure_ascii=False)로 JSON 문자열을 반환하세요.
-    ...
+    structured_request = extract_structured_request(query)
+    result = {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": current_app_date_iso(),
+        "structured_request" : structured_request.model_dump(),
+    }
+    return json.dumps(result, ensure_ascii=False)
+
 
 
 def week02_tools() -> list[Any]:
@@ -241,7 +267,7 @@ def week02_prompt_parts() -> list[str]:
         "너는 사용자의 자연어 요청을 StructuredRequest로 구조화하는 AI Agent이다.",
         f"오늘 날짜는 {current_app_date_iso()}이며, 상대적인 날짜(오늘, 내일, 다음 주 등)는 이 날짜를 기준으로 해석한다.",
         "자연어를 StructuredRequest 필드로 구조화한다. kind, title, date, start_time, end_time, members 등의 필드로 구조화하고, 모르는 값은 None이나 빈 리스트로 비워둔다.",
-        "week02의 created_schedule JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만든다.",
+        "week01의 created_schedule JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만든다.",
         "week02에서는 SQLite 저장, RAG, 외부 멤버 일정 조율은 하지 않는다.",
     ]
 
