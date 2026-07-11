@@ -305,10 +305,10 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         CHAT_MEMORY_PROMPT,
-        f"""
-        오늘 날짜는 {datetime.now().strftime("%Y-%m-%d")}이며, 현재 시각은 {datetime.now().strftime('%H:%M')}이다.
-        이 날짜 및 시간을 기준으로 일정을 잡으면 된다.
-        """,
+        # f"""
+        # 오늘 날짜는 {datetime.now().strftime("%Y-%m-%d")}이며, 현재 시각은 {datetime.now().strftime('%H:%M')}이다.
+        # 이 날짜 및 시간을 기준으로 일정을 잡으면 된다.
+        # """,
     ]
 
 
