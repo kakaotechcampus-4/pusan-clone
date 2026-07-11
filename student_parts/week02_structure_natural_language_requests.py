@@ -229,12 +229,19 @@ def week02_system_prompt() -> str:
     # TODO: StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 지시하세요.
     # TODO: personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채우도록 지시하세요.
 
-    prompt_parts = week02_prompt_parts()
-    prompt_parts.append("StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 해.")
-    prompt_parts.append("personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채워.")
-    prompt_parts.append("요청이 여러 개여도 반드시 StructuredRequestBatch 하나만 출력해. 각 요청을 requests 리스트의 원소로 넣어. JSON 객체를 두 개 이상 출력하지 마.")
-
-    return join_system_prompt(prompt_parts)
+    return join_system_prompt([
+        *week01_prompt_parts(),
+        "StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 해.",
+        """personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 StructuredRequest 필드에 매핑해. 매핑시 필드 대응은 아래 규칙을 준수해.
+        - created_schedule.title→title, created_schedule.date→date(YYYY-MM-DD)
+        - created_schedule.start_time→start_time(HH:MM), created_schedule.end_time→end_time(HH:MM)
+        - created_schedule.attendees→members. created_schedule의 attendees 값을 그대로 StructuredRequest의 members에 넣어.
+        - kind는 description에 주어진 유형 중에서 판단하여 매핑해.
+        - original_text에는 그 일정에 해당하는 사용자의 원문 문장을 넣어.
+        - priority와 reason은 사용자가 명시하지 않았으면 deafult으로 매핑해
+        - id/created_at/session_id처럼 StructuredRequest에 대응 필드가 없는 값은 무시해.""",
+        "요청이 여러 개여도 반드시 StructuredRequestBatch 하나만 출력해. 각 요청을 requests 리스트의 원소로 넣어. JSON 객체를 두 개 이상 출력하지 마."
+    ])
 
 
 def week02_prompt_parts() -> list[str]:
