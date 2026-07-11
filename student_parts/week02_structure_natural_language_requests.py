@@ -167,7 +167,7 @@ class StructuredRequest(BaseModel):
     end_time:      str | None = Field(default=None, description="종료 시각. 24시간제 HH:MM 형식(예: 16:00). 요청에서 알 수 있으면 채우고 확실하지 않으면 None, 억지로 추측하지 않는다.")
     members:       list[str]  = Field(default_factory=list, description="함께하는 참석자, 관련 인물 이름 목록(예: ['철수','영희']). 언급이 없으면 빈 리스트.") #None을 허용하지 않는게 자연스럽고 받는 쪽에서 None검사 없이 바로 반복문을 돌릴수 있음
     priority:      str | None = Field(default=None, description="할 일(todo)의 우선순위. 예: 높음/보통/낮음. 판단할 수 없으면 None.") #Literal로 처리하는게 더 좋지 않을까?
-    reason:        str | None = Field(default=None, description="이 분류나 값을 그렇게 정한 근거를 한 문장으로. 애매하면 None.")
+    reason:        str | None = Field(default=None, description="추정하거나 애매하게 판단한 것이 있을 때만 그 근거를 한 문장으로 적는다. (값을 추정했거나, 단서가 없어 비웠거나, 분류가 애매했던 경우) 모든 값이 명시적이고 분류가 명확하면 None.")
     original_text: str = Field(default="", description="사용자가 입력한 원문 문장을 그대로.") #최소 빈공백이라? 기본값 ""로 처리 값이 없는거랑은 다르다는 의미
 
 
@@ -187,7 +187,13 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
     # TODO: value가 이미 StructuredRequest이면 그대로 반환하세요.
     # TODO: value가 dict이면 StructuredRequest.model_validate(...)로 검증해 반환하세요.
     # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+
+    raise RuntimeError("예상하지 못한 형태")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
@@ -196,7 +202,12 @@ def extract_structured_request(text: str) -> StructuredRequest:
     # TODO: chat_model().with_structured_output(StructuredRequest, method="function_calling")로 structured LLM을 만드세요.
     # TODO: system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고, user 메시지에는 text를 넣어 invoke하세요.
     # TODO: LLM 결과를 _coerce_structured_request(...)로 정규화해 StructuredRequest 하나로 반환하세요.
-    ...
+    structured_llm = chat_model().with_structured_output(StructuredRequest, method="function_calling")
+    result = structured_llm.invoke([
+    ("system", join_system_prompt(week02_prompt_parts())),   
+    ("user", text),    
+    ])
+    return _coerce_structured_request(result)
 
 
 @tool
@@ -206,7 +217,14 @@ def extract_schedule_request(query: str) -> str:
     # TODO: extract_structured_request(query)를 호출해 자연어 또는 Week 1 JSON payload를 구조화하세요.
     # TODO: ok/tool_name/base_date/structured_request 키를 가진 dict를 만들고 structured_request에는 model_dump() 결과를 넣으세요.
     # TODO: json.dumps(..., ensure_ascii=False)로 JSON 문자열을 반환하세요.
-    ...
+    structured = extract_structured_request(query)
+    payload = {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": current_app_date_iso(),
+        "structured_request": structured.model_dump(),
+    } 
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def week02_tools() -> list[Any]:
@@ -253,7 +271,15 @@ def week02_prompt_parts() -> list[str]:
         - 시간을 말하지 않아도 되묻지 말고, StructuredRequest 각 필드의 설명을 따르라.
         - 시각을 알 수 없으면 "미정"이 아니라 None으로 둔다. (start_time, end_time 모두)
         - members는 알 수 없어도 None이 아니라 빈 리스트 []로 둔다.
-        - 아침/점심/저녁 같은 관례적 표현은 관례 시각으로 채우되(아침=8:00, 점심=12:00, 저녁=18:00 등), 추정했다는 걸 reason에 적어라.
+        - 아침/점심/저녁 같은 관례적 표현은 관례 시각으로 채워라 (아침=8:00, 점심=12:00, 저녁=18:00 등)
+
+        [reason 기록 규칙]
+        - 다음 세 경우에는 reason에 "무엇을 왜 그렇게 판단했는지" 한 문장으로 남겨라:
+          (1) 값을 추정했을 때 (관례 시각으로 채운 경우 등)
+          (2) 단서가 없어 필드를 None이나 빈 값으로 비웠을 때
+          (3) kind 분류가 애매해서 고민했을 때 (unknown으로 둔 경우 포함)
+        - 위 세 경우가 하나도 없으면(모든 값이 명시적이고 분류가 명확하면) reason은 None으로 둔다.
+        - 이 규칙은 reason 필드에만 적용된다. 다른 필드를 채우는 기준은 각 필드 설명을 따른다.
 
 
 
