@@ -301,8 +301,12 @@ def build_week02_agent() -> object:
         # bridge와 동일하게 function calling 기반으로 StructuredRequestBatch를 연결한다.
         # 병렬 tool 호출을 켜두면 모델이 personal_create_schedule과 최종 StructuredRequestBatch를
         # 같은 턴에 호출해 tool 결과가 최종 배치에서 누락되므로 병렬 호출을 끈다.
-        model = chat_model()
-        model.model_kwargs["parallel_tool_calls"] = False
+        # chat_model()이 나중에 캐시된 인스턴스를 반환하더라도 다른 주차 agent에
+        # 영향이 없도록, 공유 인스턴스를 직접 수정하지 않고 Week 2 전용 복사본을 만든다.
+        base_model = chat_model()
+        model = base_model.model_copy(
+            update={"model_kwargs": {**base_model.model_kwargs, "parallel_tool_calls": False}}
+        )
         _WEEK02_AGENT = create_agent(
             model=model,
             tools=week02_tools(),
