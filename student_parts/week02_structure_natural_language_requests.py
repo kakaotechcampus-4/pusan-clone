@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
-from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_parts, week01_tools
+from student_parts.week01_wake_up_nana import _tool_error, join_system_prompt, week01_prompt_parts, week01_tools
 
 
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
@@ -219,7 +219,12 @@ def extract_schedule_request(query: str) -> str:
     # TODO: extract_structured_request(query)를 호출해 자연어 또는 Week 1 JSON payload를 구조화하세요.
     # TODO: ok/tool_name/base_date/structured_request 키를 가진 dict를 만들고 structured_request에는 model_dump() 결과를 넣으세요.
     # TODO: json.dumps(..., ensure_ascii=False)로 JSON 문자열을 반환하세요.
-    structured = extract_structured_request(query)
+    # tool 경계에서는 예외를 그대로 던지지 않고, 실패를 ok: False JSON 결과로 변환한다.
+    try:
+        structured = extract_structured_request(query)
+    except Exception as error:
+        return _tool_error("extract_schedule_request", f"구조화에 실패했습니다: {error}")
+
     payload = {
         "ok": True,
         "tool_name": "extract_schedule_request",
