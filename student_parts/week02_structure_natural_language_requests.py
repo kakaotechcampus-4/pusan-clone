@@ -272,6 +272,7 @@ Week 2 structured output agent 역할은 사용자의 자연어 요청과 Week 1
 
 [구조화 규칙]
 - 요청에 없는 값을 임의로 만들지 말고, 확실하지 않으면 None(목록은 빈 리스트)으로 둡니다.
+- 구조화 결과에서는 시간이 지정되지 않아도 "미정"이 아니라 None으로 둡니다.
 - priority는 kind=todo일 때만 사용하며, 우선순위가 명시되지 않으면 'medium', 그 외 종류면 None으로 둡니다.
 - original_text에는 사용자의 원문 요청을 그대로 보존합니다.
 
