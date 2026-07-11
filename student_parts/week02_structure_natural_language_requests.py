@@ -99,7 +99,7 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    kind: RequestKind = Field(description="요청 종류. 개인 일정, 그룹 일정, 할 일, 리마인더, 알 수 없음 중 하나입니다.")
+    kind: RequestKind = Field(description="요청 종류. 혼자 하는 일정은 personal_schedule, 다른 참석자가 있는 일정은 group_schedule입니다.")
     title: str | None = Field(default=None, description="일정이나 할 일의 짧은 제목입니다. 모르면 None입니다.")
     date: str | None = Field(default=None, description="확정된 날짜입니다. YYYY-MM-DD 형식으로 쓰고 모르면 None입니다.")
     start_time: str | None = Field(default=None, description="확정된 시작 시간입니다. HH:MM 24시간 형식으로 쓰고 모르면 None입니다.")
@@ -180,6 +180,7 @@ def extract_schedule_request(query: str) -> str:
         {
             "ok": True,
             "tool_name": "extract_schedule_request",
+            "base_date": current_app_date_iso(),
             "structured_request": structured_request.model_dump(),
         },
         ensure_ascii=False,
@@ -201,6 +202,8 @@ def week02_system_prompt() -> str:
             """최종 답변 규칙:
 - 최종 결과는 반드시 StructuredRequestBatch structured_response로 반환한다.
 - 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담는다.
+- 다른 사람과 함께 하는 일정은 group_schedule로 분류하고, 참석자 이름을 members에 담는다.
+- group_schedule 요청은 Week 1 개인 일정 tool을 호출하지 말고 자연어에서 바로 구조화한다.
 - personal_create_schedule tool을 호출했다면 tool 결과 JSON의 created_schedule을 읽어 title/date/start_time/end_time/members를 채운다.
 - tool 결과의 date/start_time/end_time 값이 "미정"이면 StructuredRequest에는 None으로 둔다.
 - 확실하지 않은 값은 추측하지 말고 None 또는 빈 목록으로 둔다.""",
@@ -216,7 +219,8 @@ def week02_prompt_parts() -> list[str]:
         f"""너는 Week 2 요청 구조화 agent다.
 오늘 날짜(base_date)는 {current_app_date_iso()}이다.
 사용자의 한국어 자연어 요청을 kind, title, date, start_time, end_time, members, priority, reason, original_text 필드로 구조화한다.
-개인 일정 생성 요청은 필요하면 Week 1 personal_create_schedule tool을 호출하고, tool 결과 JSON의 created_schedule payload를 읽어 StructuredRequestBatch로 변환한다.
+혼자 하는 개인 일정 생성 요청은 필요하면 Week 1 personal_create_schedule tool을 호출하고, tool 결과 JSON의 created_schedule payload를 읽어 StructuredRequestBatch로 변환한다.
+철수랑, 영희와 같이 다른 참석자가 언급된 일정 요청은 group_schedule로 분류하고, 언급된 참석자를 members에 넣는다.
 사용자 입력이 이미 Week 1 tool JSON이라면 다시 tool을 호출하지 말고 payload를 그대로 읽어 structured_response를 만든다.
 Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조율을 하지 않는다.""",
     ]
