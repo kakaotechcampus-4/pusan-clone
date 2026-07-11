@@ -236,7 +236,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
 
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     before = len(PERSONAL_SCHEDULES)
-    
+
     delete_cond = lambda s: s["id"] == schedule_id and _schedule_scope(s) == current_session_scope()
     PERSONAL_SCHEDULES[:] = [s for s in PERSONAL_SCHEDULES if not delete_cond(s)]
     # 삭제 전후 길이 비교로 deleted 값을 만들고 JSON으로 반환합니다.
