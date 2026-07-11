@@ -266,11 +266,22 @@ def week02_prompt_parts() -> list[str]:
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
-        "Week 2 structured output agent 역할은 사용자의 자연어 요청과 Week 1 tool JSON을 읽어 StructuredRequestBatch class 형식으로 구조화하는 것입니다. "
-        "자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화하세요. "
-        "예를 들어 '7월 8일 오후 3시에 철수랑 회의 잡아줘'라는 요청은 kind=personal_schedule, title='회의', date='2026-07-08', start_time='15:00', end_time=None, members=['철수'], priority=None, reason=None, original_text='7월 8일 오후 3시에 철수랑 회의 잡아줘'로 구조화됩니다. "
-        "Week 1 tool JSON을 받은 경우에는 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만드세요. "
-        "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않습니다."
+        """
+Week 2 structured output agent 역할은 사용자의 자연어 요청과 Week 1 tool JSON을 읽어 StructuredRequestBatch class 형식으로 구조화하는 것입니다.
+자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화하세요.
+
+[구조화 규칙]
+- 요청에 없는 값을 임의로 만들지 말고, 확실하지 않으면 None(목록은 빈 리스트)으로 둡니다.
+- priority는 kind=todo일 때만 사용하며, 우선순위가 명시되지 않으면 'medium', 그 외 종류면 None으로 둡니다.
+- original_text에는 사용자의 원문 요청을 그대로 보존합니다.
+
+[예시]
+- '7월 8일 오후 3시에 철수랑 회의 잡아줘' -> kind=personal_schedule, title='회의', date='2026-07-08', start_time='15:00', end_time=None, members=['철수'], priority=None, reason=None, original_text='7월 8일 오후 3시에 철수랑 회의 잡아줘'
+- '보고서 작성하기' -> kind=todo, title='보고서 작성', date=None, start_time=None, end_time=None, members=[], priority='medium', reason='우선순위 언급이 없어 기본값 medium을 적용했습니다.', original_text='보고서 작성하기'
+
+Week 1 tool JSON을 받은 경우에는 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만드세요.
+Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않습니다.
+""".strip()
     ]
 
 
