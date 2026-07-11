@@ -103,7 +103,7 @@ _WEEK02_AGENT: Any | None = None
 
 
 class StructuredRequest(BaseModel):
-    """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
+    """LLM structured output으로 추출되는 2주차 요청 스키마입니다.""" # 툴이 어떻게 동작해야 하는지
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
@@ -113,28 +113,53 @@ class StructuredRequest(BaseModel):
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
     kind: RequestKind = Field(
         description=(
-            "요청의 종류입니다. personal_schedule(개인 일정), group_schedule(그룹/멤버 일정), "
+            "요청의 종류입니다. personal_schedule(나 혼자 하는 개인 일정), group_schedule(나 이외의 참석자가 있는 그룹/멤버 일정), "
             "todo(할 일), reminder(알림), unknown(위 네 가지로 확신할 수 없는 경우) 중 하나를 고릅니다."
         )
     )
-    title: str | None = Field(default=None, description="일정 제목")
-    date: str | None = Field(default=None, description="YYYY-MM-DD")
-    start_time: str | None = Field(default=None, description="HH:MM")
-    end_time: str | None = Field(default=None, description="HH:MM")
+    title: str | None = Field(default=None, description="일정이나 할 일의 제목을 입력하시오.")
+    date: str | None = Field(
+        default=None,
+        description=(
+            "일정/할 일의 날짜입니다. 반드시 YYYY-MM-DD 형식으로 채웁니다."
+            "상대적인 표현은 base_date(오늘 날짜)를 기준으로 직접 계산해서 절대 날짜로 변환하세요."
+            "날짜가 문장에 전혀 언급되지 않았다면 임의로 추측하지 말고 None으로 둡니다."
+        )
+    )
+    start_time: str | None = Field(
+        default=None,
+        description=(
+            "일정/할 일의 시작 시각입니다. 반드시 HH:MM 형식으로 채웁니다."
+            "문장에 시작 시각이 명시되지 않았다면 임의로 추측하지 말고 None으로 둡니다."
+        )
+    )
+    end_time: str | None = Field(
+        default=None,
+        description=(
+            "일정/할 일의 종료 시각입니다. 반드시 HH:MM 형식으로 채웁니다."
+            "문장에 종료 시각이 명시되지 않았다면 임의로 추측하지 말고 None으로 둡니다."
+        )
+    )
     members: list[str] = Field(
         default_factory=list,
         description="참석자/관련 멤버 list입니다. 모르면 빈 list로 둡니다.",
     )
-    priority: str | None = Field(
+    priority: int | None = Field(
         default=None,
-        description="할 일 우선순위를 저장합니다. 작을 수록 높은 우선순위입니다. 확실하지 않으면 None",
+        description=(
+            "할 일 우선순위를 저장합니다. 정수만 허용하며, 작을 수록 높은 우선순위입니다.(0이 1보다 높음)"
+            "음수는 사용하지 않습니다."
+            "기존에 저장된 항목들의 우선순위와 비교해서 새 요청이 더 급하다고 판단되면, 새 요청에 그보다 높은 순위(더 작은 숫자)를 부여하고"
+            "기존 항목들의 우선순위는 각각 +1씩 밀어서 순위가 겹치지 않도록 조정하세요. "
+            "확실하지 않으면 None으로 둡니다."
+        ),
     )
     reason: str | None = Field(
-        default=None, description="우선순위의 판단 근거입니다. 확실하지 않으면 null"
+        default=None, description="우선순위의 판단 근거입니다. 확실하지 않으면 None으로 둡니다."
     )
     original_text: str = Field(
         default="",
-        description="원문 보존용 필드로, 원문을 담아둡니다. 확실하지 않으면 null",
+        description="원문 보존용 필드로, 원문을 담아둡니다. None을 허용하지 않으므로 항상 원문 문자열을 채워야 합니다.",
     )
 
 
@@ -146,11 +171,14 @@ class StructuredRequestBatch(BaseModel):
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
     requests: list[StructuredRequest] = Field(
         default_factory=list,
-        description="생성된 StructedRequest를 리스트로 저장해 관리합니다.",
+        description=(
+            "구조화된 StructedRequest를 리스트로 저장한 목록입니다."
+            "요청이 단 하나뿐이더라도 반드시 원소가 1개인 리스트로 반환하세요."
+        ),
     )
     base_date: str = Field(
         default_factory=current_app_date_iso,
-        description="상대 날짜 해석 기준일(current_app_date_iso)을 담습니다.",
+        description="상대 날짜 표현을 절대 날짜로 계산할 때 기준이 되는 오늘 날짜입니다. YYYY-MM-DD 형식입니다.",
     )
 
 
@@ -190,7 +218,7 @@ def week02_system_prompt() -> str:
         [
             *week02_prompt_parts(),
             "요청이 하나뿐이어도 requests 리스트에 담아라",
-            "personal_create_schedule 결과 JSON의 created_schedule을 읽어서 필드를 채워라",
+            "personal_create_schedule 결과 JSON을 읽을 때는 created_schedule 안의 title/date/start_time/end_time 등 값을 StructuredRequest의 동일한 필드에 그대로 매핑해라.",
             "최종 답변은 StructuredRequestBatch 형식의 구조화된 결과 하나만 출력해라",
             "JSON 앞뒤로 다른 설명, 인사말, 부연 텍스트를 절대 추가하지 마라",
         ]
@@ -208,9 +236,12 @@ def week02_prompt_parts() -> list[str]:
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
         "너는 자연어 요청을 StructuredRequest 필드로 구조화하는 agent야.",
         f"현재 날짜 기준은 {current_app_date_iso()}야.",
+        "날짜/시간은 반드시 YYYY-MM-DD, HH:MM 형식이 확실할 때만 채우고, 상대 표현은 base_date를 기준으로 계산해라.",
         "자연어 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화해야 해.",
         "Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어야 해.",
         "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않아.",
+        "모든 필드에서 확실하지 않은 값은 추측해서 채우지 말고 반드시 None(또는 빈 값)으로 남겨라.",
+        "한 문장에 서로 다른 요청(예: 회의 하나 + 할 일 하나)이 섞여 있으면, 각각을 별도의 StructuredRequest로 분리해서 requests 리스트에 담아라.",
     ]
 
 
