@@ -174,7 +174,7 @@ class StructuredRequest(BaseModel):
     # requests.1.members Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
     @field_validator("members", mode ="before")
     @classmethod
-    def nomalize_members(cls,v):
+    def normalize_members(cls,v):
         return [] if v is None else v
 
     @field_validator("priority", mode="before")
