@@ -326,7 +326,7 @@ def build_week02_agent() -> object:
         _WEEK02_AGENT = create_agent(
                             model = chat_model(),
                             tools= week02_tools(),
-                            response_format=StructuredRequestBatch,
+                            response_format=ToolStrategy(StructuredRequestBatch),
                             system_prompt = week02_system_prompt()
                         )
     return _WEEK02_AGENT
