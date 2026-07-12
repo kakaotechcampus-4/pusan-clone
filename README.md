@@ -1,3 +1,4 @@
+### Week 2: [Link to PR 1](https://github.com/kakaotechcampus-4/pusan-clone/pull/54)
 # Kanana Schedule Agent
 
 Kanana 강의용 일정 Agent 실습 프로젝트의 Week 1 main 브랜치입니다. 학생들은 `student_parts/week01_wake_up_nana.py`를 열고, 파일 상단의 `[수강생 구현 가이드]`가 지정한 함수와 tool 본문을 직접 완성합니다.
