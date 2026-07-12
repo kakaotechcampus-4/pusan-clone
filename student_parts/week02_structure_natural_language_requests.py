@@ -12,6 +12,8 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_parts, week01_tools
 
+import re
+from datetime import datetime
 
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
 PriorityLevel = Literal["매우 급함", "급함", "보통", "여유로움", "매우 여유로움"]
@@ -198,9 +200,12 @@ class StructuredRequest(BaseModel):
         """date가 None이 아니면 YYYY-MM-DD 형식인지 검증합니다."""
         if v is None:
             return v
-        import re
         if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
             raise ValueError("날짜는 반드시 YYYY-MM-DD 형태여야 합니다")
+        try:
+            datetime.strptime(v, '%Y-%m-%d') # 정확한 타입 검증 추가. 
+        except ValueError:
+            raise(ValueError(f'존재하지 않는 날짜 입니다. {v}'))
         return v
 
     @field_validator("start_time", "end_time", mode="after")
@@ -209,9 +214,13 @@ class StructuredRequest(BaseModel):
         """start_time, end_time이 None이 아니면 HH:MM 형식인지 검증합니다."""
         if v is None:
             return v
-        import re
         if not re.match(r'^\d{2}:\d{2}$', v):
             raise ValueError("시간은 반드시 HH:MM 형태여야 합니다")
+        try:
+            datetime.strptime(v, "%H:%M")
+        except ValueError:
+            raise(ValueError(f'존재하지 않는 시간입니다. {v}'))
+        
         return v
 
 
