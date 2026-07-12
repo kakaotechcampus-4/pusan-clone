@@ -178,7 +178,16 @@ class StructuredRequest(BaseModel):
     start_time: str | None = Field(default=None, description="사용자가 요청한 일정의 시작 시각을 기록합니다. HH:MM 형태로 기록합니다. 정보가 없다면 default(None)로 정의합니다.")
     end_time: str | None = Field(default=None, description="사용자가 요청한 일정의 종료 시각을 기록합니다. HH:MM 형태로 기록합니다. 정보가 없다면 default(None)로 정의합니다")
 
-    attendees: list[str] = Field(default_factory=list, description="사용자가 요청한 일정의 참여자 또는 멤버 정보를 기록합니다. 여럿이 될 수 있습니다.")
+    members: list[str] | None = Field(default_factory=list, description="""
+                                      사용자가 요청한 일정의 참여자 또는 멤버 정보를 기록합니다.
+                                      여럿이 될 수 있습니다.
+                                      JSON String을 이 클래스로 변환할 때는 schedule의 정보의 attendees 키 값을 매핑합니다.
+                                      schedule 정보의 키 값은 "created_schedule", "schedules", "deleted_schedule" 등에 저장됩니다.
+                                      """)
+    # class M(BaseModel):
+    # attendees: list[str] = Field(default_factory=list)
+    # M(attendees=None) 이렇게 해도 같은 오류 발생. 참여자가 없는 경우 None이라는 값을 LLM이 넣는데 그 값 자체를 받아들이지 못해서 발생.
+    # | None 추가
 
     priority: str | None = Field(default=None, description="사용자의 요청에 우선순위에 대한 정보가 포함되어 있다면 기록합니다. 그렇지 않다면 default(None)로 정의합니다.")
     reason: str | None = Field(default=None, description="사용자의 요청에 일정에 대한 사유 정보가 포함되어 있다면 기록합니다. 그렇지 않다면 default(None)로 정의합니다.")
@@ -258,8 +267,6 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         "당신의 역할은 사용자의 일정 요청을 내가 미리 정의해놓은 구조대로 파싱하는 것입니다.",
-        f"{current_app_date_iso()}를 기준 날짜로 인식합니다.",
-        "기준 날짜를 활용하여, '내일', '모레', '다음 주', '저번 주' 등 상대적인 날짜에 대한 요청도 처리할 수 있습니다.",
         "요청에 대한 결과를 자연어로 출력하는 것이 아닌, StructuredRequest 클래스의 필드를 참고하여 구조화하여 출력합니다.",
         "일정 생성/브리핑/삭제/변경 등의 요청은 다른 Agent가 제공된 tool을 사용하여 JSON으로 파싱할 것입니다.",
         "당신은 다시 tool을 호출하지 않고, payload를 읽어 StructuredRequestBatch 클래스의 형태로 파싱합니다.",

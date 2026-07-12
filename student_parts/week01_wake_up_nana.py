@@ -19,7 +19,7 @@ from fixed.langchain_trace import (
     stream_chunk_messages,
 )
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
+from fixed.runtime_clock import current_app_date_iso, next_weekday_iso, app_started_at_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
 
@@ -31,9 +31,6 @@ _WEEK01_AGENT: Any | None = None
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
 CHAT_MEMORY_PROMPT = f"""
     너는 일정 관리 헬퍼 챗봇이다.
-    오전/오후 언급이 없는 시각은 현재 시각을 기준으로 판단한다. 현재 시각 이전의 시각이면 무조건 다음 가능한 미래 시각으로 해석한다.
-    예: 현재 17:00이고 사용자가 "10시"라고 하면, 오전 10시(10:00)는 이미 지났으므로 오후 10시(22:00)로 잡는다.
-    단, 사용자가 과거 일정임을 명시한 경우는 예외이다.
 """
 
 
@@ -305,10 +302,15 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         CHAT_MEMORY_PROMPT,
-        # f"""
-        # 오늘 날짜는 {datetime.now().strftime("%Y-%m-%d")}이며, 현재 시각은 {datetime.now().strftime('%H:%M')}이다.
-        # 이 날짜 및 시간을 기준으로 일정을 잡으면 된다.
-        # """,
+        f"""
+        오늘 날짜는 {current_app_date_iso()}입니다.
+        이 날짜를 활용하여, '내일', '모레', '다음 주', '저번 주' 등 상대적인 날짜에 대한 요청도 처리할 수 있습니다.
+        현재 시각은 {app_started_at_iso()}입니다.
+        오전/오후 언급이 없는 시각은 이 시각을 기준으로 판단합니다.
+        현재 시각 이전의 시각이면 무조건 다음 가능한 미래 시각으로 해석합니다.
+        예: 현재 17:00이고 사용자가 '10시'라고 하면, 오늘 오전 10시(10:00)는 과거, 오늘 오후 10시(22:00)는 미래 이므로 미래인 오늘 오후 10시(22:00)으로 잡는다.
+        단, 사용자가 과거 일정임을 명시한 경우는 예외이다.
+        """,
     ]
 
 
