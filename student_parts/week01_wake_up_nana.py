@@ -164,8 +164,8 @@ def _current_session_schedules() -> list[dict[str, Any]]:
 @tool
 def personal_create_schedule(
     title: str,
-    date: str,
-    start_time: str,
+    date: str | None = None,
+    start_time: str | None = None,
     end_time: str = "미정",
     attendees: list[str] | None = None,
 ) -> str:
@@ -178,6 +178,13 @@ def personal_create_schedule(
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
     if attendees is None:
         attendees = []
+    
+    if date is None or start_time is None:
+        return _json({
+            "ok": False,
+            "tool_name": "personal_create_schedule",
+            "error": "date와 start_time이 확인되지 않았습니다. 사용자에게 정확한 날짜와 시간을 다시 물어보세요.",
+        })
     
     try:
         datetime.strptime(date, "%Y-%m-%d")
