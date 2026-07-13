@@ -115,7 +115,7 @@ class StructuredRequest(BaseModel):
     members: list[str] = Field(default_factory=list, description="요청 관련 멤버를 나타내는 필드입니다. 아무 멤버가 없을 경우에는 빈 list로 반환하세요.")
     priority: str | None = Field(default=None, description="요청 우선순위를 나타내는 필드입니다. 우선순위에 대한 언급이 없으면 None으로 둡니다.")
     reason: str | None = Field(default=None, description="요청 근거를 나타내는 필드입니다. 구체적인 근거가 없으면 None으로 둡니다.")
-    original_text: str = Field(default="", description="원본 자연어 요청을 나타내는 필드입니다.")
+    original_text: str = Field(default="", description="원본 자연어 요청을 나타내는 필드입니다. 사용자의 입력 문장을 그대로 저장하세요.")
 
 
 class StructuredRequestBatch(BaseModel):
@@ -165,7 +165,7 @@ def week02_prompt_parts() -> list[str]:
         "입력이 Week 1 tool 호출 결과 JSON이면 새 tool 호출을 하지 말고 payload/created_schedule 값을 그대로 읽어 StructuredRequestBatch structured_response를 만드세요.",
         "이번 주차 agent는 자연어 요청과 Week 1 tool JSON을 StructuredRequestBatch로 구조화하는 역할을 수행합니다.",
         f"현재 날짜 기준은 {current_app_date_iso()}입니다.",
-        "자연어 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화합니다.",
+        "자연어 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화합니다.",
         "kind는 필드의 분류 규칙을 따라서 분류하세요.",
         "모르는 값은 억지로 값을 만들지 마세요.",
         "단, members는 모르면 빈 list로 만드세요.",
