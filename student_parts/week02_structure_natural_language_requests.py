@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -178,26 +178,22 @@ class StructuredRequest(BaseModel):
     start_time: str | None = Field(default=None, description="사용자가 요청한 일정의 시작 시각을 기록합니다. HH:MM 형태로 기록합니다. 정보가 없다면 default(None)로 정의합니다.")
     end_time: str | None = Field(default=None, description="사용자가 요청한 일정의 종료 시각을 기록합니다. HH:MM 형태로 기록합니다. 정보가 없다면 default(None)로 정의합니다")
 
-    members: list[str] | None = Field(default_factory=list, description="""
+    members: list[str] = Field(default_factory=list, description="""
                                       사용자가 요청한 일정의 참여자 또는 멤버 정보를 기록합니다.
                                       여럿이 될 수 있습니다.
                                       tool의 반환 결과를 이 클래스로 변환할 때 schedule의 정보의 attendees 키 값을 이 필드에 매핑합니다.
                                       schedule 정보의 키 값은 "created_schedule", "schedules", "deleted_schedule" 등에 저장됩니다.
                                       """)
-    # class M(BaseModel):
-    # attendees: list[str] = Field(default_factory=list)
-    # M(attendees=None) 이렇게 해도 같은 오류 발생. 참여자가 없는 경우 None이라는 값을 LLM이 넣는데 그 값 자체를 받아들이지 못해서 발생.
-    # | None 추가
+
+    @field_validator("members", mode="before")
+    @classmethod
+    def _default_members_to_empty_list(cls, value: Any) -> list[str]:
+        return value if value is not None else []
 
     priority: str | None = Field(default=None, description="사용자의 요청에 우선순위에 대한 정보가 포함되어 있다면 기록합니다. 그렇지 않다면 default(None)로 정의합니다.")
     reason: str | None = Field(default=None, description="사용자의 요청에 일정에 대한 사유 정보가 포함되어 있다면 기록합니다. 그렇지 않다면 default(None)로 정의합니다.")
 
     original_text: str = Field(default="", description="사용자가 입력한 프롬프트 내용 그 자체를 기록합니다.")
-
-    def model_post_init(self, _context: Any) -> None:
-        # attendees가 명시적으로 null로 와도 default_factory가 아닌 여기서 []로 정규화합니다.
-        if self.members is None:
-            self.members = []
 
 
 class StructuredRequestBatch(BaseModel):
