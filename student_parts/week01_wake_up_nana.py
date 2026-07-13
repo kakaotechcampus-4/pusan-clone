@@ -196,7 +196,7 @@ def personal_create_schedule(
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
-    """"선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다.""""
+    """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
     # 현재 세션의 schedule을 먼저 불러오기 , 딕셔너리 리스트를 받아옴
     schedules = _current_session_schedules()
@@ -246,22 +246,31 @@ def week01_tools() -> list[Any]:
 
 def week01_system_prompt() -> str:
     """1주차 단일 Nana agent가 따르는 시스템 프롬프트입니다."""
-    return join_system_prompt(week01_prompt_parts())
+    prompt = join_system_prompt(week01_prompt_parts())
+    print("\n=== Week01 System Prompt ===")
+    print(prompt)
+    print("=== End ===\n")
+    return prompt
 
 
 def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
     today = current_app_date_iso()
-    return [
-        "당신은 사용자의 일정을 관리하는 비서입니다"
-        "사용자의 요청(생성, 조회, 수정, 삭제) 에 맞는 도구를 선택해 호출하세요!"
-        
-        f"오늘 날짜는 {today}입니다. "
-        "사용자가 '오늘', '내일', '모레', '이번 주' 같은 상대적 표현을 쓰면 "
-        "반드시 이 날짜를 기준으로 정확한 YYYY-MM-DD 형식으로 환산해서 "
-        "tool 인자(date, date_from, date_to)에 넣으세요. "
+    parts = [
+        "당신은 사용자의 일정을 관리하는 비서입니다 ",
+        "사용자의 요청(생성, 조회, 수정, 삭제) 에 맞는 도구를 선택해 호출하세요!",
+
+        f"오늘 날짜는 {today}입니다. ",
+        "사용자가 '오늘', '내일', '모레', '이번 주' 같은 상대적 표현을 쓰면",
+        "반드시 이 날짜를 기준으로 정확한 YYYY-MM-DD 형식으로 환산해서",
+        "tool 인자(date, date_from, date_to)에 넣으세요. ",
         "임의로 다른 날짜를 추측하지 마세요.",
     ]
+    print("\n=== Week01 Prompt Parts (before join) ===")
+    for i, part in enumerate(parts, 1):
+        print(f"[Part {i}] {repr(part)}")
+    print("=== End ===\n")
+    return parts
 
 
 def build_week01_agent() -> object:
