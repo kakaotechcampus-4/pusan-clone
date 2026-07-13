@@ -181,7 +181,7 @@ class StructuredRequest(BaseModel):
     members: list[str] | None = Field(default_factory=list, description="""
                                       사용자가 요청한 일정의 참여자 또는 멤버 정보를 기록합니다.
                                       여럿이 될 수 있습니다.
-                                      JSON String을 이 클래스로 변환할 때는 schedule의 정보의 attendees 키 값을 매핑합니다.
+                                      tool의 반환 결과를 이 클래스로 변환할 때 schedule의 정보의 attendees 키 값을 이 필드에 매핑합니다.
                                       schedule 정보의 키 값은 "created_schedule", "schedules", "deleted_schedule" 등에 저장됩니다.
                                       """)
     # class M(BaseModel):
@@ -193,6 +193,11 @@ class StructuredRequest(BaseModel):
     reason: str | None = Field(default=None, description="사용자의 요청에 일정에 대한 사유 정보가 포함되어 있다면 기록합니다. 그렇지 않다면 default(None)로 정의합니다.")
 
     original_text: str = Field(default="", description="사용자가 입력한 프롬프트 내용 그 자체를 기록합니다.")
+
+    def model_post_init(self, _context: Any) -> None:
+        # attendees가 명시적으로 null로 와도 default_factory가 아닌 여기서 []로 정규화합니다.
+        if self.members is None:
+            self.members = []
 
 
 class StructuredRequestBatch(BaseModel):
