@@ -54,6 +54,16 @@ footer[aria-label="Gradio footer navigation"] {
   border: 0;
 }
 
+#main-tabs button {
+  color: #2b2b2b !important;
+  opacity: 1 !important;
+}
+
+#main-tabs button.selected {
+  color: #f97316 !important;
+  border-color: #f97316 !important;
+}
+
 .tab-nav {
   margin-bottom: 12px;
 }
@@ -204,8 +214,11 @@ footer[aria-label="Gradio footer navigation"] {
 }
 
 #saved-schedule-list p,
-#saved-schedule-list ul {
+#saved-schedule-list ul,
+#saved-schedule-list li {
+  color: #39352e !important;
   margin: 0;
+  opacity: 1 !important;
 }
 
 #saved-schedule-list li {
@@ -237,11 +250,28 @@ footer[aria-label="Gradio footer navigation"] {
 }
 
 #kanana-chatbot .bubble-wrap {
+  max-height: 100% !important;
   overflow-y: auto !important;
+}
+
+#kanana-chatbot .message-wrap,
+#kanana-chatbot .wrapper {
+  min-height: 0 !important;
 }
 
 #kanana-chatbot .message {
   border-radius: 8px !important;
+}
+
+#kanana-chatbot .message-content {
+  color: #1f1f1f !important;
+  opacity: 1 !important;
+}
+
+#kanana-chatbot .md.chatbot.prose pre,
+#kanana-chatbot .md.chatbot.prose code {
+  background: #fffdf7 !important;
+  color: #1f1f1f !important;
 }
 
 #kanana-chatbot small {
