@@ -26,7 +26,6 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
 CHAT_MEMORY_PROMPT = (
     "이번 대화에서 만든 개인 일정은 현재 채팅 안에서만 유지되는 임시 메모리다. "
     "다른 대화의 일정은 보이지 않으니, 일정을 조회하거나 삭제할 때는 이번 대화에서 만든 것만 대상으로 삼는다. "
