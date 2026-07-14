@@ -34,8 +34,6 @@ CHAT_MEMORY_PROMPT = """
 현재 대화에 없는 정보가 필요하면 추측하지 말고 사용자에게 짧게 질문한다.
 """.strip()
 
-today = current_app_date_iso()
-
 DATE_TIME_FORMAT_PROMPT = """
 현재 앱 날짜는 {today}이다.
 
@@ -238,7 +236,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
 
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     before = len(PERSONAL_SCHEDULES)
-    
+
     delete_cond = lambda s: s["id"] == schedule_id and _schedule_scope(s) == current_session_scope()
     PERSONAL_SCHEDULES[:] = [s for s in PERSONAL_SCHEDULES if not delete_cond(s)]
     # 삭제 전후 길이 비교로 deleted 값을 만들고 JSON으로 반환합니다.
@@ -267,7 +265,7 @@ def week01_prompt_parts() -> list[str]:
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
         CHAT_MEMORY_PROMPT,
-        DATE_TIME_FORMAT_PROMPT,
+        DATE_TIME_FORMAT_PROMPT.format(today=current_app_date_iso()),
     ]
 
 
