@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """현재 활성 주차에 맞는 student_parts agent를 찾아 실행하는 registry입니다.
 
-main 브랜치는 Week 1-2 학생 문제를 공개하므로 이 registry도 Week 1-2 agent를
+main 브랜치는 Week 1-3 학생 문제를 공개하므로 이 registry도 Week 1-3 agent를
 매핑합니다. 전체 Week 1-6 흐름은 `week_1_to_6f` 브랜치에 보존되어 있습니다.
 """
 
@@ -15,16 +15,16 @@ from fixed.config import CONFIG
 from fixed.langchain_trace import (
     extract_agent_events,
     extract_final_text,
+    extract_langchain_trace as extract_common_langchain_trace,
     message_tool_call_names,
     stream_chunk_messages,
 )
-from fixed.langchain_trace import (
-    extract_langchain_trace as extract_common_langchain_trace,
-)
+
 
 WEEK_AGENT_MODULES = {
     1: "student_parts.week01_wake_up_nana",
     2: "student_parts.week02_structure_natural_language_requests",
+    3: "student_parts.week03_build_nanas_logbook",
 }
 
 
@@ -59,9 +59,7 @@ def normalize_active_week(active_week: int | str | None) -> int:
 def _extract_trace(module: Any, result: dict[str, Any]) -> dict[str, Any]:
     """주차 모듈 전용 trace extractor가 있으면 사용하고, 없으면 공통 extractor를 씁니다."""
 
-    extractor = getattr(
-        module, "extract_langchain_trace", extract_common_langchain_trace
-    )
+    extractor = getattr(module, "extract_langchain_trace", extract_common_langchain_trace)
     trace = extractor(result)
     if isinstance(trace, dict):
         return trace
@@ -81,9 +79,7 @@ def _structured_response_from_stream_chunk(chunk: Any) -> Any | None:
     return None
 
 
-def run_active_week_agent(
-    active_week: int | str | None, messages: list[dict[str, str]]
-) -> ActiveWeekAgentResult:
+def run_active_week_agent(active_week: int | str | None, messages: list[dict[str, str]]) -> ActiveWeekAgentResult:
     """선택된 주차의 student_parts agent를 실행하고 UI trace payload로 변환합니다.
 
     PROXY_TOKEN이 없으면 LangChain agent를 만들지 않고 안내 payload를 반환합니다.
@@ -107,7 +103,7 @@ def run_active_week_agent(
 
     try:
         module = importlib.import_module(WEEK_AGENT_MODULES[week])
-        builder = module.build_week_agent
+        builder = getattr(module, "build_week_agent")
         agent = builder()
         result = agent.invoke({"messages": messages})
         trace = _extract_trace(module, result)
@@ -147,7 +143,7 @@ def stream_active_week_agent(
     structured_response: Any | None = None
     try:
         module = importlib.import_module(WEEK_AGENT_MODULES[week])
-        builder = module.build_week_agent
+        builder = getattr(module, "build_week_agent")
         agent = builder()
         for chunk in agent.stream({"messages": messages}, stream_mode="updates"):
             chunk_structured_response = _structured_response_from_stream_chunk(chunk)
@@ -156,9 +152,7 @@ def stream_active_week_agent(
             for message in stream_chunk_messages(chunk):
                 collected_messages.append(message)
                 for tool_name in message_tool_call_names(message):
-                    yield ActiveWeekAgentStreamEvent(
-                        status_text=f"현재 {tool_name} 실행 중"
-                    )
+                    yield ActiveWeekAgentStreamEvent(status_text=f"현재 {tool_name} 실행 중")
 
         result = {"messages": collected_messages}
         if structured_response is not None:
@@ -166,9 +160,7 @@ def stream_active_week_agent(
         trace = _extract_trace(module, result)
         trace["mode"] = "active_week_agent"
         trace["active_week"] = week
-        yield ActiveWeekAgentStreamEvent(
-            result=ActiveWeekAgentResult(answer=extract_final_text(result), trace=trace)
-        )
+        yield ActiveWeekAgentStreamEvent(result=ActiveWeekAgentResult(answer=extract_final_text(result), trace=trace))
     except Exception as exc:
         yield ActiveWeekAgentStreamEvent(
             result=ActiveWeekAgentResult(
