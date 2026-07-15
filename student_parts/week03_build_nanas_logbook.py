@@ -26,11 +26,25 @@ from student_parts.week02_structure_natural_language_requests import (
 
 _WEEK03_AGENT: Any | None = None
 
-# TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = ""
+SQLITE_MEMORY_PROMPT = (
+    "이번 주차부터 저장한 일정·할 일·알림은 임시 메모리가 아니라 앱 SQLite DB에 남아. "
+    "새 대화를 열거나 앱을 다시 켜도 그대로 있으니까, 대화가 끝나면 사라진다는 1주차의 안내는 하지 마. "
+    "현재 대화에 기록이 없다고 모른다고 답하지 말고, 저장된 내용을 물어보면 먼저 조회 tool로 DB를 확인한 다음에 답해."
+)
 
-# TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+WEEK03_TOOL_CALL_PROMPT = (
+    "저장 요청은 extract_schedule_request로 먼저 구조화하고, "
+    "구조화 한 structured_request 안에 있는 필드들을 save_structured_request 인자로 그대로 넘겨. "
+    "일정 조회는 personal_list_saved_schedules를 써. 날짜가 분명하면 date_from, date_to로 범위를 좁히고 limit으로 개수를 제한해. "
+    "단 여기선 기본적으로 personal_schedule만 나와. 그룹 일정은 kind='group_schedule'을 넘겨야 보여. "
+    "todo나 reminder는 여기서 아예 안 나오니까, 그것들을 물어보거나 저장된 요청 원본을 확인해야 할 때는 "
+    "list_saved_requests에 kind를 넘겨서 찾고, request_id로 한 건만 볼 때는 get_saved_request를 써. "
+    "수정과 삭제는 schedule_id가 필요하니까 personal_list_saved_schedules로 후보를 먼저 확인하고 ID를 얻은 다음에, "
+    "personal_update_saved_schedule이나 personal_delete_saved_schedules를 호출해. "
+    "수정할 때는 바꿀 필드만 넘기고 나머지는 비워둬. 비워둔 필드는 그대로 유지된다는 뜻이야. "
+    "삭제는 조건 없이 하지 말고 schedule_ids나 날짜/제목/시간 필터를 명시해. "
+    "사용자가 전부 지우라고 분명히 말했을 때만 delete_all을 쓰고, 삭제 전에 정말 다 지울지 한번 더 확인 요청을 해줘."
+)
 
 
 # [3주차 수강생 구현 가이드]
@@ -493,10 +507,14 @@ def week03_prompt_parts() -> list[str]:
 
     return [
         *week02_prompt_parts(),
-        # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
+        "너는 이제 요청을 구조화하는 데서 끝내지 않고, 그 결과를 앱 SQLite DB에 기록하고 다시 꺼내주는 역할이야. "
+        "구조화는 저장을 위한 준비 단계니까, structured_request를 만들었으면 저장까지 이어서 해.",
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
-        # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+        f"저장할 때 date는 오늘({current_app_date_iso()})을 기준으로 상대 날짜('내일'이나 '다음 주')를 해석해. "
+        "이름이 비슷한 tool을 헷갈리지 마. personal_list_schedules와 personal_delete_schedule은 1주차 임시 메모리만 보는 tool이야. "
+        "DB에 저장된 기록을 다룰 때는 personal_list_saved_schedules와 personal_delete_saved_schedules를 써.",
+        "3주차에서는 SQLite 저장/조회/수정/삭제까지 해. 2주차의 'SQLite 저장은 하지 않는다'는 안내는 이번 주차엔 해당하지 않아. ",
     ]
 
 
