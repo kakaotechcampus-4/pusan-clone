@@ -494,6 +494,7 @@ def week03_system_prompt() -> str:
 
 def week03_prompt_parts() -> list[str]:
     """1~3주차 system prompt 조각을 누적합니다."""
+    today = current_app_date_iso()
 
     return [
         *week02_prompt_parts(),
@@ -501,6 +502,10 @@ def week03_prompt_parts() -> list[str]:
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+        f"현재 날짜는 {today} 값을 이용",
+        "SQLite DB 에 일정을 저장하고, 조회할 수 있습니다. ",
+        "사용 가능한 도구는 extract_schedule_request, save_structured_request, "
+        "list_saved_requests, get_saved_request, personal_list_saved_schedules 입니다 ."
     ]
 
 
