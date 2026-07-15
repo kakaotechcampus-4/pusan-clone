@@ -530,17 +530,37 @@ class Week03Week01CompatibilityTest(_Week03StoreTestCase):
 
     def test_compatibility_tool_writes_temporary_and_persistent_records(self) -> None:
         # 한 번의 호환 tool 호출이 Week 1 메모리와 Week 3 SQLite에 각각 한 건을 남겨야 합니다.
-        with conversation_session_scope("chat-a"):
+        expected_week01_input = {
+            "title": "민수와 회의",
+            "date": "2026-07-16",
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "attendees": ["민수"],
+        }
+        week01_create = Mock(
+            wraps=week03.week01_personal_create_schedule.invoke,
+        )
+
+        with (
+            patch.object(
+                week03,
+                "week01_personal_create_schedule",
+                SimpleNamespace(invoke=week01_create),
+            ),
+            patch.object(
+                week03,
+                "save_structured_request_payload",
+                wraps=week03.save_structured_request_payload,
+            ) as sqlite_save_helper,
+            conversation_session_scope("chat-a"),
+        ):
             payload = invoke_json(
                 week03.personal_create_schedule,
-                {
-                    "title": "민수와 회의",
-                    "date": "2026-07-16",
-                    "start_time": "10:00",
-                    "end_time": "11:00",
-                    "attendees": ["민수"],
-                },
+                expected_week01_input,
             )
+
+        week01_create.assert_called_once_with(expected_week01_input)
+        sqlite_save_helper.assert_called_once()
 
         created = payload["created_schedule"]
         structured = payload["structured_request"]
@@ -559,6 +579,64 @@ class Week03Week01CompatibilityTest(_Week03StoreTestCase):
         self.assertEqual(len(schedules), 1)
         self.assertEqual(schedules[0]["schedule_id"], created["id"])
         self.assertEqual(schedules[0]["attendees"], ["민수"])
+
+    def test_compatibility_tool_rejects_invalid_week01_json_before_sqlite_save(self) -> None:
+        # 내부 Week 1 계약이 깨졌을 때 잘못된 값을 SQLite 성공처럼 저장하면 안 됩니다.
+        invalid_week01_tool = SimpleNamespace(
+            invoke=Mock(return_value="not-json"),
+        )
+
+        with (
+            patch.object(
+                week03,
+                "week01_personal_create_schedule",
+                invalid_week01_tool,
+            ),
+            patch.object(week03, "save_structured_request_payload") as sqlite_save_helper,
+        ):
+            with self.assertRaises(RuntimeError):
+                week03.personal_create_schedule.invoke(
+                    {"title": "깨진 결과", "date": "2026-07-16", "start_time": "10:00"}
+                )
+
+        sqlite_save_helper.assert_not_called()
+
+    def test_compatibility_tool_rejects_invalid_created_schedule_shape(self) -> None:
+        # 최상위 JSON과 created_schedule 모두 object인지 확인한 뒤에만 Adapter를 호출해야 합니다.
+        invalid_results = [
+            [],
+            {"ok": True, "created_schedule": []},
+            {"ok": True},
+        ]
+
+        for invalid_result in invalid_results:
+            with self.subTest(result=invalid_result):
+                invalid_week01_tool = SimpleNamespace(
+                    invoke=Mock(
+                        return_value=json.dumps(invalid_result, ensure_ascii=False),
+                    ),
+                )
+                with (
+                    patch.object(
+                        week03,
+                        "week01_personal_create_schedule",
+                        invalid_week01_tool,
+                    ),
+                    patch.object(
+                        week03,
+                        "save_structured_request_payload",
+                    ) as sqlite_save_helper,
+                ):
+                    with self.assertRaises(RuntimeError):
+                        week03.personal_create_schedule.invoke(
+                            {
+                                "title": "잘못된 결과",
+                                "date": "2026-07-16",
+                                "start_time": "10:00",
+                            }
+                        )
+
+                sqlite_save_helper.assert_not_called()
 
     def test_temporary_memory_is_session_scoped_but_sqlite_is_not(self) -> None:
         # 새 대화에서는 Week 1 메모리가 안 보이지만 같은 SQLite 기록은 계속 조회되어야 합니다.

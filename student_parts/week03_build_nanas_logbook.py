@@ -512,16 +512,41 @@ def list_saved_requests(
 ) -> str:
     """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
 
-    # TODO: kind/date_from/date_to 필터로 저장 요청을 조회하고 rows를 JSON 문자열로 반환하세요.
-    ...
+    # tool은 SQL을 직접 작성하지 않고 Store에 조회 책임을 위임함.
+    # kind가 None이면 전체 종류를 조회하고, 날짜 범위도 전달된 값만 적용되게끔 한다.
+    app_store = _store()
+    rows = app_store.list_saved_requests(
+        kind=kind,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+    # 조회 결과가 없어도 []는 정상적인 조회 결과다.
+    # 따라서 ok=False로 바꾸거나 별도의 오류 메시지를 만들지 않는다.
+    return json_payload(
+        tool_result(
+            "list_saved_requests",
+            rows=rows,
+        )
+    )
 
 
 @tool(args_schema=SavedRequestGetInput)
 def get_saved_request(request_id: str) -> str:
     """request_id로 구조화 요청 행 하나를 조회합니다."""
 
-    # TODO: request_id로 단건 조회하고, 결과가 없을 때도 row=None을 유지해 JSON 문자열로 반환하세요.
-    ...
+    # request_id에 해당하는 master structured request row를 Store에서 조회한다.
+    app_store = _store()
+    row = app_store.get_saved_request(request_id)
+
+    # 찾지 못했을 때 Store가 반환하는 None도 정상 조회 결과로 보존되므로,
+    # Agent는 row=None을 보고 "해당 기록이 없다"고 사용자에게 설명할 수 있다.
+    return json_payload(
+        tool_result(
+            "get_saved_request",
+            row=row,
+        )
+    )
 
 
 @tool(args_schema=SavedScheduleListInput)
@@ -533,9 +558,37 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    # TODO: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
-    # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
-    ...
+    # kind를 생략한 기본 호출은 개인 일정 조회로 해석한다.
+    # 하지만 group_schedule처럼 명시적인 값이 들어오면 바꾸지 않고 그대로 사용한다.
+    applied_kind: RequestKind = (
+        kind if kind is not None else "personal_schedule"
+    )
+
+    # Agent trace에서 실제로 어떤 조회 조건이 적용됐는지 확인할 수 있도록 입력값이 아니라 기본값까지 반영된 최종 필터를 기록한다.
+    filters = {
+        "limit": limit,
+        "kind": applied_kind,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+
+    # 일정 조회의 SQL, 정렬, 참석자 JSON 변환은 Store가 담당한다.
+    app_store = _store()
+    schedules = app_store.list_schedules(
+        limit=limit,
+        kind=applied_kind,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+    # Store가 반환한 schedule_id, request_id, request_kind, attendees 등의 필드를 재구성하지 않고 그대로 전달하게 한다.
+    return json_payload(
+        tool_result(
+            "personal_list_saved_schedules",
+            filters=filters,
+            schedules=schedules,
+        )
+    )
 
 
 def delete_saved_schedules_dict(
