@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -227,6 +228,36 @@ class SaveStructuredRequestInput(StructuredRequest):
     kind: RequestKind = Field(default="unknown", description="분류된 요청 종류")
     source_schedule_id: str | None = Field(default=None, description="Week 1 임시 일정에서 넘어온 원본 일정 ID")
 
+    @field_validator("date")
+    @classmethod
+    def _validate_date_format(cls, value: str | None) -> str | None:
+        """저장 직전 date가 YYYY-MM-DD 형식인지 검증한다. (None은 허용)"""
+
+        if value is None:
+            return value
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d")
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"date는 YYYY-MM-DD 형식이어야 합니다: {value!r}") from error
+        if parsed.strftime("%Y-%m-%d") != value:
+            raise ValueError(f"date는 YYYY-MM-DD 형식이어야 합니다: {value!r}")
+        return value
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _validate_time_format(cls, value: str | None) -> str | None:
+        """저장 직전 시간이 HH:MM(24시간) 형식인지 검증한다. (None 허용, '미정' 불허)"""
+
+        if value is None:
+            return value
+        try:
+            parsed = datetime.strptime(value, "%H:%M")
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"시간은 HH:MM 형식이어야 합니다: {value!r}") from error
+        if parsed.strftime("%H:%M") != value:
+            raise ValueError(f"시간은 HH:MM 형식이어야 합니다: {value!r}")
+        return value
+
     @model_validator(mode="before")
     @classmethod
     def unwrap_legacy_payload(cls, value: Any) -> Any:
@@ -238,7 +269,12 @@ class SaveStructuredRequestInput(StructuredRequest):
             for key in ("structured_request", "payload"):
                 inner = value.get(key)
                 if isinstance(inner, dict):
-                    return inner
+                    merged = dict(inner)
+                    # wrapper 바깥에만 있는 source_schedule_id 를 잃지 않도록 합친다(안쪽 값 우선).
+                    outer_id = value.get("source_schedule_id")
+                    if outer_id and not merged.get("source_schedule_id"):
+                        merged["source_schedule_id"] = outer_id
+                    return merged
         return value
 
 
@@ -341,7 +377,6 @@ def _delete_saved_schedules(
     tool_name = "personal_delete_saved_schedules"
     has_filter = bool(schedule_ids) or bool(date) or bool(title) or bool(start_time) or time_unspecified
 
-    # 안전 규칙: 아무 조건 없이(그리고 delete_all 도 아닌데) 전량 삭제하는 사고를 막는다.
     if not delete_all and not has_filter:
         return tool_result(
             tool_name,
@@ -370,7 +405,7 @@ def _delete_saved_schedules(
             "start_time": start_time,
             "time_unspecified": time_unspecified,
         }
-        # 이전 주차(week01 personal_delete_schedule)와 동일하게: 조건은 줬지만
+
         # 매칭되는 일정이 없으면 ok=False + error 로 "찾지 못함"을 알린다.
         if not deleted:
             return tool_result(
@@ -389,12 +424,16 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
     # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
+    # Week 2/3 구조는 시간 미지정을 None으로 표현하므로, Week 1의 "미정" 문자열을 None으로 바꾼다.
+    def _time_or_none(value: Any) -> str | None:
+        return None if value in (None, "", "미정") else value
+
     return SaveStructuredRequestInput(
         kind="personal_schedule",
         title=schedule.get("title"),
         date=schedule.get("date"),
-        start_time=schedule.get("start_time"),
-        end_time=schedule.get("end_time"),
+        start_time=_time_or_none(schedule.get("start_time")),
+        end_time=_time_or_none(schedule.get("end_time")),
         members=schedule.get("attendees") or [],
         original_text=schedule.get("title") or "",
         source_schedule_id=schedule.get("id"),
@@ -634,8 +673,8 @@ def week03_prompt_parts() -> list[str]:
         *week02_prompt_parts(),
         # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
         SQLITE_MEMORY_PROMPT,
-        WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+        WEEK03_TOOL_CALL_PROMPT,
     ]
 
 
