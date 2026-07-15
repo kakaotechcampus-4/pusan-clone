@@ -29,10 +29,43 @@ from student_parts.week02_structure_natural_language_requests import (
 _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = ""
+SQLITE_MEMORY_PROMPT = """
+Week 3의 영속 메모리는 현재 대화 내용이 아니라 SQLite 저장 결과를 기준으로 한다.
+새 대화에서도 저장된 일정, 할 일, 알림을 확인하려면 SQLite 조회 tool을 사용하여라.
+
+사용자가 저장된 개인 일정을 물으면 personal_list_saved_schedules를 사용하여라.
+사용자가 저장된 요청의 원본 기록이나 할 일, 알림을 물으면 list_saved_requests 또는 get_saved_request를 사용하여라.
+
+조회 결과가 없으면 내용을 추측하거나 만들어내지 말고 저장된 항목이 없다고 답하여라.
+저장, 수정, 삭제가 성공했다고 판단하기 전에 반드시 해당 tool의 결과를 확인하여라.
+Week 1의 임시 메모리와 Week 3의 SQLite 저장 데이터는 구분하여라.
+""".strip()
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+WEEK03_TOOL_CALL_PROMPT = """
+새로운 자연어 저장 요청은 다음 순서로 처리하여라.
+
+1. extract_schedule_request를 호출하여 사용자 요청을 StructuredRequest로 구조화하여라.
+2. tool 결과의 structured_request 안에 있는 kind, title, date, start_time,
+    end_time, members, priority, reason, original_text를 읽어라.
+3. 해당 필드를 save_structured_request에 전달하여 SQLite에 저장하여라.
+4. 저장 결과를 확인한 뒤 사용자에게 저장 성공 여부를 알려라.
+
+일정 조회 요청은 personal_list_saved_schedules를 사용하여라.
+조회 날짜가 명확하면 date_from과 date_to를 사용하여 범위를 좁혀라.
+
+저장 일정 수정 요청에서 schedule_id를 모르면 먼저 personal_list_saved_schedules로 후보를 조회하여라.
+그 다음 personal_update_saved_schedule에 실제로 변경할 필드만 전달하여라.
+None인 필드는 수정하지 않는다는 뜻이다.
+
+저장 일정 삭제 요청에서도 먼저 후보를 확인하여라.
+personal_delete_saved_schedules에는 schedule_ids 또는 사용자가 명시한 날짜, 제목, 시간 필터를 전달하여라.
+사용자가 명시적으로 전체 삭제를 요청하지 않았다면 delete_all을 사용하지 말고,
+삭제 조건이 없으면 삭제하지 말고 추가 정보를 요청하여라.
+
+Week 1 호환 personal_create_schedule은 개인 일정 생성과 SQLite 저장을 함께 수행하는 tool이다.
+이 tool을 사용한 경우 같은 일정을 save_structured_request로 다시 저장하여 중복 생성하지 말아라.
+""".strip()
 
 
 # [3주차 수강생 구현 가이드]
@@ -511,11 +544,17 @@ def week03_prompt_parts() -> list[str]:
     return [
         *week02_prompt_parts(),
         # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
-        "",
+        "구조화된 요청 결과(StructuredRequest)는 save_structured_request 도구를 사용하여 저장하여라.",
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
-    ]
+        f"오늘 날짜는 {current_app_date_iso()}이다. 만약 '내일', '다음 주'와 같은 상대적인 날짜가 입력되었다면 오늘 날짜를 참고하여라.",
+        "아래에서는 현재 주로 사용할 툴에 대해 요약 설명힌다.: ",
+        "save_structured_request를 사용하면 데이터베이스에 원본 요청 row와 목적별 정규화 row가 저장된다.",
+        "저장 결과는 list_saved_requests, personal_list_saved_schedules 도구들을 이용해 조회할 수 있다."
+        "사용자가 일정 등의 저장을 요청하는 경우 save_structured_request를 사용하여 저장하여라",
+        "사용자가 일정 조회를 요청하는 경우 personal_list_saved_schedules를 사용하여라"
+    ]   
 
 
 def build_week03_agent() -> object:
