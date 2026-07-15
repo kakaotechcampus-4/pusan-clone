@@ -464,10 +464,6 @@ def save_structured_request(
     }
     payload = {key: value for key, value in candidate.items() if value is not None}
     saved = _store().save_structured_request(payload)
-    # 후검증(멘토 피드백): personal_schedule은 실제 tool 생성 흔적(source_schedule_id)이 있어야
-    # provenance 가 확실하다. 하드 차단 대신 흔적 유무를 표시해 이후 감사/필터가 가능하게 한다.
-    if kind == "personal_schedule":
-        saved = {**saved, "tool_trace_verified": bool(source_schedule_id)}
     return json_payload(tool_result("save_structured_request", **saved))
 
 
