@@ -143,6 +143,12 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
 def extract_structured_request(text: str) -> StructuredRequest:
     """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
 
+    model = chat_model().with_structured_output(StructuredRequest)
+    result = model.invoke([
+        {"role": "system", "content": join_system_prompt(week02_prompt_parts())},
+        {"role": "user", "content": text},
+    ])
+    return _coerce_structured_request(result)
     ...
 
 
