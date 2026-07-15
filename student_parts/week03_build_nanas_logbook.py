@@ -37,6 +37,10 @@ WEEK03_TOOL_CALL_PROMPT = (
     "저장 요청 처리 순서: 먼저 extract_schedule_request(query=사용자 요청 원문)를 호출해 자연어를 "
     "structured_request로 구조화하고, 그 결과의 kind/title/date/start_time/end_time/members/priority/"
     "reason/original_text 필드를 save_structured_request 인자로 그대로 전달해 SQLite에 저장한다. "
+    "하나의 저장 요청은 반드시 위 경로 하나로만 저장한다. personal_create_schedule은 자체적으로 "
+    "SQLite 저장까지 수행하는 Week 1 호환 tool이므로, 이 tool을 호출했다면 같은 요청에 대해 "
+    "extract_schedule_request나 save_structured_request를 다시 호출하지 않는다. 반대로 "
+    "save_structured_request로 저장했다면 personal_create_schedule을 또 호출하지 않는다. "
     "저장된 일정 수정/삭제는 먼저 personal_list_saved_schedules로 후보 schedule_id를 확인한 뒤 "
     "personal_update_saved_schedule 또는 personal_delete_saved_schedules에 schedule_ids나 명시 필터를 넘긴다. "
     "조건 없는 전체 삭제는 사용자가 명확히 요청한 경우에만 delete_all=True로 수행한다."
@@ -269,6 +273,47 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     raise TypeError(f"저장 입력으로 사용할 수 없는 타입입니다: {type(value).__name__}")
 
 
+def _find_duplicate_saved_schedule(store: AppSQLiteStore, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """같은 제목/날짜/시간의 저장 일정이 이미 있으면 그 row를 반환합니다.
+
+    LLM이 personal_create_schedule과 save_structured_request 두 저장 경로를
+    같은 요청에 모두 호출해도 일정이 중복 저장되지 않게 하는 방어선입니다.
+    """
+
+    if payload.get("kind") not in {"personal_schedule", "group_schedule"}:
+        return None
+    title = payload.get("title")
+    date = payload.get("date")
+    if not title or not date:
+        return None
+    for row in store.find_schedules(date=date, title=title):
+        if (
+            row.get("title") == title
+            and (row.get("start_time") or None) == (payload.get("start_time") or None)
+            and (row.get("end_time") or None) == (payload.get("end_time") or None)
+        ):
+            return row
+    return None
+
+
+def _save_payload_to_store(payload: dict[str, Any], store: AppSQLiteStore) -> dict[str, Any]:
+    """중복 일정 guard를 거쳐 payload를 저장하고 store 결과 dict를 반환합니다."""
+
+    duplicate = _find_duplicate_saved_schedule(store, payload)
+    if duplicate is not None:
+        return {
+            "request_id": duplicate.get("request_id"),
+            "kind": payload.get("kind"),
+            "saved_rows": [
+                {"table": "structured_requests", "id": duplicate.get("request_id"), "existing": True},
+                {"table": "schedules", "id": duplicate.get("schedule_id"), "existing": True},
+            ],
+            "shared_sync": None,
+            "already_exists": True,
+        }
+    return store.save_structured_request(payload)
+
+
 def save_structured_request_payload(
     request: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str,
     *,
@@ -278,7 +323,7 @@ def save_structured_request_payload(
 
     save_input = _save_input_from(request)
     payload = {key: value for key, value in save_input.model_dump().items() if value is not None}
-    saved = (store or _store()).save_structured_request(payload)
+    saved = _save_payload_to_store(payload, store or _store())
     return tool_result("save_structured_request", **saved)
 
 
@@ -453,7 +498,7 @@ def save_structured_request(
         "source_schedule_id": source_schedule_id,
     }
     payload = {key: value for key, value in raw_payload.items() if value is not None}
-    saved = _store().save_structured_request(payload)
+    saved = _save_payload_to_store(payload, _store())
     return json_payload(tool_result("save_structured_request", **saved))
 
 
