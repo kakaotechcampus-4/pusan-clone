@@ -460,7 +460,7 @@ def personal_list_saved_schedules(
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
     return {
         "filters" : filters,
-        "schedules" : schedules
+        "rows" : schedules
     }
     
 
@@ -518,6 +518,7 @@ def personal_update_saved_schedule(
 
 
 @tool(args_schema=SavedScheduleDeleteInput)
+@tool_response
 def personal_delete_saved_schedules(
     schedule_ids: list[str] | None = None,
     date: str | None = None,
@@ -529,7 +530,24 @@ def personal_delete_saved_schedules(
     """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다."""
 
     # TODO: _delete_saved_schedules(...)에 삭제 조건을 전달하고 결과를 JSON 문자열로 반환하세요.
-    ...
+    filters = {
+        "schedule_ids" : schedule_ids,
+        "date" : date,
+        "title" : title,
+        "start_time" : start_time,
+        "time_unspecified" : time_unspecified,
+        "delete_all" : delete_all
+    }
+
+    res = _store().delete_schedules_by_filter(**filters)
+
+
+    return {
+        "deleted_count": len(res),
+        "filters" : filters,
+        "deleted" : len(res) > 0,
+        "rows" : res
+    }
 
 
 def week03_tools() -> list[Any]:
