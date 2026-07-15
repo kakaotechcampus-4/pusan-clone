@@ -49,6 +49,15 @@ WEEK03_TOOL_CALL_PROMPT = (
     "조건 없는 전체 삭제는 사용자가 명확히 요청한 경우에만 delete_all=True로 수행한다."
 )
 
+RELATIVE_TIME_ANCHOR_PROMPT = (
+    "기존 일정을 기준으로 한 상대 시간 요청(예: 어떤 일정 30분 전에 알려줘, 회의 끝나고 1시간 뒤)은 "
+    "문장만으로 시간을 정할 수 없다. 반드시 먼저 personal_list_saved_schedules로 참조된 일정을 찾아 "
+    "date/start_time을 확인한 뒤 그 값으로 알림 시간을 계산하고, 계산된 date/start_time을 "
+    "save_structured_request 인자에 직접 채워 저장한다. 이 경우 extract_schedule_request를 거치지 않아도 된다. "
+    "참조한 일정을 찾지 못했거나, 사용자가 말한 요일/날짜와 저장된 일정의 날짜가 서로 다르면 "
+    "시간을 임의로 추측해 저장하지 말고, 찾은 일정 정보를 알려주며 사용자에게 먼저 확인한다."
+)
+
 
 # [3주차 수강생 구현 가이드]
 #
@@ -675,6 +684,7 @@ def week03_prompt_parts() -> list[str]:
         "tool 호출 결과를 근거로 한국어로 짧게 답한다.",
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
+        RELATIVE_TIME_ANCHOR_PROMPT,
         f"오늘 날짜는 {current_app_date_iso()}이다. '내일', '다음 주 화요일' 같은 상대 날짜는 "
         "이 날짜 기준으로 YYYY-MM-DD로 해석해 tool 인자에 넣는다. "
         "Week 3에서는 RAG와 외부 멤버 일정 조율을 다루지 않으며, 확실하지 않은 값은 "
