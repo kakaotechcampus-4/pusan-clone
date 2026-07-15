@@ -343,7 +343,17 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
     # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
-    ...
+    payload = {
+            "source_schedule_id": schedule["id"],
+            "title": schedule["title"],
+            "date" : schedule["date"],
+            "start_time" : schedule["start_time"] ,
+            "end_time" : schedule["end_time"] ,
+            "kind" : "personal_schedule" if schedule.get("attendees") is None else "group_schedule",
+            "members" : schedule["attendees"]
+    }
+    
+    return _save_input_from(payload)
 
 
 @tool("personal_create_schedule")
