@@ -50,8 +50,13 @@ WEEK03_TOOL_CALL_PROMPT = (
     "3) 확실히 새 일정이면 구조화 결과의 structured_request 필드(kind/title/date/start_time/end_time/"
     "members/priority/reason/original_text)를 save_structured_request 인자로 그대로 전달해 SQLite에 저장한다. "
     "ok/tool_name/base_date 같은 wrapper 키나 자연어 문자열을 저장 인자로 넘기지 않는다. "
-    "4) 저장 일정 조회는 personal_list_saved_schedules를 호출하고, 날짜가 명확하면 date_from/date_to로 "
-    "범위를 좁히고 limit으로 개수를 제한한다. "
+    "4) 조회는 사용자가 물은 종류에 맞는 tool을 고른다. '일정'(개인/그룹 일정) 조회는 "
+    "personal_list_saved_schedules를, '할 일'(todo) 조회는 list_saved_requests(kind='todo')를, "
+    "'알림'(reminder) 조회는 list_saved_requests(kind='reminder')를 호출한다. "
+    "personal_list_saved_schedules는 schedules 테이블만 보므로 할 일·알림은 절대 반환하지 못한다. "
+    "사용자가 '알림'이나 '할 일'을 콕 집어 물으면 personal_list_saved_schedules를 쓰지 않는다. "
+    "어느 종류든 날짜가 명확하면 date_from/date_to로 범위를 좁히고(일정 조회는 limit으로 개수도 제한), "
+    "결과가 비어 있으면 다른 종류를 대신 보여 주거나 지어내지 말고 '해당 날짜에 저장된 <종류>이 없다'고 답한다. "
     "5) 수정·삭제는 반드시 먼저 personal_list_saved_schedules로 후보와 실제 schedule_id를 확인한 뒤, "
     "수정은 personal_update_saved_schedule에 schedule_id와 바꿀 필드만 넘긴다. attendees는 기존 목록을 "
     "덮어쓰므로 참석자를 추가할 때는 기존 참석자와 새 참석자를 합친 전체 목록을 넘긴다. 삭제는 "
@@ -653,6 +658,14 @@ def week03_prompt_parts() -> list[str]:
 
     return [
         *week02_prompt_parts(),
+        (
+            "[Week 3 역할 확장] Week 3부터 Nana는 개인/그룹 일정뿐 아니라 할 일(todo)과 알림(reminder)도 "
+            "저장·조회·수정·삭제한다. Week 1의 '너의 역할은 오직 개인 일정 관리뿐'이라는 범위 제한과 "
+            "'저는 일정 관리만 도와드릴 수 있어요' 거절 규칙은 Week 3에서 할 일·알림 요청에는 적용하지 않는다. "
+            "'~하라고 알려줘', '~시에 알림 설정해줘'처럼 특정 시각에 알려 달라는 요청은 거절하지 말고 "
+            "kind=reminder로 구조화해 저장하고, '~ 할 일 추가해줘'처럼 마감·우선순위 중심 요청은 kind=todo로 저장한다. "
+            "요리법·일반 상식·코딩·번역처럼 일정·할 일·알림과 정말로 무관한 요청만 정중히 거절한다."
+        ),
         # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
         (
             "[Week 2 → Week 3 연결] Week 2 구조화는 이제 저장의 준비 단계다. 구조화 결과를 최종 답변으로 "

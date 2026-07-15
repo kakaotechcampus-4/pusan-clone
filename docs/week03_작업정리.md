@@ -42,14 +42,21 @@ tool 호출 순서를 정한다.
    새 일정인지 수정인지 또는 후보가 여럿이라 모호하면 저장·수정하지 말고 후보를 보여 주며 되묻는다.
    (→ 아래 "중복 저장 버그와 프롬프트 보강" 참고)
 3. 확실히 새 일정이면 `structured_request` 필드를 `save_structured_request`에 그대로 전달(wrapper 키·자연어 문자열 금지).
-4. 조회는 `personal_list_saved_schedules`(날짜 명확하면 `date_from`/`date_to`, `limit`으로 제한).
+4. **조회는 물은 종류에 맞는 tool을 고른다** — 일정은 `personal_list_saved_schedules`,
+   할 일은 `list_saved_requests(kind='todo')`, 알림은 `list_saved_requests(kind='reminder')`.
+   날짜가 명확하면 `date_from`/`date_to`(일정은 `limit`도)로 좁히고, 결과가 비면 다른 종류를
+   대신 보여 주거나 지어내지 말고 "해당 날짜에 저장된 <종류>이 없다"고 답한다.
+   (→ 아래 "조회 종류 라우팅 버그와 프롬프트 보강" 참고)
 5. 수정·삭제는 반드시 먼저 목록으로 실제 `schedule_id`를 확인. `attendees`는 기존 목록을 덮어쓰므로
    참석자를 추가할 때는 기존+새 참석자 전체 목록을 넘긴다. 조건 없는 삭제는 거부.
 
 ### `week03_prompt_parts()`
 
-`*week02_prompt_parts()` 위에 3조각을 누적한다.
+`*week02_prompt_parts()` 위에 4조각을 누적한다.
 
+- **Week 3 역할 확장**: Nana의 역할을 개인/그룹 일정 + 할 일 + 알림으로 넓히고,
+  Week 1의 "오직 개인 일정 관리뿐" 거절 규칙을 할 일·알림 요청에는 무효화한다.
+  (→ 아래 "알림·할 일 요청 거절 버그와 역할 확장" 참고)
 - **Week 2 → Week 3 연결**: 구조화로 끝내지 말고 저장까지 한다. Week 2의 "아직 저장 안 함" 범위 규칙과
   "최종 답변은 항상 StructuredRequestBatch" 규칙을 **명시적으로 무효화**한다.
   (이걸 안 풀면 Week 2 프롬프트가 그대로 누적돼 Week 3 agent가 텍스트 답변을 못 하는 충돌이 생긴다 —
@@ -173,6 +180,88 @@ week01의 `build_week01_agent()`와 같은 패턴 —
 - 일치가 정확히 하나면 `save_structured_request` 대신 `personal_update_saved_schedule`로 반영.
 - **새 일정인지 기존 일정 수정인지, 또는 후보가 여럿이라 모호하면 저장·수정하지 말고 되묻는다** (사용자 선택).
 - `attendees`는 기존 목록을 덮어쓰므로 참석자를 추가할 때는 기존+새 참석자 전체 목록을 넘긴다는 주의도 추가.
+
+---
+
+## 조회 종류 라우팅 버그와 프롬프트 보강
+
+### 증상
+
+"내일 **알림** 보여줘"라고 했는데 내일자 **일정**(보고서 작성 09:00, 올리브영 15:00)이 나왔다.
+"내일 **할 일** 보여줘"도 같은 일정 목록을 그대로 반환했다.
+(실제 DB엔 알림 `약 먹기`가 오늘 15:00 하나뿐이고, 내일자 알림·할 일은 애초에 없었다.)
+
+### 원인 (코드 버그가 아니라 프롬프트 라우팅 문제)
+
+종류(kind)별로 저장 테이블이 다르다 (`app_store.py`의 `save_structured_request`).
+
+| kind | 저장 테이블 |
+|------|------------|
+| `personal_schedule` / `group_schedule` | `schedules` |
+| `todo` | `todos` |
+| `reminder` | `reminders` |
+
+그런데 조회 tool `personal_list_saved_schedules`는 `store.list_schedules(...)` → **`schedules` 테이블만** 읽고,
+`kind` 기본값도 `personal_schedule`이다. 즉 이 tool로는 알림·할 일이 **구조적으로 절대 나올 수 없다**.
+프롬프트에 "알림·할 일은 다른 tool로 조회하라"는 규칙이 없어서, 에이전트가 모든 "보여줘" 요청을
+`personal_list_saved_schedules`로 몰아 일정만 반환한 것.
+(알림·할 일은 `structured_requests` 테이블에도 저장되므로 `list_saved_requests(kind=...)`로 날짜 필터까지 걸어 조회 가능하다.)
+
+### 대응 (프롬프트 보강)
+
+`WEEK03_TOOL_CALL_PROMPT`의 조회 규칙(4번)을 **종류별 tool 라우팅**으로 고쳤다.
+
+- 일정 조회 → `personal_list_saved_schedules`
+- 할 일 조회 → `list_saved_requests(kind='todo')`
+- 알림 조회 → `list_saved_requests(kind='reminder')`
+- **결과가 비면 다른 종류를 대신 보여 주거나 지어내지 말고 "해당 날짜에 저장된 <종류>이 없다"고 답한다.**
+
+### 검증 (저장소 레벨, 실제 DB로 확인)
+
+- `list_schedules(kind='reminder', 내일)` → `[]` (버그 경로: 일정 테이블엔 알림 없음)
+- `list_saved_requests(kind='reminder', 오늘)` → `[약 먹기 07-15 15:00]` (수정 경로: 정상)
+- `list_saved_requests(kind='reminder', 내일)` → `[]` → "내일 저장된 알림이 없습니다."
+- `list_saved_requests(kind='todo', 내일)` → `[]` → "내일 저장된 할 일이 없습니다."
+
+> 남은 한계: 프롬프트 기반 라우팅이라 LLM이 지시를 따르는 데 의존한다. 100% 보장이 필요하면
+> `personal_list_saved_schedules`가 `kind='reminder'/'todo'`를 받으면 해당 테이블로 위임하게 하거나
+> `list_saved_reminders` 같은 전용 tool을 추가하는 코드 레벨 방어책이 있다.
+
+---
+
+## 알림·할 일 요청 거절 버그와 역할 확장
+
+### 증상
+
+"나 내일 4시에 약 먹으라고 알림 설정"이라고 했는데
+Nana가 *"저는 일정 관리만 도와드릴 수 있어요. 개인 일정 생성, 조회, 삭제 중 원하시는 작업을 말씀해 주세요."*
+라며 **알림 요청을 범위 밖으로 거절**했다. 저장 tool을 부르기도 전에 거절해 버렸다.
+
+### 원인 (코드 버그가 아니라 프롬프트 범위 문제)
+
+역할 정의가 Week 1에 묶여 있다 (`week01_wake_up_nana.py`의 `week01_prompt_parts()`).
+
+- "너의 역할은 **오직 개인 일정 관리뿐**이다. … '저는 일정 관리만 도와드릴 수 있어요'라고 정중히 거절"
+
+이 조각이 `week02_prompt_parts()` → `week03_prompt_parts()`로 그대로 누적된다.
+하지만 Week 3은 `kind` 5종 중 `todo`·`reminder`도 저장하는 주차다
+(`WEEK03_TOOL_CALL_PROMPT` 1번도 "일정·할 일·알림 저장 요청"을 전제).
+결국 **Week 1의 좁은 역할 제한이 Week 3의 알림·할 일 기능을 막아**, 알림 요청이 무관한 요청으로 오인돼 거절됐다.
+
+### 대응 (프롬프트 보강 — 뒤 주차가 앞 주차 규칙을 무효화하는 기존 패턴)
+
+`week03_prompt_parts()` 맨 앞에 **`[Week 3 역할 확장]`** 조각을 추가했다
+(Week 2의 "[Week 1 답변 규칙 무효화]", `SQLITE_MEMORY_PROMPT`와 같은 override 방식).
+
+- Week 3부터 Nana는 개인/그룹 일정뿐 아니라 **할 일(todo)·알림(reminder)도 저장·조회·수정·삭제**한다.
+- Week 1의 "오직 개인 일정 관리뿐" 제한과 "저는 일정 관리만 도와드릴 수 있어요" 거절 규칙은
+  **할 일·알림 요청에는 적용하지 않는다.**
+- "~하라고 알려줘", "~시에 알림 설정" → `kind=reminder`로 저장, "~ 할 일 추가" → `kind=todo`로 저장.
+- 요리법·일반 상식·코딩·번역처럼 **정말로 무관한 요청만** 거절한다.
+
+> 참고: 실제로 kind를 분류하는 `extract_structured_request` bridge는 `with_structured_output`으로
+> `StructuredRequest`를 강제 출력하므로 거절할 수 없다. 문제는 top-level 에이전트가 tool을 부르기 전에
+> 거절한 것이었고, 역할 확장 조각이 그 지점을 푼다.
 
 ---
 
