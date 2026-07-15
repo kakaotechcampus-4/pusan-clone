@@ -269,9 +269,12 @@ def save_structured_request_payload(
     """검증된 structured request를 앱 DB에 저장합니다."""
 
     # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
+    validate = _save_input_from(request)
     
-    
-    ...
+    # pydantic 객체를 dict로 변환하고 None 값은 제외 
+    payload = {k :v for k ,v in validate.model_dump().items() if v is not None}
+    st = store or _store()
+    return st.save_structured_request(payload)
 
 
 class SavedRequestListInput(BaseModel):
