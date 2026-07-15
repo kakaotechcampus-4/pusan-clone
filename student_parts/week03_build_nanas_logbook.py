@@ -28,10 +28,23 @@ from student_parts.week02_structure_natural_language_requests import (
 _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = ""
+SQLITE_MEMORY_PROMPT = """
+- week3부터는 week1의 임시 메모리 대신 앱 SQLite DB에 저장된다.
+- DB에 저장된 일정/할 일/알림은 새 대화를 열거나 앱을 다시 시작해도 그대로 유지된다.
+- 따라서 "내 일정 보여줘" 같은 조회 요청에는 이전 대화 기억에 의존하지 말고 반드시 DB 조회 tool을 호출한다.
+- 개인 일정 생성은 personal_create_schedule, 일정 저장은 save_structured_request로 한다.
+- personal_list_saved_schedules는 저장된 일정조회를 반환하므로 "내 일정 보여줘" 같은 조회 질문과 이후 수정/삭제 후보 확인에 사용한다.
+- 저장된 구조화 요청 조회는 전체 목록 조회는 list_saved_requests을, 단건 조회는 get_saved_request을 사용한다."""
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+WEEK03_TOOL_CALL_PROMPT = """
+- 저장 요청은 먼저 extract_schedule_request(query=사용자 요청)를 호출해 자연어를 Week 2 StructuredRequest로 바꾼다.
+- 그 다음 structured_request의 kind/title/date/start_time/end_time/members/priority/reason/original_text를 save_structured_request 인자로 그대로 전달해 SQLite에 저장한다.
+- 조회 요청은 저장된 일정은 personal_list_saved_schedules를 사용하여 처리한다. 저장된 구조화 요청은 전체 목록 조회일 경우 list_saved_requests를, 단건 조회일 경우는 get_saved_request로 처리한다.
+- 수정 요청은 먼저 personal_list_saved_schedules로 대상 일정을 확인한 뒤, personal_update_saved_schedule에 schedule_id와 바꿀 필드만 넘겨 처리한다.
+- 삭제 요청은 먼저 personal_list_saved_schedules로 후보를 확인한 후, personal_delete_saved_schedules에 schedule_ids 또는 명시 필터(date/title/start_time 등)를 넘겨서 삭제 요청을 처리한다.
+- 각 tool에 붙은 @tool(args_schema=...)가 Pydantic class로 입력을 검증한다.
+- 검증된 인자는 AppSQLiteStore에 넘기고, 결과를 JSON 문자열로 반환한다."""
 
 
 # [3주차 수강생 구현 가이드]
