@@ -278,7 +278,7 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
 
     # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
     
-    if isinstance(value, SavedScheduleUpdateInput):
+    if isinstance(value, SaveStructuredRequestInput):
         return value
     
     if isinstance(value, str):
@@ -368,6 +368,24 @@ def _delete_saved_schedules(
     """삭제 guard와 DB 호출을 한 곳에 둡니다."""
 
     # TODO: 삭제 조건이 없으면 거부하고, delete_all 또는 명시 필터에 맞는 store 메서드를 호출하세요.
+
+    no_condition = (
+        not schedule_ids and
+        date is None and
+        title is None and
+        start_time is None and
+        not time_unspecified and
+        not delete_all
+    )
+
+    if no_condition:
+        return {
+            "ok" : False,
+            "deleted_count" : 0,
+            "filters" : {},
+            "deleted" : []
+        }
+
     filters = {
         k : v 
         for k, v in {
@@ -377,17 +395,8 @@ def _delete_saved_schedules(
             "start_time" : start_time,
             "time_unspecified" : time_unspecified,
             "delete_all" : delete_all
-        }.items if v is not None
+        }.items() if v is not None
     }
-
-    if len(filters.items()) == 0:
-        return {
-            "deleted_count" : 0,
-            "filters" : {},
-            "deleted" : False,
-            "rows" : []
-        }
-
     res = None
     if delete_all:
         res = store.delete_all_schedules()
@@ -398,11 +407,13 @@ def _delete_saved_schedules(
 
     # TODO: deleted_count, filters, deleted가 포함된 tool 결과 dict를 반환하세요.
     deleted_rows_num = len(res)
+
+
     return {
+        "ok" : True,
         "deleted_count" : deleted_rows_num,
         "filters" : filters,
-        "deleted" : deleted_rows_num > 0,
-        "rows" : res
+        "deleted" : res
     }
 
 
@@ -447,15 +458,15 @@ def personal_create_schedule(
     raw = week01_personal_create_schedule.invoke(req)
     week01_result = json.loads(raw)
     structured_req = structured_request_from_week01_schedule(
-        week01_result["create_schedule"]
+        week01_result["created_schedule"]
     )
-    sqlite_save = _store().save_structured_request(structured_req)
+    sqlite_save = _store().save_structured_request(structured_req.model_dump())
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
-    return json_payload(tool_result(
-        structured_request=structured_req.model_dump(),
-        sqlite_save=sqlite_save,
-        tool_name=_tool_name(personal_create_schedule)
-    ))
+    return json_payload({
+        **week01_result,
+        "structured_request" : structured_req.model_dump(),
+        "sqlite_save" : sqlite_save,
+    })
 
 
 @tool(args_schema=SaveStructuredRequestInput)
@@ -551,7 +562,7 @@ def personal_list_saved_schedules(
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
     return json_payload(tool_result(
         filters=filters,
-        rows=schedules,
+        schedules=schedules,
         tool_name=_tool_name(personal_list_saved_schedules)
     ))
     
@@ -571,7 +582,7 @@ def delete_saved_schedules_dict(
     # TODO: 전달받은 store 또는 기본 store로 _delete_saved_schedules(...)를 호출하세요.
     store = app_store or _store()
     return _delete_saved_schedules(
-        store,
+        store=store,
         schedule_ids=schedule_ids,
         date=date,
         title=title,
@@ -612,7 +623,7 @@ def personal_update_saved_schedule(
         return json_payload(tool_result(ok=False, tool_name="personal_update_saved_schedule"))
     
     return json_payload(tool_result(
-        update_schedule=res["schedule"],
+        updated_schedule=res["schedule"],
         shared_sync=res["shared_sync"],
         tool_name=_tool_name(personal_update_saved_schedule)
     ))
@@ -684,9 +695,12 @@ def week03_prompt_parts() -> list[str]:
         f"오늘 날짜는 {current_app_date_iso()}이다. 만약 '내일', '다음 주'와 같은 상대적인 날짜가 입력되었다면 오늘 날짜를 참고하여라.",
         "아래에서는 현재 주로 사용할 툴에 대해 요약 설명힌다.: ",
         "save_structured_request를 사용하면 데이터베이스에 원본 요청 row와 목적별 정규화 row가 저장된다.",
-        "저장 결과는 list_saved_requests, personal_list_saved_schedules 도구들을 이용해 조회할 수 있다."
+        "저장 결과는 list_saved_requests, personal_list_saved_schedules 도구들을 이용해 조회할 수 있다.",
         "사용자가 일정 등의 저장을 요청하는 경우 save_structured_request를 사용하여 저장하여라",
-        "사용자가 일정 조회를 요청하는 경우 personal_list_saved_schedules를 사용하여라"
+        "사용자가 일정 조회를 요청하는 경우 personal_list_saved_schedules를 사용하여라",
+        "사용자가 일정 수정을 요청하는 경우 personal_update_saved_schedules를 사용하여라",
+        "사용자가 일정 삭제를 요청하는 경우 personal_delete_saved_schedules를 사용하여라",
+        "위 도구 외의 나머지 도구는 우선적으로 고려하지 말아야 한다."
     ]   
 
 
