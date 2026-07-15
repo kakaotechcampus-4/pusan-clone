@@ -419,10 +419,10 @@ def personal_list_saved_schedules(
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
     filters = {
-        kind : (kind or "personal_schedule"),
-        date_from : date_from,
-        date_to : date_to,
-        limit : limit
+        "kind" : (kind or "personal_schedule"),
+        "date_from" : date_from,
+        "date_to" : date_to,
+        "limit" : limit
     }
     # TODO: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
     schedules = _store().list_schedules(**filters)
@@ -511,6 +511,7 @@ def week03_prompt_parts() -> list[str]:
     return [
         *week02_prompt_parts(),
         # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
+        "",
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
