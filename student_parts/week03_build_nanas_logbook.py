@@ -220,15 +220,126 @@ class SaveStructuredRequestInput(StructuredRequest):
     def unwrap_legacy_payload(cls, value: Any) -> Any:
         """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
 
-        # TODO: StructuredRequest와 예전 payload/structured_request wrapper를 저장 입력 형태로 정규화하세요.
-        return value
+        # Week 2 StructuredRequest 객체가 직접 들어오면 Pydantic이 읽을 수 있는 일반 dict로 바꾼다.
+        if isinstance(value, StructuredRequest):
+            return value.model_dump()
+
+        # wrapper를 해제할 수 없는 타입은 여기서 억지로 변환하지 않는다. 잘못된 타입인지 판단하는 일은 뒤의 Pydantic 필드 검증에 맡긴다.
+        if not isinstance(value, dict):
+            return value
+
+        # kind가 직접 있으면 이미 현재 Week 3 저장방식이니까 payload라는 추가 필드가 있더라도 레거시 wrapper로 오해하지 않도록 한다
+        if "kind" in value:
+            return value
+
+        # 호출자가 전달한 원본 dict를 직접 수정하지 않도록 복사한다.
+        wrapper = dict(value)
+        outer_source_schedule_id = wrapper.get("source_schedule_id")
+
+        # extract_schedule_request 결과와 가장 가까운 structured_request를 우선한다.
+        # structured_request가 없을 때만 예전 payload wrapper를 사용한다.
+        if "structured_request" in wrapper:
+            inner_value = wrapper["structured_request"]
+        elif "payload" in wrapper:
+            inner_value = wrapper["payload"]
+        else:
+            return wrapper
+
+        # wrapper 안쪽도 StructuredRequest 객체일 수 있으므로 dict로 바꾼다.
+        if isinstance(inner_value, StructuredRequest):
+            normalized = inner_value.model_dump()
+
+        # 일반 dict라면 복사해서 이후 source_schedule_id 보충에 사용한다. (나중에 사용할 예정)
+        elif isinstance(inner_value, dict):
+            normalized = dict(inner_value)
+
+        # 예전 trace가 wrapper 내부 값을 JSON 문자열로 저장했을 수 있으므로 이를 조건문으로 거른다.
+        elif isinstance(inner_value, str):
+            try:
+                parsed = json.loads(inner_value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "payload 또는 structured_request 내부 JSON 형식이 올바르지 않습니다."
+                ) from exc
+
+            # 저장 요청은 key-value 필드가 있는 JSON object여야 한다.
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    "payload 또는 structured_request에는 JSON object가 필요합니다."
+                )
+
+            normalized = parsed
+
+        else:
+            # 예상하지 못한 내부 타입은 여기서 숨기지 않는다.
+            # Pydantic이 실제 저장 스키마와 맞지 않는 이유를 표시하게 한다.
+            return inner_value
+
+        # Week 1 호환 ID가 wrapper 바깥에 있으면 안쪽 요청에 보충한다.
+        # 만약 안쪽 요청이 이미 source_schedule_id가 있다면 덮어쓰지는 않는다. (이거 예외처리)
+        if (
+            outer_source_schedule_id is not None
+            and normalized.get("source_schedule_id") is None
+        ):
+            normalized["source_schedule_id"] = outer_source_schedule_id
+
+        return normalized
+
 
 
 def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str) -> SaveStructuredRequestInput:
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
-    # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
-    ...
+    # SaveStructuredRequestInput은 StructuredRequest의 자식 class다.
+    # 따라서 이 검사를 먼저 해야 이미 완성된 저장 DTO를 그대로 반환할 수 있다.
+    if isinstance(value, SaveStructuredRequestInput):
+        return value
+
+    # Week 2 구조화 결과에는 source_schedule_id 필드가 없으므로 dict로 바꾼 뒤 Week 3 저장 입력 스키마로 확장하고 검증하기
+    if isinstance(value, StructuredRequest):
+        return SaveStructuredRequestInput.model_validate(value.model_dump())
+
+    # dict와 이전의 레거시 wrapper는 Pydantic의 before validator가 정규화한다.
+    if isinstance(value, dict):
+        return SaveStructuredRequestInput.model_validate(value)
+
+    # 함수의 type hint를 우회해 지원하지 않는 타입이 들어오면 문자열로 임의 변환하지 않고 호출 오류를 명확하게 알린다.
+    if not isinstance(value, str):
+        raise TypeError(
+            "저장 요청은 SaveStructuredRequestInput, StructuredRequest, dict 또는 str이어야 합니다."
+        )
+
+    text = value.strip()
+
+    # 빈 문장을 LLM에 보내도 구조화할 정보가 없고 호출 비용만 발생하므로 막아버린다(오류 출력하게 함)
+    if not text:
+        raise ValueError("저장할 요청이 비어 있습니다.")
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        # JSON object나 array처럼 시작했다면 자연어가 아니라
+        # 문법이 깨진 JSON일 가능성이 높으므로 LLM fallback으로 보내지 않는다.
+        if text.startswith(("{", "[")):
+            raise ValueError("JSON 형식의 저장 요청이 올바르지 않습니다.") from exc
+
+        # JSON이 아닌 일반 한국어 문장만 Week 2 structured LLM으로 보낸다.
+        structured_request = extract_structured_request(text)
+        structured_payload = structured_request.model_dump()
+
+        # LLM이 original_text를 비워도 감사 로그에는 실제 사용자 원문이 남아야 한다.
+        if not str(structured_payload.get("original_text") or "").strip():
+            structured_payload["original_text"] = text
+
+        return SaveStructuredRequestInput.model_validate(structured_payload)
+
+    # JSON 파싱에 성공했더라도 저장 요청은 object 형식이어야 한다.
+    # list, 숫자, boolean, JSON 문자열은 자연어로 다시 해석하지 않는다.
+    if not isinstance(parsed, dict):
+        raise ValueError("구조화된 저장 요청은 JSON object여야 합니다.")
+
+    return SaveStructuredRequestInput.model_validate(parsed)
+
 
 
 def save_structured_request_payload(
@@ -238,8 +349,24 @@ def save_structured_request_payload(
 ) -> dict[str, Any]:
     """검증된 structured request를 앱 DB에 저장합니다."""
 
-    # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
-    ...
+    # 입력 형식이 DTO, dict, JSON, 자연어 중 무엇이든 앞에서 만든 정규화 경계를 거쳐 하나의 저장 DTO로 맞추기
+    normalized_request = _save_input_from(request)
+
+    # DB에는 Pydantic model 객체가 아니라 직렬화 가능한 dict를 전달하므로 None은 "값을 모른다"는 뜻이므로 저장 payload에서 제외한다.
+    # But! 빈 list와 빈 문자열은 명시적인 값이므로 그대로 유지한다.
+    save_payload = normalized_request.model_dump(exclude_none=True)
+
+    # 테스트나 내부 코드가 Store를 주입하면 그 객체를 사용하고, 일반 앱 실행에서는 CONFIG 경로를 사용하는 기본 Store를 연다.
+    app_store = store if store is not None else _store()
+
+    # 실제 SQL, transaction, subtype 저장, 외부 공유 동기화는 모두 AppSQLiteStore가 담당하도록 한 번만 위임한다.
+    saved_result = app_store.save_structured_request(save_payload)
+
+    # Store가 반환한 request_id, kind, saved_rows, shared_sync, already_exists 같은 정보를 잃지 않고 공통 tool 응답에 합치게끔 한다.
+    return tool_result(
+        "save_structured_request",
+        **saved_result,
+    )
 
 
 class SavedRequestListInput(BaseModel):
@@ -341,9 +468,40 @@ def save_structured_request(
 ) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
-    # TODO: 검증된 함수 인자를 저장 dict로 만들고 None 값을 제외한 뒤 SQLite에 저장하세요.
-    # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
-    ...
+    # 이 함수는 @tool(args_schema=SaveStructuredRequestInput)을 거쳐 호출되므로 함수에 들어온 시점에는 Pydantic 입력 검증이 이미 끝난 상태라고 할 수 있다.
+    # 따라서 DTO를 다시 만들지 않고 검증된 인자로 저장 dict를 바로 구성한다.
+    save_payload: dict[str, Any] = {
+        "kind": kind,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "members": members if members is not None else [], # 참석자가 생략돼도 Store에는 항상 list 형식이 전달되게끔 함.
+        "priority": priority,
+        "reason": reason,
+        "original_text": original_text,
+        "source_schedule_id": source_schedule_id,
+    }
+
+    # None은 아직 알 수 없는 값이므로 저장 payload에서 제외한다.
+    # 이렇게 되면 members=[]와 original_text=""는 None이 아니므로 그대로 남는다.
+    save_payload = {
+        field_name: field_value
+        for field_name, field_value in save_payload.items()
+        if field_value is not None
+    }
+
+    # tool은 SQL을 직접 다루지 않고 Store에 저장 책임을 위임한다.
+    app_store = _store()
+    saved_result = app_store.save_structured_request(save_payload)
+
+    # 모든 @tool은 LangChain trace가 읽을 수 있도록 JSON 문자열을 반환한다.
+    return json_payload(
+        tool_result(
+            "save_structured_request",
+            **saved_result,
+        )
+    )
 
 
 @tool(args_schema=SavedRequestListInput)
