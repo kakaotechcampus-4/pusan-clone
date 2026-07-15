@@ -228,6 +228,23 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
     # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
+    if isinstance(value, SaveStructuredRequestInput):
+        return value
+    if isinstance(value, StructuredRequest):
+        return SaveStructuredRequestInput.model_validate(value.model_dump())
+    if isinstance(value, dict):
+        return SaveStructuredRequestInput.model_validate(value)
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return SaveStructuredRequestInput.model_validate(parsed)
+        structured = extract_structured_request(text)
+        return SaveStructuredRequestInput.model_validate(structured.model_dump())
+    raise TypeError(f"저장 입력 타입을 해석할 수 없습니다: {type(value).__name__}")
     ...
 
 
@@ -498,7 +515,16 @@ def week03_prompt_parts() -> list[str]:
         # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
-        # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+        (
+            f"Week 3 기록장 에이전트다. 오늘 날짜는 {current_app_date_iso()}이며, "
+            "상대 날짜 표현은 이 날짜를 기준으로 해석한다. "
+            "사용자가 일정/할 일/알림을 저장해 달라고 하면 먼저 extract_schedule_request로 구조화하고 "
+            "그 결과를 save_structured_request에 저장한다. 저장된 기록 조회는 list_saved_requests 또는 "
+            "personal_list_saved_schedules를 사용하고, 일정 수정/삭제는 먼저 personal_list_saved_schedules로 "
+            "대상 후보를 확인한 뒤 personal_update_saved_schedule 또는 personal_delete_saved_schedules를 호출한다. "
+            "이번 주차의 범위는 Week 1 일정 생성, Week 2 자연어 구조화, Week 3 SQLite 저장/조회/수정/삭제까지이며 "
+            "RAG, 외부 멤버 일정 조율, 공유 저장소 동기화가 필요한 새 기능은 수행하지 않는다."
+        ),
     ]
 
 
