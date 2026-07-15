@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
 
 from langchain.agents import create_agent
@@ -41,6 +42,8 @@ WEEK03_TOOL_CALL_PROMPT = (
     "SQLite 저장까지 수행하는 Week 1 호환 tool이므로, 이 tool을 호출했다면 같은 요청에 대해 "
     "extract_schedule_request나 save_structured_request를 다시 호출하지 않는다. 반대로 "
     "save_structured_request로 저장했다면 personal_create_schedule을 또 호출하지 않는다. "
+    "특히 한 번의 응답에서 personal_create_schedule과 save_structured_request를 동시에 "
+    "호출하는 것을 금지한다. 저장 tool 호출은 한 번의 응답에 하나만 포함한다. "
     "저장된 일정 수정/삭제는 먼저 personal_list_saved_schedules로 후보 schedule_id를 확인한 뒤 "
     "personal_update_saved_schedule 또는 personal_delete_saved_schedules에 schedule_ids나 명시 필터를 넘긴다. "
     "조건 없는 전체 삭제는 사용자가 명확히 요청한 경우에만 delete_all=True로 수행한다."
@@ -273,11 +276,24 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     raise TypeError(f"저장 입력으로 사용할 수 없는 타입입니다: {type(value).__name__}")
 
 
+# LLM이 한 turn에 두 저장 tool을 병렬 호출하면 중복 검사와 INSERT 사이에 race가 생기므로,
+# 검사+저장 구간을 프로세스 전역 lock으로 직렬화합니다.
+_SAVE_LOCK = threading.Lock()
+
+
+def _normalized_time(value: Any) -> str | None:
+    """'미정'/빈 문자열/None을 모두 '시간 미지정'으로 통일해 비교합니다."""
+
+    text = str(value or "").strip()
+    return None if text in {"", "미정"} else text
+
+
 def _find_duplicate_saved_schedule(store: AppSQLiteStore, payload: dict[str, Any]) -> dict[str, Any] | None:
-    """같은 제목/날짜/시간의 저장 일정이 이미 있으면 그 row를 반환합니다.
+    """같은 제목/날짜/시작시간의 저장 일정이 이미 있으면 그 row를 반환합니다.
 
     LLM이 personal_create_schedule과 save_structured_request 두 저장 경로를
     같은 요청에 모두 호출해도 일정이 중복 저장되지 않게 하는 방어선입니다.
+    end_time은 경로에 따라 '미정'과 실제 값으로 갈릴 수 있어 비교에서 제외합니다.
     """
 
     if payload.get("kind") not in {"personal_schedule", "group_schedule"}:
@@ -289,8 +305,7 @@ def _find_duplicate_saved_schedule(store: AppSQLiteStore, payload: dict[str, Any
     for row in store.find_schedules(date=date, title=title):
         if (
             row.get("title") == title
-            and (row.get("start_time") or None) == (payload.get("start_time") or None)
-            and (row.get("end_time") or None) == (payload.get("end_time") or None)
+            and _normalized_time(row.get("start_time")) == _normalized_time(payload.get("start_time"))
         ):
             return row
     return None
@@ -299,19 +314,20 @@ def _find_duplicate_saved_schedule(store: AppSQLiteStore, payload: dict[str, Any
 def _save_payload_to_store(payload: dict[str, Any], store: AppSQLiteStore) -> dict[str, Any]:
     """중복 일정 guard를 거쳐 payload를 저장하고 store 결과 dict를 반환합니다."""
 
-    duplicate = _find_duplicate_saved_schedule(store, payload)
-    if duplicate is not None:
-        return {
-            "request_id": duplicate.get("request_id"),
-            "kind": payload.get("kind"),
-            "saved_rows": [
-                {"table": "structured_requests", "id": duplicate.get("request_id"), "existing": True},
-                {"table": "schedules", "id": duplicate.get("schedule_id"), "existing": True},
-            ],
-            "shared_sync": None,
-            "already_exists": True,
-        }
-    return store.save_structured_request(payload)
+    with _SAVE_LOCK:
+        duplicate = _find_duplicate_saved_schedule(store, payload)
+        if duplicate is not None:
+            return {
+                "request_id": duplicate.get("request_id"),
+                "kind": payload.get("kind"),
+                "saved_rows": [
+                    {"table": "structured_requests", "id": duplicate.get("request_id"), "existing": True},
+                    {"table": "schedules", "id": duplicate.get("schedule_id"), "existing": True},
+                ],
+                "shared_sync": None,
+                "already_exists": True,
+            }
+        return store.save_structured_request(payload)
 
 
 def save_structured_request_payload(
