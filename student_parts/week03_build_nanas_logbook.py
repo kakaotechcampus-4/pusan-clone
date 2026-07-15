@@ -38,7 +38,8 @@ SQLITE_MEMORY_PROMPT = """
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
 WEEK03_TOOL_CALL_PROMPT = """
 [Week 3 tool 사용]
-- 저장: 사용자의 자연어 요청은 먼저 extract_schedule_request로 구조화한 뒤, 그 structured_request 필드를 save_structured_request 인자로 그대로 넘겨 저장합니다. (개인 일정 생성은 personal_create_schedule 하나로 임시 생성과 SQLite 저장이 함께 처리됩니다.)
+- 모든 저장 요청은 개인 일정을 포함해 extract_schedule_request로 구조화한 뒤, structured_request 필드를 save_structured_request 인자로 그대로 넘겨 저장합니다. 이것이 Week 3의 표준 저장 경로입니다.
+- personal_create_schedule은 직접 호출하지 마세요. Week 1 스타일 코드가 이 이름으로 직접 호출할 때만 실행되는 호환용이며, 그 경우 내부에서 임시 생성과 SQLite 저장을 함께 처리하므로 extract_schedule_request나 save_structured_request를 추가로 부르지 않습니다.
 - 조회: "내 일정 보여줘" 같은 요청은 personal_list_saved_schedules로 조회합니다. 저장된 구조화 요청 원본은 list_saved_requests / get_saved_request로 봅니다.
 - 수정: 저장된 일정 수정은 personal_update_saved_schedule을 사용합니다. 기존 일정을 삭제하고 다시 만드는 방식은 쓰지 마세요.
 - 삭제: personal_delete_saved_schedules를 사용합니다.
