@@ -496,7 +496,7 @@ class Week03PersistenceIntegrationTest(_Week03StoreTestCase):
 
 class Week03Week01CompatibilityTest(_Week03StoreTestCase):
     def test_adapter_maps_week01_schedule_to_week03_request(self) -> None:
-        # Week 1의 필드 이름과 임시 ID를 Week 3 저장 스키마로 정확히 옮기는지 확인합니다.
+        # Week 1 일정을 Week 3 DTO로 바꾸며 종류·참석자·출처 ID·변환 사유·원문까지 채워야 합니다.
         schedule = {
             "id": "personal_legacy",
             "title": "민수와 회의",
@@ -517,6 +517,7 @@ class Week03Week01CompatibilityTest(_Week03StoreTestCase):
         self.assertEqual(json.loads(converted.original_text), schedule)
 
     def test_adapter_defaults_missing_attendees_to_empty_list(self) -> None:
+        # 참석자 키가 없는 Week 1 일정도 Week 3 DTO에서는 빈 목록으로 정규화되어야 합니다.
         converted = week03.structured_request_from_week01_schedule(
             {
                 "id": "personal_without_attendees",
@@ -673,6 +674,7 @@ class Week03Week01CompatibilityTest(_Week03StoreTestCase):
 
 class Week03ScheduleQueryTest(_Week03StoreTestCase):
     def test_saved_request_list_filters_kind_and_inclusive_date_range(self) -> None:
+        # 요청 종류와 양끝을 포함하는 날짜 범위를 함께 적용하는지 확인합니다.
         self.save_store_request(kind="todo", title="범위 전", date="2026-07-14")
         self.save_store_request(kind="todo", title="범위 시작", date="2026-07-15")
         self.save_store_request(kind="todo", title="범위 끝", date="2026-07-20")
@@ -698,6 +700,7 @@ class Week03ScheduleQueryTest(_Week03StoreTestCase):
         self.assertIsNone(missing["row"])
 
     def test_get_saved_request_returns_exact_master_row(self) -> None:
+        # 단건 조회가 request_id에 연결된 master row의 필드를 그대로 반환하는지 확인합니다.
         saved = self.save_store_request(kind="reminder", title="발표 알림")
 
         payload = invoke_json(week03.get_saved_request, {"request_id": saved["request_id"]})
@@ -708,6 +711,7 @@ class Week03ScheduleQueryTest(_Week03StoreTestCase):
         self.assertEqual(payload["row"]["title"], "발표 알림")
 
     def test_schedule_list_defaults_to_personal_and_can_select_group(self) -> None:
+        # kind를 생략하면 개인 일정, 명시하면 선택한 일정 종류만 조회해야 합니다.
         self.save_store_request(kind="personal_schedule", title="개인 일정", members=["나"])
         self.save_store_request(kind="group_schedule", title="그룹 일정", members=["민수", "지수"])
 
@@ -724,6 +728,7 @@ class Week03ScheduleQueryTest(_Week03StoreTestCase):
         self.assertEqual(group["schedules"][0]["request_kind"], "group_schedule")
 
     def test_schedule_list_applies_dates_and_limit(self) -> None:
+        # 일정 조회가 날짜 범위와 limit을 함께 적용하고 실제 필터도 응답에 남기는지 확인합니다.
         self.save_store_request(title="첫 일정", date="2026-07-15")
         self.save_store_request(title="둘째 일정", date="2026-07-16")
         self.save_store_request(title="셋째 일정", date="2026-07-17")
@@ -756,6 +761,7 @@ class Week03ScheduleQueryTest(_Week03StoreTestCase):
                     week03.personal_list_saved_schedules.invoke({"limit": invalid_limit})
 
     def test_saved_request_list_uses_store_default_limit_twenty(self) -> None:
+        # 목록 도구가 임의의 limit을 덧붙이지 않고 Store 기본값 20개를 유지해야 합니다.
         for index in range(21):
             self.save_store_request(kind="todo", title=f"할 일 {index}")
 
@@ -764,6 +770,7 @@ class Week03ScheduleQueryTest(_Week03StoreTestCase):
         self.assertEqual(len(payload["rows"]), 20)
 
     def test_schedule_list_default_limit_is_fifty(self) -> None:
+        # 일정 목록은 기본 50개만 반환하고 명시적인 확장 limit은 그대로 적용해야 합니다.
         for index in range(51):
             self.save_store_request(title=f"일정 {index}", date=f"2026-08-{(index % 28) + 1:02d}")
 
@@ -776,6 +783,7 @@ class Week03ScheduleQueryTest(_Week03StoreTestCase):
 
 class Week03ScheduleMutationTest(_Week03StoreTestCase):
     def test_partial_update_preserves_omitted_fields_and_updates_master_payload(self) -> None:
+        # 한 필드만 수정하면 나머지는 보존되고 연결된 master payload도 같은 값으로 바뀌어야 합니다.
         saved = self.save_store_request(
             title="기존 제목",
             date="2026-07-20",
@@ -806,6 +814,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         self.assertEqual(json.loads(master["raw_json"])["start_time"], "13:30")
 
     def test_empty_attendees_list_clears_all_attendees(self) -> None:
+        # attendees=[]는 생략이 아니라 참석자를 전부 제거하라는 명시적인 수정값입니다.
         saved = self.save_store_request(members=["철수", "영희"])
         schedule_id = self.schedule_id_from(saved)
 
@@ -836,6 +845,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         fake_store.update_schedule.assert_not_called()
 
     def test_update_missing_id_returns_explicit_failure(self) -> None:
+        # 존재하지 않는 schedule_id는 외부 동기화 없이 명시적인 실패 응답을 반환해야 합니다.
         self.sync_personal.reset_mock()
 
         payload = invoke_json(
@@ -850,6 +860,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         self.sync_personal.assert_not_called()
 
     def test_update_keeps_local_change_when_shared_sync_returns_failure(self) -> None:
+        # 공유 저장소 동기화가 실패해도 이미 성공한 SQLite 수정은 유지되어야 합니다.
         saved = self.save_store_request(title="동기화 전 제목")
         schedule_id = self.schedule_id_from(saved)
         failed_sync = {"ok": False, "status": "failed", "error": "offline"}
@@ -866,6 +877,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         self.assertEqual(rows[0]["title"], "로컬에서 바뀐 제목")
 
     def test_group_update_deletes_old_shared_copy_then_syncs_new_copy(self) -> None:
+        # 그룹 일정은 예전 공유 복사본을 지운 뒤 수정된 값으로 한 번 다시 동기화해야 합니다.
         saved = self.save_store_request(kind="group_schedule", title="기존 그룹 회의", members=["민수"])
         schedule_id = self.schedule_id_from(saved)
         self.delete_group.reset_mock()
@@ -897,6 +909,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         fake_store.delete_all_schedules.assert_not_called()
 
     def test_delete_exact_id_and_missing_id_have_distinct_results(self) -> None:
+        # 실제 ID는 삭제하고 없는 ID는 오류가 아닌 삭제 0건의 정상 결과로 구분해야 합니다.
         saved = self.save_store_request(title="지울 일정")
         schedule_id = self.schedule_id_from(saved)
 
@@ -914,7 +927,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         self.assertEqual(missing["deleted"], [])
 
     def test_delete_filters_use_sqlite_and_semantics_for_personal_and_group(self) -> None:
-        # Store에 kind 삭제 조건이 없으므로 같은 명시 필터의 개인·그룹 일정은 모두 대상입니다.
+        # 제목 부분 일치와 날짜·시간 조건은 AND로 결합하며 개인·그룹 일정 모두 같은 삭제 대상입니다.
         personal = self.save_store_request(
             kind="personal_schedule",
             title="프로젝트 회의",
@@ -958,6 +971,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         self.assertIsNotNone(self.store.get_saved_request(different_title["request_id"]))
 
     def test_time_unspecified_matches_none_empty_and_korean_marker(self) -> None:
+        # 시간 미정 필터는 NULL, 빈 문자열, "미정"을 모두 찾고 실제 시간이 있는 일정은 보존해야 합니다.
         for index, start_time in enumerate((None, "", "미정")):
             self.save_store_request(title=f"시간 미정 {index}", start_time=start_time)
         concrete = self.save_store_request(title="시간 확정", start_time="10:00")
@@ -968,6 +982,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         self.assertIsNotNone(self.store.get_saved_request(concrete["request_id"]))
 
     def test_delete_all_has_priority_and_preserves_todo_and_reminder(self) -> None:
+        # delete_all은 다른 필터보다 우선하지만 일정이 아닌 todo와 reminder는 건드리지 않아야 합니다.
         self.save_store_request(kind="personal_schedule", title="개인 일정")
         self.save_store_request(kind="group_schedule", title="그룹 일정")
         todo = self.save_store_request(kind="todo", title="남을 할 일")
@@ -988,6 +1003,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         self.assertIsNotNone(self.store.get_saved_request(reminder["request_id"]))
 
     def test_delete_all_branch_does_not_call_filter_delete(self) -> None:
+        # 전체 삭제 분기에서는 필터 삭제를 함께 호출해 중복 side effect를 만들면 안 됩니다.
         fake_store = Mock(spec=AppSQLiteStore)
         fake_store.delete_all_schedules.return_value = []
 
@@ -1012,6 +1028,7 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         self.assertEqual(self.table_count("schedules"), 1)
 
     def test_delete_tool_serializes_helper_result(self) -> None:
+        # Agent용 삭제 tool이 공통 helper의 결과를 같은 응답 계약의 JSON으로 직렬화해야 합니다.
         saved = self.save_store_request(title="tool로 지울 일정")
         schedule_id = self.schedule_id_from(saved)
 
@@ -1030,6 +1047,7 @@ class Week03PromptAndAgentTest(unittest.TestCase):
         week03._WEEK03_AGENT = None
 
     def test_json_helpers_keep_korean_and_common_envelope(self) -> None:
+        # 모든 Week 3 tool이 공통 envelope를 사용하고 한글을 유니코드 escape로 숨기지 않아야 합니다.
         result = week03.tool_result("sample_tool", answer="한글 결과")
         serialized = week03.json_payload(result)
 
@@ -1038,6 +1056,7 @@ class Week03PromptAndAgentTest(unittest.TestCase):
         self.assertNotIn("\\ud55c", serialized)
 
     def test_week03_tools_replace_only_create_and_have_unique_names(self) -> None:
+        # Week 1 누적 도구는 유지하되 생성 도구만 영속 저장 호환 버전으로 정확히 한 번 교체해야 합니다.
         tools = week03.week03_tools()
         names = [item.name for item in tools]
 
@@ -1055,6 +1074,7 @@ class Week03PromptAndAgentTest(unittest.TestCase):
         self.assertIn("personal_delete_saved_schedules", names)
 
     def test_tools_expose_the_scaffold_pydantic_schemas(self) -> None:
+        # LangChain tool 경계가 과제에서 정한 Pydantic 입력 스키마를 그대로 노출해야 합니다.
         self.assertIs(week03.save_structured_request.args_schema, week03.SaveStructuredRequestInput)
         self.assertIs(week03.list_saved_requests.args_schema, week03.SavedRequestListInput)
         self.assertIs(week03.get_saved_request.args_schema, week03.SavedRequestGetInput)
@@ -1063,6 +1083,7 @@ class Week03PromptAndAgentTest(unittest.TestCase):
         self.assertIs(week03.personal_delete_saved_schedules.args_schema, week03.SavedScheduleDeleteInput)
 
     def test_week03_prompt_overrides_week02_and_explains_persistent_tool_flow(self) -> None:
+        # 시스템 프롬프트가 Week 2 임시 규칙을 대체하고 영속 저장의 안전한 도구 순서를 설명해야 합니다.
         prompt = week03.week03_system_prompt()
 
         self.assertIn(current_app_date_iso(), prompt)
@@ -1083,6 +1104,7 @@ class Week03PromptAndAgentTest(unittest.TestCase):
         self.assertIn("RAG", prompt)
 
     def test_build_week03_agent_configures_langchain_agent_once_without_response_format(self) -> None:
+        # Week 3 agent는 도구 인자 스키마를 사용하므로 최종 응답 format 없이 한 번만 생성되어야 합니다.
         fake_agent = object()
         fake_tools = [object()]
 
@@ -1109,11 +1131,13 @@ class Week03PromptAndAgentTest(unittest.TestCase):
         self.assertNotIn("response_format", create_agent.call_args.kwargs)
 
     def test_build_week03_agent_requires_proxy_token(self) -> None:
+        # API 키가 없으면 모델이나 agent를 만들기 전에 기존 형식의 오류를 반환해야 합니다.
         with patch.object(week03, "CONFIG", SimpleNamespace(has_openai_key=False)):
             with self.assertRaisesRegex(RuntimeError, "PROXY_TOKEN"):
                 week03.build_week03_agent()
 
     def test_build_week_agent_delegates_to_week03_builder(self) -> None:
+        # 실행기의 공통 entry point는 별도 agent를 만들지 않고 Week 3 builder에 위임해야 합니다.
         fake_agent = object()
         with patch.object(week03, "build_week03_agent", return_value=fake_agent) as builder:
             result = week03.build_week_agent()
@@ -1161,6 +1185,7 @@ class Week03LiveLLMTest(_Week03StoreTestCase):
         self.assertEqual(len(reopened_store.list_schedules(kind="personal_schedule", limit=10)), 1)
 
     def test_live_agent_reads_sqlite_with_saved_tool_not_week01_memory_tool(self) -> None:
+        # 실제 agent가 영속 기록 질문에 Week 1 메모리가 아니라 SQLite 조회 tool을 선택하는지 확인합니다.
         self.save_store_request(title="SQLite에만 있는 일정", date="2026-07-20")
         agent = week03.build_week03_agent()
 
