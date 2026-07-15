@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
+from functools import wraps
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
@@ -221,6 +222,8 @@ class SaveStructuredRequestInput(StructuredRequest):
         """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
 
         # TODO: StructuredRequest와 예전 payload/structured_request wrapper를 저장 입력 형태로 정규화하세요.
+
+
         return value
 
 
@@ -240,6 +243,16 @@ def save_structured_request_payload(
 
     # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
     ...
+
+
+def tool_response(func : Callable[..., dict[str, Any]]):
+    @wraps(func)
+    def wrapper(*args, **kwargs) -> str:
+        res = func(*args, **kwargs)
+        res["tool_name"] = func.__name__
+        return json_payload(res)
+    
+    return wrapper
 
 
 class SavedRequestListInput(BaseModel):
@@ -322,11 +335,13 @@ def personal_create_schedule(
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
     # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
+    
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
     ...
 
 
 @tool(args_schema=SaveStructuredRequestInput)
+@tool_response
 def save_structured_request(
     kind: RequestKind = "unknown",
     title: str | None = None,
@@ -342,8 +357,30 @@ def save_structured_request(
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
     # TODO: 검증된 함수 인자를 저장 dict로 만들고 None 값을 제외한 뒤 SQLite에 저장하세요.
+    saving_data = {
+        "kind" : kind,
+        "title" : title,
+        "date" : date,
+        "start_time" : start_time,
+        "end_time" : end_time,
+        "members" : members,
+        "priority" : priority,
+        "reason" : reason,
+        "original_text" : original_text,
+        "source_schedule_id" : source_schedule_id
+    }
+    saving_data = {
+        k : saving_data[k] 
+        for k in saving_data
+        if saving_data[k] is not None
+    }
+    res = _store().save_structured_request(saving_data)
+
     # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
-    ...
+    return {
+        "ok" : True,
+        "result" : res
+    }
 
 
 @tool(args_schema=SavedRequestListInput)
