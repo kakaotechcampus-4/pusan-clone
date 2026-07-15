@@ -278,16 +278,6 @@ def save_structured_request_payload(
     ...
 
 
-def tool_response(func : Callable[..., dict[str, Any]]):
-    @wraps(func)
-    def wrapper(*args, **kwargs) -> str:
-        res = func(*args, **kwargs)
-        res.setdefault("ok", True)
-        res["tool_name"] = func.__name__
-        return json_payload(res)
-    
-    return wrapper
-
 
 class SavedRequestListInput(BaseModel):
     """저장 요청 목록 조회 입력입니다."""
@@ -369,13 +359,22 @@ def personal_create_schedule(
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
     # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
-    
+    req = {
+        "title" : title,
+        "date" : date,
+        "start_time" : start_time,
+        "end_time" : end_time,
+        "attendees" : attendees
+    }
+    res = week01_personal_create_schedule.invoke(req)
+
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
-    ...
+    {
+
+    }
 
 
 @tool(args_schema=SaveStructuredRequestInput)
-@tool_response
 def save_structured_request(
     kind: RequestKind = "unknown",
     title: str | None = None,
@@ -408,11 +407,13 @@ def save_structured_request(
     res = _store().save_structured_request(saving_data)
 
     # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
-    return { "result" : res }
+    return json_payload(tool_result(
+        { "result" : res }, 
+        tool_name="save_structured_request"
+    ))
 
 
 @tool(args_schema=SavedRequestListInput)
-@tool_response
 def list_saved_requests(
     kind: RequestKind | None = None,
     date_from: str | None = None,
@@ -426,8 +427,10 @@ def list_saved_requests(
         date_from=date_from,
         date_to=date_to
     )
-
-    return { "rows" : rows or [] }
+    return json_payload(tool_result(
+        { "rows" : rows or [] }, 
+        tool_name="list_saved_requests"
+    ))
 
 
 @tool(args_schema=SavedRequestGetInput)
@@ -439,7 +442,6 @@ def get_saved_request(request_id: str) -> str:
 
 
 @tool(args_schema=SavedScheduleListInput)
-@tool_response
 def personal_list_saved_schedules(
     limit: int = 50,
     kind: RequestKind | None = None,
@@ -458,10 +460,13 @@ def personal_list_saved_schedules(
     schedules = _store().list_schedules(**filters)
 
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
-    return {
-        "filters" : filters,
-        "rows" : schedules
-    }
+    return json_payload(tool_result(
+        {
+            "filters" : filters,
+            "rows" : schedules
+        },
+        tool_name="personal_list_saved_schedules"
+    ))
     
 
 
@@ -481,7 +486,6 @@ def delete_saved_schedules_dict(
 
 
 @tool(args_schema=SavedScheduleUpdateInput)
-@tool_response
 def personal_update_saved_schedule(
     schedule_id: str,
     title: str | None = None,
@@ -509,16 +513,18 @@ def personal_update_saved_schedule(
     res = _store().update_schedule(**schedule)
     # TODO: ID가 없으면 ok=False, 있으면 updated_schedule/shared_sync를 담아 JSON 문자열로 반환하세요.
     if res is None:
-        return { "ok" : False }
+        return json_payload(tool_result(ok=False, tool_name="personal_update_saved_schedule"))
     
-    return {
-        "updated_schedule" : res["schedule"],
-        "shared_sync" : res["shared_sync"]
-    }
+    return json_payload(tool_result(
+        {
+            "updated_schedule" : res["schedule"],
+            "shared_sync" : res["shared_sync"]
+        },
+        tool_name="personal_update_saved_schedule"
+    ))
 
 
 @tool(args_schema=SavedScheduleDeleteInput)
-@tool_response
 def personal_delete_saved_schedules(
     schedule_ids: list[str] | None = None,
     date: str | None = None,
@@ -542,12 +548,15 @@ def personal_delete_saved_schedules(
     res = _store().delete_schedules_by_filter(**filters)
 
 
-    return {
-        "deleted_count": len(res),
-        "filters" : filters,
-        "deleted" : len(res) > 0,
-        "rows" : res
-    }
+    return json_payload(tool_result(
+        {
+            "deleted_count": len(res),
+            "filters" : filters,
+            "deleted" : len(res) > 0,
+            "rows" : res
+        },
+        tool_name="personal_delete_saved_schedules"
+    ))
 
 
 def week03_tools() -> list[Any]:
