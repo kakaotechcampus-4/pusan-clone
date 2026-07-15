@@ -29,13 +29,18 @@ _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
 SQLITE_MEMORY_PROMPT = (
-    "week3 부터 데이터는 SQLite에 영구 저장된다 " 
-    "새 대화에서도 이전 데이터를 유지한다 "
-    "이전 데이터를 조회할 때는 personal_list_saved_schedules 도구를 이용해서 조회한다"
+    "week3 부터 데이터는 SQLite에 영구 저장된다. " 
+    "새 대화에서도 이전 데이터를 유지한다. "
+    "이전 데이터를 조회할 때는 personal_list_saved_schedules 도구를 이용해서 조회한다."
 )
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+WEEK03_TOOL_CALL_PROMPT = (
+    "사용자의 요청에 먼저 extract_schedule_request 로 요청을 구조화합니다. "
+    "구조화된 요청을 save_structured_request 넘기고, SQLite DB에 저장합니다. "
+    "수정/삭제 시에는 이전 데이터를 먼저 조회합니다."
+    
+)
 
 
 # [3주차 수강생 구현 가이드]
