@@ -384,6 +384,7 @@ def save_structured_request(
 
 
 @tool(args_schema=SavedRequestListInput)
+@tool_response
 def list_saved_requests(
     kind: RequestKind | None = None,
     date_from: str | None = None,
@@ -392,7 +393,16 @@ def list_saved_requests(
     """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
 
     # TODO: kind/date_from/date_to 필터로 저장 요청을 조회하고 rows를 JSON 문자열로 반환하세요.
-    ...
+    rows = _store().list_saved_requests(
+        kind=kind,
+        date_from=date_from,
+        date_to=date_to
+    )
+
+    return {
+        "ok" : True,
+        "rows" : rows or []
+    }
 
 
 @tool(args_schema=SavedRequestGetInput)
@@ -404,6 +414,7 @@ def get_saved_request(request_id: str) -> str:
 
 
 @tool(args_schema=SavedScheduleListInput)
+@tool_response
 def personal_list_saved_schedules(
     limit: int = 50,
     kind: RequestKind | None = None,
@@ -412,9 +423,22 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
+    filters = {
+        kind : (kind or "personal_schedule"),
+        date_from : date_from,
+        date_to : date_to,
+        limit : limit
+    }
     # TODO: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
+    schedules = _store().list_schedules(**filters)
+
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
-    ...
+    return {
+        "ok" : True,
+        "filters" : filters,
+        "schedules" : schedules
+    }
+    
 
 
 def delete_saved_schedules_dict(
