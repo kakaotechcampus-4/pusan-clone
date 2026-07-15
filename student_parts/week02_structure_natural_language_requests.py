@@ -109,7 +109,6 @@ class StructuredRequest(BaseModel):
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     priority: str | None = Field(default=None, description="요청된 주제의 우선순위, 다른 주제가 미리 저장되있다면 상대적으로 평가해서 산정해야한다.")
     reason: str | None = Field(default=None, description="요청된 주제의 순수한 배경 및 이유 (장소나 위치 정보는 여기에 넣지 마십시오)")
-    etc: list[str] = Field(default_factory=list, description="미팅실, 회사, 카페, 특정 위치 등 장소(Location)나 위치 명칭, 혹은 타 필드에 매핑될 수 없는 잔여 정보들을 무조건 이 목록에 추가한다.")
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     original_text: str = Field(default="", description="가공되지 않은 사용자의 원문")
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
@@ -190,7 +189,6 @@ def week02_prompt_parts() -> list[str]:
             "우선순위가 드러나면 priority에 기록하며, 원문은 original_text에 보존한다. "
             "'오프라인 회사 미팅실', '강남역 카페' 같은 회의나 약속의 물리적 장소 및 위치 정보는 절대 `reason` 필드에 포함해서는 안 됩니다."
             "reason은 요청된 주제의 순수한 배경 및 이유 (장소나 위치 정보는 여기에 넣지 마십시오)"
-            "etc는 위에 들어가지 않는 모든 속성을 추가한다."
             "모르는 값은 추측하지 말고 None 또는 빈 목록으로 둔다."
         ),
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
