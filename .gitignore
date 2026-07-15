@@ -17,6 +17,8 @@ htmlcov/
 .vscode/
 .idea/
 
+week2/
+
 venv/
 .venv/
 node_modules/
