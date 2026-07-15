@@ -161,20 +161,40 @@ class StructuredRequestBatch(BaseModel):
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
 
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+    raise TypeError(f"StructuredRequest로 변환할 수 없는 타입: {type(value)!r}")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
     """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
 
-    ...
-
+    model = chat_model().with_structured_output(StructuredRequest)
+    prompt = (
+        f"현재 날짜는 {current_app_date_iso()}야. 이 날짜를 기준으로 상대 날짜를 해석해.\n"
+        "다음 사용자 요청을 StructuredRequest 필드로 구조화해.\n"
+        "확실하지 않은 값(date/start_time/end_time/members/priority/reason)은 None 또는 빈 list로 둬. 억지로 만들지 마.\n"
+        f"사용자 요청: {text}"
+    )
+    result = model.invoke(prompt)
+    return _coerce_structured_request(result)
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """사용자의 자연어 요청을 kind/title/date/start_time/end_time/members/priority/reason/original_text
+    필드를 가진 구조화된 요청으로 변환합니다. 저장(save_structured_request) 전에 반드시 먼저 호출해야 합니다."""
 
-    ...
+    try:
+        structured = extract_structured_request(query)
+    except Exception as exc:
+        return json.dumps(
+            {"ok": False, "tool_name": "extract_schedule_request", "error": str(exc)},
+            ensure_ascii=False,
+        )
+    return json.dumps(
+        {"ok": True, "tool_name": "extract_schedule_request", "structured_request": structured.model_dump()},
+        ensure_ascii=False,
+    )
 
 
 def week02_tools() -> list[Any]:
