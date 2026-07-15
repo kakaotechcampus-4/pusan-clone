@@ -132,6 +132,11 @@ class StructuredRequestBatch(BaseModel):
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
 
+    if isinstance(value, StructuredRequest):
+        return value
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    raise TypeError(f"구조화 결과를 StructuredRequest로 변환할 수 없습니다: {type(value).__name__}")
     ...
 
 
