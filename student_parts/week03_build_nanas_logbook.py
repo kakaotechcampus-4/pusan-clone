@@ -43,7 +43,14 @@ WEEK03_TOOL_CALL_PROMPT = (
     "personal_list_schedules와 personal_delete_schedule은 Week 1의 임시 메모리 도구로, "
     "현재 대화가 끝나면 사라지는 내용만 보여주므로 절대 사용하지 마세요. "
     "일정을 조회/수정/삭제할 때는 반드시 personal_list_saved_schedules, personal_update_saved_schedule, "
-    "personal_delete_saved_schedules처럼 이름에 saved가 들어간 SQLite 기반 도구만 사용하세요."
+    "personal_delete_saved_schedules처럼 이름에 saved가 들어간 SQLite 기반 도구만 사용하세요. "
+    "personal_list_saved_schedules는 personal_schedule/group_schedule 같은 일정만 보여주므로, "
+    "할 일이나 알림을 조회할 때는 list_saved_requests에 kind=todo 또는 kind=reminder를 넘겨서 조회하세요. "
+    "일정을 수정하거나 삭제하기 전에는 반드시 personal_list_saved_schedules로 먼저 후보를 조회해 "
+    "정확한 schedule_id를 확인한 뒤, 그 id로 personal_update_saved_schedule 또는 "
+    "personal_delete_saved_schedules를 호출하세요. schedule_id를 추측해서 넘기지 마세요. "
+    "delete_all=True는 사용자가 '전부 지워줘'처럼 명확히 전체 삭제를 요청했을 때만 사용하고, "
+    "그 외에는 schedule_ids 또는 날짜/제목/시간 같은 구체적인 필터로만 삭제하세요."
 )
 
 
@@ -561,7 +568,9 @@ def week03_prompt_parts() -> list[str]:
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
         f"오늘 날짜는 {current_app_date_iso()}입니다.",
-        "Week 3에서는 여러 사람의 외부 일정을 조율하는 기능은 다루지 않습니다.",
+        "Week 3의 범위는 구조화된 일정/할 일/알림을 SQLite에 저장하고 조회/수정/삭제하는 것까지입니다.",
+        "여러 사람의 일정을 조율하는 기능, 외부 캘린더 동기화 확인, 문서/대화 검색(RAG)은 "
+        "이번 주차 범위가 아니니 시도하지 마세요.",
     ]
 
 
