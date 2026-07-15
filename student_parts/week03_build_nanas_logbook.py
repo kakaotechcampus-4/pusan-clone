@@ -604,6 +604,12 @@ def week03_prompt_parts() -> list[str]:
             "이번 주차의 범위는 Week 1 일정 생성, Week 2 자연어 구조화, Week 3 SQLite 저장/조회/수정/삭제까지이며 "
             "RAG, 외부 멤버 일정 조율, 공유 저장소 동기화가 필요한 새 기능은 수행하지 않는다."
         ),
+        (
+            "저장된 일정은 앱 DB(SQLite)에만 있으므로 조회·삭제는 반드시 SQLite tool을 쓴다. "
+            "Week 1의 임시 메모리 tool인 personal_list_schedules와 personal_delete_schedule은 "
+            "Week 3에서 절대 사용하지 않는다. '내 일정 보여줘' 같은 조회는 personal_list_saved_schedules로, "
+            "삭제는 personal_delete_saved_schedules로만 처리한다."
+        ),
     ]
 
 
