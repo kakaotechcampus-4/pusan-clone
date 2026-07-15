@@ -28,10 +28,22 @@ from student_parts.week02_structure_natural_language_requests import (
 _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = ""
+SQLITE_MEMORY_PROMPT = """
+[영속 기록 (Week 3)]
+- 이제 일정/할 일/알림은 임시 대화 메모리가 아니라 앱 SQLite DB에 영구 저장됩니다. 저장된 항목은 새 대화나 앱 재시작 후에도 그대로 유지됩니다.
+- 앞선 주차의 "저장하지 않는다"는 안내는 Week 3부터 적용되지 않습니다. 저장·조회·수정·삭제는 아래 Week 3 tool로 처리하세요.
+""".strip()
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+WEEK03_TOOL_CALL_PROMPT = """
+[Week 3 tool 사용]
+- 저장: 사용자의 자연어 요청은 먼저 extract_schedule_request로 구조화한 뒤, 그 structured_request 필드를 save_structured_request 인자로 그대로 넘겨 저장합니다. (개인 일정 생성은 personal_create_schedule 하나로 임시 생성과 SQLite 저장이 함께 처리됩니다.)
+- 조회: "내 일정 보여줘" 같은 요청은 personal_list_saved_schedules로 조회합니다. 저장된 구조화 요청 원본은 list_saved_requests / get_saved_request로 봅니다.
+- 수정: 저장된 일정 수정은 personal_update_saved_schedule을 사용합니다. 기존 일정을 삭제하고 다시 만드는 방식은 쓰지 마세요.
+- 삭제: personal_delete_saved_schedules를 사용합니다.
+- 수정·삭제 대상의 schedule_id를 모르면 먼저 personal_list_saved_schedules로 조회해 실제 id를 확인한 뒤 넘기고, id를 임의로 지어내지 마세요.
+- Week 3 범위는 앱 DB 저장/조회/수정/삭제까지입니다. RAG나 외부 멤버 일정 조율은 다루지 않습니다.
+""".strip()
 
 
 # [3주차 수강생 구현 가이드]
@@ -635,7 +647,11 @@ def build_week03_agent() -> object:
     global _WEEK03_AGENT
     if _WEEK03_AGENT is None:
         # TODO: chat_model(), week03_tools(), week03_system_prompt()로 Week 3 LangChain agent를 생성하세요.
-        ...
+        _WEEK03_AGENT = create_agent(
+            model=chat_model(),
+            tools=week03_tools(),
+            system_prompt=week03_system_prompt(),
+        )
     return _WEEK03_AGENT
 
 
