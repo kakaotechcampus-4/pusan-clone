@@ -704,7 +704,7 @@ def week03_prompt_parts() -> list[str]:
         "저장 결과는 list_saved_requests, personal_list_saved_schedules 도구들을 이용해 조회할 수 있다.",
         "사용자가 일정 등의 저장을 요청하는 경우 save_structured_request를 사용하여 저장하여라",
         "사용자가 일정 조회를 요청하는 경우 personal_list_saved_schedules를 사용하여라",
-        "사용자가 일정 수정을 요청하는 경우 personal_update_saved_schedules를 사용하여라",
+        "사용자가 일정 수정을 요청하는 경우 personal_update_saved_schedule를 사용하여라",
         "사용자가 일정 삭제를 요청하는 경우 personal_delete_saved_schedules를 사용하여라",
         "위 도구 외의 나머지 도구는 우선적으로 고려하지 말아야 한다."
     ]   
