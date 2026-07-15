@@ -434,8 +434,34 @@ def _delete_saved_schedules(
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
-    # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
-    ...
+    # Week 1과 Week 3은 같은 일정을 서로 다른 필드 이름으로 표현하니까 이전 week 1 형식이
+    # 저장 계층 전체로 퍼지지 않도록 이 Adapter 한 곳에서 변환한다.
+    return SaveStructuredRequestInput(
+        kind="personal_schedule",
+        title=schedule.get("title"),
+        date=schedule.get("date"),
+        start_time=schedule.get("start_time"),
+        end_time=schedule.get("end_time"),
+
+        # Week 1의 attendees를 Week 3의 members로 바꾼다.
+        # 참석자가 없거나 None이어도 저장 DTO에는 항상 빈 list를 전달한다.
+        members=schedule.get("attendees") or [],
+
+        # LLM이 추론한 결과가 아니라 Week 1 결과를 변환했다는 출처를 남긴다.
+        reason=(
+            "Week 1 임시 일정 생성 결과를 Week 3 SQLite 기록으로 변환했습니다."
+        ),
+
+        # 원본 일정 전체를 JSON으로 남겨 id, created_at, session_id까지 나중에 감사 로그에서 확인할 수 있게 한다.
+        original_text=json.dumps(
+            schedule,
+            ensure_ascii=False,
+        ),
+
+        # Week 1 임시 ID를 SQLite schedule_id와 연결하고 같은 Week 1 일정을 다시 저장할 때 Store가 중복을 식별하는 기준이 된다.
+        source_schedule_id=schedule.get("id"),
+    )
+
 
 
 @tool("personal_create_schedule")
@@ -448,9 +474,63 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
-    # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
-    # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
-    ...
+    # Week 1의 일정 생성 규칙, 임시 ID, session scope를 복제하지 않고 이미 검증된 원래 Week 1 tool을 정확히 한 번 호출하게 한다.
+    week01_result_text = week01_personal_create_schedule.invoke(
+        {
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "attendees": (
+                attendees
+                if attendees is not None
+                else []
+            ),
+        }
+    )
+
+    # Week 1 tool의 공개 반환 계약은 JSON 문자열이므로 JSON 문법이 깨졌다면 불완전한 값을 SQLite에 저장하지 않고 즉시 실패한다.
+    try:
+        week01_result = json.loads(week01_result_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Week 1 개인 일정 생성 결과가 올바른 JSON이 아닙니다."
+        ) from exc
+
+    # JSON array나 scalar가 들어오는 내부 계약 위반도 명확히 거부한다.
+    if not isinstance(week01_result, dict):
+        raise RuntimeError(
+            "Week 1 개인 일정 생성 결과가 JSON object가 아닙니다."
+        )
+
+    created_schedule = week01_result.get("created_schedule")
+
+    # Adapter가 기대하는 입력은 일정 필드가 들어 있는 dict이므로 형식이 틀리면 SQLite helper를 호출하기 전에 중단한다.
+    if not isinstance(created_schedule, dict):
+        raise RuntimeError(
+            "Week 1 개인 일정 생성 결과에 created_schedule dict가 없습니다."
+        )
+
+    # Adapter는 Week 1 일정을 Week 3 DTO로 바꾸고 기본값·출처·원문을 채운다.
+    structured_request = structured_request_from_week01_schedule(
+        created_schedule
+    )
+
+    # 검증된 DTO의 저장 payload 구성, None 제거, Store 호출,
+    # 외부 동기화는 공통 저장 helper에 정확히 한 번 위임한다.
+    sqlite_save = save_structured_request_payload(
+        structured_request
+    )
+
+    # Week 1의 ok, tool_name, created_schedule을 그대로 보존하고 Week 3 변환 결과와 SQLite 저장 결과만 추가한다.
+    week01_result["structured_request"] = (
+        structured_request.model_dump(
+            exclude_none=True,
+        )
+    )
+    week01_result["sqlite_save"] = sqlite_save
+
+    return json_payload(week01_result)
 
 
 @tool(args_schema=SaveStructuredRequestInput)
@@ -617,9 +697,59 @@ def personal_update_saved_schedule(
 ) -> str:
     """앱 DB에 저장된 내 일정 원본을 수정하고 공유 일정 복사본을 같은 값으로 갱신합니다."""
 
-    # TODO: None이 아닌 수정 필드를 AppSQLiteStore.update_schedule(...)에 전달하세요.
-    # TODO: ID가 없으면 ok=False, 있으면 updated_schedule/shared_sync를 담아 JSON 문자열로 반환하세요.
-    ...
+    # None 자체가 "수정하지 않음"을 뜻하기 때문에 빈 문자열과 빈 참석자 목록은 사용자가 명시한 수정값이므로 제거하지 않는다.
+    update_payload: dict[str, Any] = {
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees,
+    }
+    update_payload = {
+        field_name: field_value
+        for field_name, field_value in update_payload.items()
+        if field_value is not None
+    }
+
+    # schedule_id만 전달되고 실제 수정값이 없으면 DB 조회와 외부 동기화를 시작하지 않음.
+    if not update_payload:
+        return json_payload(
+            tool_result(
+                "personal_update_saved_schedule",
+                ok=False,
+                error="수정할 필드가 없습니다.",
+                updated_schedule=None,
+                shared_sync=None,
+            )
+        )
+
+    # 일정 row, 연결된 structured request, 공유 저장소 갱신은 Store가 함께 담당한다.
+    app_store = _store()
+    update_result = app_store.update_schedule(
+        schedule_id,
+        **update_payload,
+    )
+
+    # Store의 None 반환은 해당 schedule_id가 존재하지 않는다는 것.
+    if update_result is None:
+        return json_payload(
+            tool_result(
+                "personal_update_saved_schedule",
+                ok=False,
+                error="해당 schedule_id의 저장 일정을 찾을 수 없습니다.",
+                updated_schedule=None,
+                shared_sync=None,
+            )
+        )
+
+    # Store가 만든 최신 일정 row와 공유 저장소 동기화 결과를 가공하지 않고 그대로 전달.
+    return json_payload(
+        tool_result(
+            "personal_update_saved_schedule",
+            updated_schedule=update_result["schedule"],
+            shared_sync=update_result["shared_sync"],
+        )
+    )
 
 
 @tool(args_schema=SavedScheduleDeleteInput)
