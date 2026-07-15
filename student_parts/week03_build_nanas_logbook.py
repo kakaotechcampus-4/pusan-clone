@@ -38,7 +38,8 @@ SQLITE_MEMORY_PROMPT = (
 WEEK03_TOOL_CALL_PROMPT = (
     "사용자의 요청에 먼저 extract_schedule_request 로 요청을 구조화합니다. "
     "구조화된 요청을 save_structured_request 넘기고, SQLite DB에 저장합니다. "
-    "수정/삭제 시에는 이전 데이터를 먼저 조회합니다."
+    "수정/삭제 시에는 이전 데이터를 먼저 조회합니다. "
+    "사용자의 일정 저장 요청에 저장할까요? 라고 재질문하지 않고 일정을 저장합니다. "
     
 )
 
