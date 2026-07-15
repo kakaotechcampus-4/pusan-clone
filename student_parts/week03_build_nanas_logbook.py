@@ -65,6 +65,12 @@ personal_delete_saved_schedules에는 schedule_ids 또는 사용자가 명시한
 
 Week 1 호환 personal_create_schedule은 개인 일정 생성과 SQLite 저장을 함께 수행하는 tool이다.
 이 tool을 사용한 경우 같은 일정을 save_structured_request로 다시 저장하여 중복 생성하지 말아라.
+
+Week 3에서 저장된 일정을 조회할 때는 반드시
+personal_list_saved_schedules를 사용한다.
+
+personal_list_schedules는 Week 1의 현재 프로세스 임시 메모리만 조회하므로
+Week 3 저장 일정 조회에는 사용하지 않는다.
 """.strip()
 
 
