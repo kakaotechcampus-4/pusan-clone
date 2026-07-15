@@ -322,6 +322,41 @@ def _delete_saved_schedules(
 
     # TODO: 삭제 조건이 없으면 거부하고, delete_all 또는 명시 필터에 맞는 store 메서드를 호출하세요.
     # TODO: deleted_count, filters, deleted가 포함된 tool 결과 dict를 반환하세요.
+    has_filter = bool(schedule_ids) or any([date, title, start_time, time_unspecified])
+    if not delete_all and not has_filter:
+        return tool_result(
+            "personal_delete_saved_schedules",
+            ok=False,
+            deleted_count=0,
+            filters={},
+            deleted=[],
+            reason="삭제 조건이 없습니다. schedule_ids나 날짜/제목/시간, 또는 delete_all을 지정하세요.",
+        )
+    if delete_all:
+        deleted = store.delete_all_schedules()
+        filters = {"delete_all": True}
+    else:
+        deleted = store.delete_schedules_by_filter(
+            schedule_ids=schedule_ids,
+            date=date,
+            title=title,
+            start_time=start_time,
+            time_unspecified=time_unspecified,
+        )
+        filters = {
+            "schedule_ids": schedule_ids,
+            "date": date,
+            "title": title,
+            "start_time": start_time,
+            "time_unspecified": time_unspecified,
+        }
+    return tool_result(
+        "personal_delete_saved_schedules",
+        ok=True,
+        deleted_count=len(deleted),
+        filters=filters,
+        deleted=deleted,
+    )
     ...
 
 
