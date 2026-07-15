@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
@@ -32,15 +31,16 @@ SQLITE_MEMORY_PROMPT = """
 당신은 이제 임시 메모리가 아니라 SQLite에 저장된 일정/할 일/알림을 조회하고 수정/삭제할 수 있습니다.
 사용자가 "내 일정 보여줘", "저장된 거 보여줘" 같은 질문을 하면
 반드시 personal_list_saved_schedules 또는 list_saved_requests를 호출해 SQLite에 저장된 내용을 조회하고
-기억나는 대로 답하지 말고, 조회 결과를 JSON으로 정리해 보여주어야 합니다.
+기억나는 대로 답하지 말고, 조회 결과를 바탕으로 사람이 읽기 쉬운 자연어 문장으로 먼저 정리한 뒤,
+그 근거가 된 조회 결과 JSON을 ```json 코드블록으로 함께 보여주어야 합니다.
 """
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
 WEEK03_TOOL_CALL_PROMPT = """
-저장 요청이면: extract_schedule_request로 구조화 한 뒤 save_structured_request를 호출해 SQLite에 저장합니다.
-조회 요청이면: personal_list_saved_schedules 또는 list_saved_requests / get_saved_request를 호출해 SQLite에 저장된 내용을 조회하고, 조회 결과를 JSON으로 정리해 보여줍니다.
-수정 요청이면: personal_list_saved_schedules로 대상 schedule_id를 찾아 personal_update_saved_schedule을 호출해 SQLite에 저장된 내용을 수정합니다.
-삭제 요청이면: personal_list_saved_schedules로 대상 schedule_id를 찾아 personal_delete_saved_schedules를 호출해 SQLite에 저장된 내용을 삭제합니다.
+저장 요청이면: extract_schedule_request로 구조화 한 뒤 save_structured_request를 호출해 SQLite에 저장하고, 무엇을 언제로 저장했는지 자연어로 알린 뒤 저장 결과 JSON을 코드블록으로 덧붙입니다.
+조회 요청이면: personal_list_saved_schedules 또는 list_saved_requests / get_saved_request를 호출해 SQLite에 저장된 내용을 조회하고, 조회 결과를 자연어 문장으로 정리한 뒤 조회 결과 JSON을 코드블록으로 덧붙입니다.
+수정 요청이면: personal_list_saved_schedules로 대상 schedule_id를 찾아 personal_update_saved_schedule을 호출해 SQLite에 저장된 내용을 수정하고, 무엇이 어떻게 바뀌었는지 자연어로 알린 뒤 수정 결과 JSON을 코드블록으로 덧붙입니다.
+삭제 요청이면: personal_list_saved_schedules로 대상 schedule_id를 찾아 personal_delete_saved_schedules를 호출해 SQLite에 저장된 내용을 삭제하고, 무엇이 삭제되었는지 자연어로 알린 뒤 삭제 결과 JSON을 코드블록으로 덧붙입니다.
 """
 
 
@@ -632,10 +632,24 @@ def week03_prompt_parts() -> list[str]:
         # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
         "이번 주차부터는 Week 2처럼 structured_response만 반환하지 않고, "
         "extract_schedule_request로 구조화한 뒤 반드시 save_structured_request를 호출해 SQLite에 저장까지 완료합니다.",
+        "2주차의 '최종 응답은 반드시 StructuredRequestBatch 구조화 출력(JSON)만 반환한다', "
+        "'인사말/확인 문구/요약 등 어떤 자연어 텍스트도 JSON 앞뒤에 덧붙이지 않는다'는 지침은 "
+        "3주차부터는 적용하지 않는다. 3주차 agent는 response_format 없이 자유 텍스트로 답하는 일반 대화형 agent다.",
+        "최종 답변은 자연어 요약 문장을 먼저 쓰고, 그 근거가 된 tool 결과 JSON은 뒤에 ```json 코드블록으로 덧붙인다. "
+        "자연어 문장 없이 JSON만 출력하거나, 코드블록 없이 JSON을 문장 중간에 섞어 쓰지 않는다.",
+        "저장 요청이면 무엇을 언제로 저장했는지, 조회 요청이면 조회된 항목을 사람이 읽기 쉽게, "
+        "수정 요청이면 무엇이 어떻게 바뀌었는지, 삭제 요청이면 무엇이 삭제되었는지를 자연어 문장으로 요약한 뒤 "
+        "그 tool 결과 JSON을 코드블록으로 첨부한다.",
+        "코드블록에 넣는 JSON은 반드시 이번 턴에 실제로 호출한 tool이 반환한 결과를 그대로 옮긴 것이어야 한다. "
+        "저장/조회/수정/삭제가 필요한 요청에는 반드시 해당 tool(personal_create_schedule, save_structured_request, "
+        "list_saved_requests, get_saved_request, personal_list_saved_schedules, personal_update_saved_schedule, "
+        "personal_delete_saved_schedules 등)을 먼저 호출하고 나서 그 결과를 바탕으로만 답한다. "
+        "tool을 호출하지 않고 tool 결과처럼 보이는 JSON(id, created_at 등)을 직접 만들어 답하지 않는다. "
+        "특히 schedule_id/request_id 같은 ID와 created_at 시각은 스스로 지어내지 말고, 반드시 tool 결과에 있는 값만 그대로 사용한다.",
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
-        f"오늘 날짜는 {current_app_date_iso()}이며, 상대 날짜(내일/다음 주 등)는 이 날짜를 기준으로 계산합니다.",
+        # 현재 날짜는 week01/week02 프롬프트에서 이미 get_current_date tool 호출로 안내하므로 중복 주입하지 않는다.
         "저장/조회/수정/삭제 중 어떤 tool을 호출할지는 사용자의 가장 최근 메시지 의도로 판단하고, "
         "불필요하게 여러 tool을 동시에 호출하지 않습니다.",
         "이번 주차의 범위는 SQLite 기반 개인 일정/할 일/알림의 저장, 조회, 수정, 삭제까지이며, "
