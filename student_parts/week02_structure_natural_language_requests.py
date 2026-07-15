@@ -156,6 +156,14 @@ def extract_structured_request(text: str) -> StructuredRequest:
 def extract_schedule_request(query: str) -> str:
     """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
 
+    structured = extract_structured_request(query)
+    payload = {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": current_app_date_iso(),
+        "structured_request": structured.model_dump(),
+    }
+    return json.dumps(payload, ensure_ascii=False)
     ...
 
 
