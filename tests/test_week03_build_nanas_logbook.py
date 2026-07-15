@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from pydantic import ValidationError
 
@@ -230,6 +230,23 @@ class Week03InputNormalizationTest(unittest.TestCase):
 
         self.assertEqual(normalized.source_schedule_id, "personal_inner")
 
+    def test_blank_inner_source_id_uses_outer_wrapper_id(self) -> None:
+        # 안쪽 ID가 빈 문자열이면 실제 값이 아니므로 바깥의 유효한 Week 1 ID를 보충해야 합니다.
+        for blank_value in ("", "   "):
+            with self.subTest(blank_value=blank_value):
+                normalized = week03.SaveStructuredRequestInput.model_validate(
+                    {
+                        "structured_request": {
+                            "kind": "personal_schedule",
+                            "title": "기존 일정",
+                            "source_schedule_id": blank_value,
+                        },
+                        "source_schedule_id": "personal_outer",
+                    }
+                )
+
+                self.assertEqual(normalized.source_schedule_id, "personal_outer")
+
     def test_json_object_string_is_validated_without_llm_call(self) -> None:
         # 이미 구조화된 JSON은 비용이 드는 LLM bridge를 다시 통과하지 않아야 합니다.
         text = json.dumps(
@@ -261,6 +278,21 @@ class Week03InputNormalizationTest(unittest.TestCase):
         extractor.assert_called_once_with(text)
         self.assertEqual(normalized.original_text, text)
 
+    def test_extractor_error_is_not_hidden(self) -> None:
+        # Week 2 LLM bridge의 실제 오류를 빈 요청이나 일반 검증 오류로 바꾸지 않고 그대로 전달해야 합니다.
+        expected_error = RuntimeError("LLM failed")
+
+        with patch.object(
+            week03,
+            "extract_structured_request",
+            side_effect=expected_error,
+        ) as extractor:
+            with self.assertRaises(RuntimeError) as caught:
+                week03._save_input_from("내일 일정 저장해줘")
+
+        extractor.assert_called_once_with("내일 일정 저장해줘")
+        self.assertIs(caught.exception, expected_error)
+
     def test_missing_kind_keeps_scaffold_unknown_default(self) -> None:
         # TODO 밖의 kind 기본값은 바꾸지 않기로 했으므로 현재 호환 계약을 고정합니다.
         normalized = week03._save_input_from({"title": "분류되지 않은 요청"})
@@ -291,11 +323,13 @@ class Week03InputNormalizationTest(unittest.TestCase):
 
     def test_malformed_json_like_input_is_not_sent_to_llm(self) -> None:
         # JSON처럼 시작한 입력의 문법 오류를 LLM이 임의로 고치게 하지 않습니다.
-        with patch.object(week03, "extract_structured_request") as extractor:
-            with self.assertRaises(ValueError):
-                week03._save_input_from('{"kind": "todo"')
+        for malformed in ('{"kind": "todo"', '[{"kind": "todo"}'):
+            with self.subTest(malformed=malformed):
+                with patch.object(week03, "extract_structured_request") as extractor:
+                    with self.assertRaises(ValueError):
+                        week03._save_input_from(malformed)
 
-        extractor.assert_not_called()
+                extractor.assert_not_called()
 
     def test_unexpected_runtime_type_is_rejected(self) -> None:
         # type hint를 우회한 호출도 조용히 문자열로 바꾸지 않아야 합니다.
@@ -417,6 +451,17 @@ class Week03PersistenceIntegrationTest(_Week03StoreTestCase):
         self.assertEqual(raw_payload["members"], [])
         self.assertNotIn("reason", raw_payload)
 
+        schedule_row = next(
+            row for row in payload["saved_rows"] if row["table"] == "schedules"
+        )
+        stored_schedule = self.store.list_schedules(
+            kind="personal_schedule",
+            limit=10,
+        )[0]
+        self.assertEqual(stored_schedule["request_id"], payload["request_id"])
+        self.assertEqual(stored_schedule["schedule_id"], schedule_row["id"])
+        self.assertEqual(stored_schedule["request_kind"], payload["kind"])
+
     def test_source_schedule_id_makes_same_week01_payload_idempotent(self) -> None:
         # 같은 Week 1 임시 일정 ID를 다시 저장해도 master와 schedule row가 늘지 않아야 합니다.
         request = {
@@ -511,6 +556,10 @@ class Week03Week01CompatibilityTest(_Week03StoreTestCase):
         converted = week03.structured_request_from_week01_schedule(schedule)
 
         self.assertEqual(converted.kind, "personal_schedule")
+        self.assertEqual(converted.title, "민수와 회의")
+        self.assertEqual(converted.date, "2026-07-16")
+        self.assertEqual(converted.start_time, "10:00")
+        self.assertEqual(converted.end_time, "11:00")
         self.assertEqual(converted.members, ["민수"])
         self.assertEqual(converted.source_schedule_id, "personal_legacy")
         self.assertIn("Week 1", converted.reason)
@@ -712,8 +761,16 @@ class Week03ScheduleQueryTest(_Week03StoreTestCase):
 
     def test_schedule_list_defaults_to_personal_and_can_select_group(self) -> None:
         # kind를 생략하면 개인 일정, 명시하면 선택한 일정 종류만 조회해야 합니다.
-        self.save_store_request(kind="personal_schedule", title="개인 일정", members=["나"])
-        self.save_store_request(kind="group_schedule", title="그룹 일정", members=["민수", "지수"])
+        personal_saved = self.save_store_request(
+            kind="personal_schedule",
+            title="개인 일정",
+            members=["나"],
+        )
+        group_saved = self.save_store_request(
+            kind="group_schedule",
+            title="그룹 일정",
+            members=["민수", "지수"],
+        )
 
         personal = invoke_json(week03.personal_list_saved_schedules, {})
         group = invoke_json(week03.personal_list_saved_schedules, {"kind": "group_schedule"})
@@ -722,10 +779,20 @@ class Week03ScheduleQueryTest(_Week03StoreTestCase):
         self.assertEqual([row["title"] for row in personal["schedules"]], ["개인 일정"])
         self.assertEqual(personal["schedules"][0]["request_kind"], "personal_schedule")
         self.assertEqual(personal["schedules"][0]["attendees"], ["나"])
+        self.assertEqual(personal["schedules"][0]["request_id"], personal_saved["request_id"])
+        self.assertEqual(
+            personal["schedules"][0]["schedule_id"],
+            self.schedule_id_from(personal_saved),
+        )
 
         self.assertEqual(group["filters"]["kind"], "group_schedule")
         self.assertEqual([row["title"] for row in group["schedules"]], ["그룹 일정"])
         self.assertEqual(group["schedules"][0]["request_kind"], "group_schedule")
+        self.assertEqual(group["schedules"][0]["request_id"], group_saved["request_id"])
+        self.assertEqual(
+            group["schedules"][0]["schedule_id"],
+            self.schedule_id_from(group_saved),
+        )
 
     def test_schedule_list_applies_dates_and_limit(self) -> None:
         # 일정 조회가 날짜 범위와 limit을 함께 적용하고 실제 필터도 응답에 남기는지 확인합니다.
@@ -749,6 +816,43 @@ class Week03ScheduleQueryTest(_Week03StoreTestCase):
         )
         self.assertEqual(len(payload["schedules"]), 1)
         self.assertEqual(payload["schedules"][0]["title"], "둘째 일정")
+
+    def test_query_tools_delegate_exact_filters_to_store(self) -> None:
+        # 조회 도구는 필터를 재해석하지 않고 Store의 공개 인자 이름으로 정확히 한 번 전달해야 합니다.
+        fake_store = Mock(spec=AppSQLiteStore)
+        fake_store.list_saved_requests.return_value = []
+        fake_store.list_schedules.return_value = []
+
+        with patch.object(week03, "_store", return_value=fake_store):
+            invoke_json(
+                week03.list_saved_requests,
+                {
+                    "kind": "todo",
+                    "date_from": "2026-07-15",
+                    "date_to": "2026-07-20",
+                },
+            )
+            invoke_json(
+                week03.personal_list_saved_schedules,
+                {
+                    "limit": 25,
+                    "kind": "group_schedule",
+                    "date_from": "2026-07-15",
+                    "date_to": "2026-07-20",
+                },
+            )
+
+        fake_store.list_saved_requests.assert_called_once_with(
+            kind="todo",
+            date_from="2026-07-15",
+            date_to="2026-07-20",
+        )
+        fake_store.list_schedules.assert_called_once_with(
+            limit=25,
+            kind="group_schedule",
+            date_from="2026-07-15",
+            date_to="2026-07-20",
+        )
 
     def test_schedule_list_input_accepts_bounds_and_rejects_outside_values(self) -> None:
         # 외부 tool 입력은 Pydantic이 1~200 범위에서 먼저 차단해야 합니다.
@@ -794,10 +898,18 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         schedule_id = self.schedule_id_from(saved)
         self.sync_personal.reset_mock()
 
-        payload = invoke_json(
-            week03.personal_update_saved_schedule,
-            {"schedule_id": schedule_id, "start_time": "13:30"},
-        )
+        # Tool이 생략한 필드를 None으로 채우지 않고 실제 변경값만 Store에 넘기는지도 확인합니다.
+        with patch.object(
+            self.store,
+            "update_schedule",
+            wraps=self.store.update_schedule,
+        ) as update_schedule:
+            payload = invoke_json(
+                week03.personal_update_saved_schedule,
+                {"schedule_id": schedule_id, "start_time": "13:30"},
+            )
+
+        update_schedule.assert_called_once_with(schedule_id, start_time="13:30")
 
         updated = payload["updated_schedule"]
         self.assertTrue(payload["ok"])
@@ -827,6 +939,22 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         master = self.store.get_saved_request(saved["request_id"])
         self.assertEqual(json.loads(master["members_json"]), [])
         self.assertEqual(json.loads(master["raw_json"])["members"], [])
+
+    def test_update_keeps_explicit_empty_string(self) -> None:
+        # 빈 문자열은 None과 달리 사용자가 명시한 수정값이므로 Store와 master row에 그대로 남아야 합니다.
+        saved = self.save_store_request(title="기존 제목")
+        schedule_id = self.schedule_id_from(saved)
+
+        payload = invoke_json(
+            week03.personal_update_saved_schedule,
+            {"schedule_id": schedule_id, "title": ""},
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated_schedule"]["title"], "")
+        master = self.store.get_saved_request(saved["request_id"])
+        self.assertEqual(master["title"], "")
+        self.assertEqual(json.loads(master["raw_json"])["title"], "")
 
     def test_update_without_changes_fails_before_store_call(self) -> None:
         # ID만 전달한 요청은 성공처럼 보이면 안 되고 DB 호출도 만들면 안 됩니다.
@@ -880,8 +1008,12 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         # 그룹 일정은 예전 공유 복사본을 지운 뒤 수정된 값으로 한 번 다시 동기화해야 합니다.
         saved = self.save_store_request(kind="group_schedule", title="기존 그룹 회의", members=["민수"])
         schedule_id = self.schedule_id_from(saved)
+        before_update = self.store.list_schedules(kind="group_schedule", limit=10)[0]
         self.delete_group.reset_mock()
         self.sync_group.reset_mock()
+        shared_calls = Mock()
+        shared_calls.attach_mock(self.delete_group, "delete_group")
+        shared_calls.attach_mock(self.sync_group, "sync_group")
 
         payload = invoke_json(
             week03.personal_update_saved_schedule,
@@ -890,8 +1022,13 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["shared_sync"], self.group_sync_result)
-        self.delete_group.assert_called_once()
-        self.sync_group.assert_called_once()
+        self.assertEqual(
+            shared_calls.mock_calls,
+            [
+                call.delete_group(before_update),
+                call.sync_group(payload["updated_schedule"]),
+            ],
+        )
 
     def test_delete_rejects_missing_conditions_and_empty_id_list(self) -> None:
         # delete_all 또는 실제 필터가 없으면 Store 삭제 메서드에 도달하지 않아야 합니다.
@@ -925,6 +1062,43 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         self.assertTrue(missing["ok"])
         self.assertEqual(missing["deleted_count"], 0)
         self.assertEqual(missing["deleted"], [])
+
+    def test_filter_delete_delegates_every_filter_once(self) -> None:
+        # 모든 삭제 조건은 응답 trace와 Store 호출에 같은 값으로 정확히 한 번 보존되어야 합니다.
+        fake_store = Mock(spec=AppSQLiteStore)
+        fake_store.delete_schedules_by_filter.return_value = [
+            {"schedule_id": "sch_1"}
+        ]
+
+        payload = week03.delete_saved_schedules_dict(
+            schedule_ids=["sch_1"],
+            date="2026-07-20",
+            title="회의",
+            start_time="10:00",
+            time_unspecified=True,
+            app_store=fake_store,
+        )
+
+        fake_store.delete_schedules_by_filter.assert_called_once_with(
+            schedule_ids=["sch_1"],
+            date="2026-07-20",
+            title="회의",
+            start_time="10:00",
+            time_unspecified=True,
+        )
+        fake_store.delete_all_schedules.assert_not_called()
+        self.assertEqual(
+            payload["filters"],
+            {
+                "schedule_ids": ["sch_1"],
+                "date": "2026-07-20",
+                "title": "회의",
+                "start_time": "10:00",
+                "time_unspecified": True,
+                "delete_all": False,
+            },
+        )
+        self.assertEqual(payload["deleted_count"], 1)
 
     def test_delete_filters_use_sqlite_and_semantics_for_personal_and_group(self) -> None:
         # 제목 부분 일치와 날짜·시간 조건은 AND로 결합하며 개인·그룹 일정 모두 같은 삭제 대상입니다.
@@ -1043,6 +1217,10 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
 
 
 class Week03PromptAndAgentTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # 각 테스트는 앞선 실행에서 만들어진 singleton Agent와 무관하게 시작해야 합니다.
+        week03._WEEK03_AGENT = None
+
     def tearDown(self) -> None:
         week03._WEEK03_AGENT = None
 
@@ -1085,11 +1263,17 @@ class Week03PromptAndAgentTest(unittest.TestCase):
     def test_week03_prompt_overrides_week02_and_explains_persistent_tool_flow(self) -> None:
         # 시스템 프롬프트가 Week 2 임시 규칙을 대체하고 영속 저장의 안전한 도구 순서를 설명해야 합니다.
         prompt = week03.week03_system_prompt()
+        tool_prompt = week03.WEEK03_TOOL_CALL_PROMPT
+        week02_no_sqlite_rule = "Week 2에서는 SQLite 저장"
+        week03_override_rule = "Week 2의 SQLite 저장 금지 규칙은 Week 3에서 대체된다."
 
         self.assertIn(current_app_date_iso(), prompt)
-        self.assertIn("Week 2에서는 SQLite 저장", prompt)
-        self.assertIn("Week 3", prompt)
-        self.assertGreater(prompt.rfind("Week 3"), prompt.find("Week 2에서는 SQLite 저장"))
+        self.assertIn(week02_no_sqlite_rule, prompt)
+        self.assertIn(week03_override_rule, prompt)
+        self.assertGreater(
+            prompt.index(week03_override_rule),
+            prompt.index(week02_no_sqlite_rule),
+        )
         self.assertIn("새 대화", prompt)
         self.assertIn("앱을 다시 시작", prompt)
         self.assertIn("extract_schedule_request", prompt)
@@ -1102,6 +1286,26 @@ class Week03PromptAndAgentTest(unittest.TestCase):
         self.assertIn("그룹 일정", prompt)
         self.assertIn("shared_sync", prompt)
         self.assertIn("RAG", prompt)
+        self.assertIn("extract_schedule_request(query=사용자 원문)", tool_prompt)
+        self.assertIn("structured_request 내부 필드만", tool_prompt)
+        self.assertIn("wrapper 전체를 save_structured_request에 전달하지 않는다", tool_prompt)
+        self.assertIn("일반 저장 요청에서는 personal_create_schedule을 호출하지 않는다", tool_prompt)
+        self.assertIn("현재 대화의 Week 1 임시 일정까지 함께 만들어 달라고 명시한 경우에만", tool_prompt)
+        self.assertIn("동시에 또는 병렬로 호출하지 않는다", tool_prompt)
+        self.assertIn(
+            "저장된 일정 목록이나 내 일정을 보여 달라는 요청에는 personal_list_saved_schedules를 사용한다",
+            tool_prompt,
+        )
+        self.assertIn("후보와 schedule_id를 먼저 확인한다", tool_prompt)
+        self.assertIn("schedule_ids=[ID]", tool_prompt)
+        self.assertIn(
+            "Week 1 임시 메모리 호환 전용",
+            week03.personal_create_schedule.description,
+        )
+        self.assertLess(
+            tool_prompt.index("extract_schedule_request(query=사용자 원문)"),
+            tool_prompt.index("structured_request 내부 필드만"),
+        )
 
     def test_build_week03_agent_configures_langchain_agent_once_without_response_format(self) -> None:
         # Week 3 agent는 도구 인자 스키마를 사용하므로 최종 응답 format 없이 한 번만 생성되어야 합니다.
@@ -1162,9 +1366,73 @@ class Week03LiveLLMTest(_Week03StoreTestCase):
                 "messages": [
                     {
                         "role": "user",
+                        "content": "내일 10시 개인 코칭 저장해줘",
+                    }
+                ]
+            }
+        )
+
+        events = extract_agent_events(result)
+        tool_names = [event["tool_name"] for event in events if event["event"] == "tool_call"]
+
+        self.assertEqual(
+            tool_names,
+            ["extract_schedule_request", "save_structured_request"],
+        )
+        self.assertEqual(tool_names.count("extract_schedule_request"), 1)
+        self.assertEqual(tool_names.count("save_structured_request"), 1)
+        self.assertNotIn("personal_create_schedule", tool_names)
+        self.assertEqual(self.table_count("structured_requests"), 1)
+        self.assertEqual(self.table_count("schedules"), 1)
+
+        save_results = [
+            event["content"]
+            for event in events
+            if event["event"] == "tool_result"
+            and event["tool_name"] == "save_structured_request"
+        ]
+        self.assertEqual(len(save_results), 1)
+        saved = save_results[0]
+        self.assertIsInstance(saved, dict)
+        self.assertTrue(saved["ok"])
+        self.assertEqual(saved["tool_name"], "save_structured_request")
+        self.assertTrue(saved["request_id"])
+        self.assertEqual(saved["kind"], "personal_schedule")
+        self.assertEqual(
+            [row["table"] for row in saved["saved_rows"]],
+            ["structured_requests", "schedules"],
+        )
+
+        reopened_store = AppSQLiteStore(self.db_path)
+        master = reopened_store.get_saved_request(saved["request_id"])
+        schedules = reopened_store.list_schedules(
+            kind="personal_schedule",
+            limit=10,
+        )
+        self.assertIsNotNone(master)
+        self.assertEqual(len(schedules), 1)
+        schedule_row = next(
+            row for row in saved["saved_rows"] if row["table"] == "schedules"
+        )
+
+        self.assertEqual(master["request_id"], saved["request_id"])
+        self.assertEqual(master["kind"], saved["kind"])
+        self.assertEqual(schedules[0]["request_id"], saved["request_id"])
+        self.assertEqual(schedules[0]["schedule_id"], schedule_row["id"])
+        self.assertEqual(schedules[0]["request_kind"], saved["kind"])
+        self.assertEqual(saved["shared_sync"], self.personal_sync_result)
+
+    def test_live_agent_uses_compatibility_path_only_when_explicitly_requested(self) -> None:
+        # Week 1 임시 메모리까지 명시한 요청만 호환 도구 하나로 이중 기록해야 합니다.
+        agent = week03.build_week03_agent()
+        result = agent.invoke(
+            {
+                "messages": [
+                    {
+                        "role": "user",
                         "content": (
-                            "Week 3 기본 저장 흐름으로 내일 오전 10시 개인 코칭 일정을 SQLite에 저장해줘. "
-                            "extract_schedule_request 다음 save_structured_request를 사용해."
+                            "내일 오전 11시 개인 코칭을 Week 1 현재 대화의 "
+                            "임시 일정에도 함께 저장해줘"
                         ),
                     }
                 ]
@@ -1172,21 +1440,21 @@ class Week03LiveLLMTest(_Week03StoreTestCase):
         )
 
         events = extract_agent_events(result)
-        tool_names = [event["tool_name"] for event in events if event["event"] == "tool_call"]
+        tool_names = [
+            event["tool_name"]
+            for event in events
+            if event["event"] == "tool_call"
+        ]
 
-        self.assertIn("extract_schedule_request", tool_names)
-        self.assertIn("save_structured_request", tool_names)
-        self.assertLess(tool_names.index("extract_schedule_request"), tool_names.index("save_structured_request"))
-        self.assertEqual(tool_names.count("save_structured_request"), 1)
-        self.assertNotIn("personal_create_schedule", tool_names)
+        self.assertEqual(tool_names, ["personal_create_schedule"])
+        self.assertEqual(len(week01.PERSONAL_SCHEDULES), 1)
+        self.assertEqual(self.table_count("structured_requests"), 1)
         self.assertEqual(self.table_count("schedules"), 1)
-
-        reopened_store = AppSQLiteStore(self.db_path)
-        self.assertEqual(len(reopened_store.list_schedules(kind="personal_schedule", limit=10)), 1)
 
     def test_live_agent_reads_sqlite_with_saved_tool_not_week01_memory_tool(self) -> None:
         # 실제 agent가 영속 기록 질문에 Week 1 메모리가 아니라 SQLite 조회 tool을 선택하는지 확인합니다.
-        self.save_store_request(title="SQLite에만 있는 일정", date="2026-07-20")
+        saved = self.save_store_request(title="SQLite에만 있는 일정", date="2026-07-20")
+        schedule_id = self.schedule_id_from(saved)
         agent = week03.build_week03_agent()
 
         result = agent.invoke(
@@ -1194,17 +1462,38 @@ class Week03LiveLLMTest(_Week03StoreTestCase):
                 "messages": [
                     {
                         "role": "user",
-                        "content": "SQLite 기록장에서 내 저장 일정을 조회해줘. 저장 일정 조회 도구를 사용해.",
+                        "content": "내가 저장한 일정 보여줘",
                     }
                 ]
             }
         )
 
         events = extract_agent_events(result)
-        tool_names = [event["tool_name"] for event in events if event["event"] == "tool_call"]
+        tool_calls = [event for event in events if event["event"] == "tool_call"]
+        tool_names = [event["tool_name"] for event in tool_calls]
+        list_results = [
+            event["content"]
+            for event in events
+            if event["event"] == "tool_result"
+            and event["tool_name"] == "personal_list_saved_schedules"
+        ]
 
-        self.assertIn("personal_list_saved_schedules", tool_names)
+        self.assertEqual(tool_names, ["personal_list_saved_schedules"])
         self.assertNotIn("personal_list_schedules", tool_names)
+        self.assertEqual(
+            (tool_calls[0]["arguments"] or {}).get("kind", "personal_schedule"),
+            "personal_schedule",
+        )
+        self.assertEqual(len(list_results), 1)
+
+        listed = list_results[0]
+        self.assertTrue(listed["ok"])
+        self.assertEqual(listed["tool_name"], "personal_list_saved_schedules")
+        self.assertEqual(listed["filters"]["kind"], "personal_schedule")
+        self.assertEqual(len(listed["schedules"]), 1)
+        self.assertEqual(listed["schedules"][0]["request_id"], saved["request_id"])
+        self.assertEqual(listed["schedules"][0]["schedule_id"], schedule_id)
+        self.assertEqual(listed["schedules"][0]["title"], "SQLite에만 있는 일정")
 
 
 if __name__ == "__main__":

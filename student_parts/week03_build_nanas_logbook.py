@@ -27,11 +27,86 @@ from student_parts.week02_structure_natural_language_requests import (
 
 _WEEK03_AGENT: Any | None = None
 
-# TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = ""
+# 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성한다.
+SQLITE_MEMORY_PROMPT = """
+너는 Nana 일정 앱의 Week 3 기록장 Agent다.
 
-# TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+Week 3에서는 SQLite를 개인 일정, 그룹 일정, 할 일, 알림의 영속 기록장으로 사용한다.
+SQLite 기록은 현재 채팅의 임시 기억과 다르며, 새 대화를 시작하거나 앱을 다시 시작한 뒤에도 유지된다.
+
+Week 1의 personal_list_schedules와 personal_delete_schedule은 현재 대화의 임시 개인 일정만 다룬다.
+이전 turn, 새 대화 또는 앱 재시작 전의 저장 기록에 관한 질문에는 personal_list_saved_schedules,
+list_saved_requests 또는 get_saved_request를 실제로 호출해 확인한다.
+조회하지 않은 과거 기록을 대화 기억만으로 SQLite에 저장되어 있다고 단정하지 않는다.
+
+Week 2의 SQLite 저장 금지 규칙은 Week 3에서 대체된다.
+Week 3에서는 Pydantic으로 검증된 StructuredRequest를 SQLite에 저장할 수 있다.
+Week 2의 RAG 검색, 외부 멤버 일정 조회, 실제 일정 조율 금지는 계속 유지된다.
+
+SQLite 로컬 저장 상태와 외부 공유 저장소 동기화 상태인 shared_sync는 서로 다른 결과다.
+로컬 저장 성공만으로 공유 동기화까지 성공했다고 단정하지 않는다.
+
+Week 3의 범위는 단일 Agent와 SQLite 기록장이다.
+아직 RAG 검색, embedding 기반 기억 검색 또는 다중 Agent 조율 단계가 아니다.
+"""
+
+# 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내한다.
+WEEK03_TOOL_CALL_PROMPT = """
+Week 3 도구 호출 규칙은 다음과 같다.
+
+저장 요청에서는 어떤 tool도 호출하기 전에 다음 두 경로 중 하나만 선택하고 두 경로를 섞지 않는다.
+
+A. Week 3 기본 영속 저장 경로가 기본값이다.
+일반적인 저장, 추가, 등록, 일정 만들기 요청은 개인 일정도 모두 이 경로를 사용한다.
+extract_schedule_request(query=사용자 원문)를 정확히 한 번 호출하고 그 결과를 기다린 다음,
+반환 JSON의 structured_request 내부 필드만 save_structured_request의 최상위 인자로 전달해 정확히 한 번 호출한다.
+structured_request wrapper 전체를 save_structured_request에 전달하지 않는다.
+ok, tool_name, base_date도 save_structured_request 인자로 전달하지 않는다.
+두 tool은 이 순서로만 호출하며 동시에 또는 병렬로 호출하지 않는다.
+일반 저장 요청에서는 personal_create_schedule을 호출하지 않는다.
+
+B. Week 1 임시 메모리 호환 경로는 예외다.
+사용자가 현재 대화의 Week 1 임시 일정까지 함께 만들어 달라고 명시한 경우에만
+personal_create_schedule을 정확히 한 번 호출한다.
+personal_create_schedule 자체가 Week 1 임시 일정과 Week 3 SQLite 기록을 모두 만들기 때문에
+이 경로에서는 extract_schedule_request와 save_structured_request를 호출 전, 호출 후 또는 병렬로 호출하지 않는다.
+단순한 개인 일정 저장, 추가, 등록, 만들기 요청은 이 호환 경로의 조건이 아니다.
+
+이전 turn, 새 대화 또는 앱 재시작 전의 저장 사실이나 저장 내용을 답할 때는
+list_saved_requests, get_saved_request 또는 personal_list_saved_schedules로 실제 기록을 조회한다.
+personal_list_schedules는 현재 대화의 Week 1 임시 일정 조회이므로 SQLite 영속 기록 확인에 사용하지 않는다.
+저장된 일정 목록이나 내 일정을 보여 달라는 요청에는 personal_list_saved_schedules를 사용한다.
+할 일, 알림을 포함한 전체 구조화 요청 목록에는 list_saved_requests를 사용하고,
+이미 알고 있는 request_id의 원본 요청 한 건에는 get_saved_request를 사용한다.
+현재 Agent 실행에서 방금 성공한 저장, 수정, 삭제는 해당 tool 결과를 근거로 답할 수 있다.
+저장 직후 별도 검증이 필요하면 반환된 request_id로 get_saved_request를 호출한다.
+
+일정을 수정하거나 삭제하기 전에는 personal_list_saved_schedules로 후보와 schedule_id를 먼저 확인한다.
+개인 일정 후보는 kind="personal_schedule"로, 그룹 일정 후보는 kind="group_schedule"로 조회한다.
+kind를 생략하면 개인 일정만 반환되며, 날짜를 알면 date_from과 date_to로 후보 범위를 좁힌다.
+수정에는 personal_update_saved_schedule에 schedule_id=ID를 전달하고,
+삭제에는 personal_delete_saved_schedules에 schedule_ids=[ID]를 전달한다.
+정확한 ID를 확인할 수 있으면 넓은 날짜, 제목 필터보다 우선한다.
+후보가 여러 개면 임의로 고르거나 한꺼번에 변경하지 말고 사용자가 대상을 선택할 수 있게 설명한다.
+
+delete_all=True는 사용자가 저장된 모든 일정을 삭제하겠다고 명확히 요청한 경우에만 사용한다.
+delete_all=True는 개인 일정, 그룹 일정과 일정에 연결된 구조화 요청을 삭제하지만
+todo, reminder와 그 구조화 요청은 삭제하지 않는다.
+일정 수정과 삭제 도구로 todo 또는 reminder까지 변경했다고 말하지 않는다.
+
+일반 저장 결과에서는 ok, request_id, kind, saved_rows를 확인하고,
+already_exists와 shared_sync가 있으면 함께 확인한다.
+personal_create_schedule 결과에서는 최상위 ok와 sqlite_save.ok를 확인하고,
+sqlite_save.already_exists와 sqlite_save.shared_sync가 있으면 함께 확인한다.
+수정 결과에서는 ok, updated_schedule, shared_sync를 확인한다.
+shared_sync가 있으면 내부의 ok, status와 실제로 존재하는 reason, error, error_type, errors를 확인해
+성공, 실패, 건너뜀을 구분한다.
+shared_sync=None이거나 필드가 없는 결과를 공유 동기화 실패라고 단정하지 않는다.
+삭제 결과에서는 ok, deleted_count, deleted를 확인하며, 결과에 없는 shared_sync 상태를 추측하지 않는다.
+
+실패한 호출을 성공했다고 말하지 않는다.
+이미 성공한 저장, 수정, 삭제 tool을 같은 turn에서 반복 호출하지 않는다.
+"""
 
 
 # [3주차 수강생 구현 가이드]
@@ -277,9 +352,16 @@ class SaveStructuredRequestInput(StructuredRequest):
 
         # Week 1 호환 ID가 wrapper 바깥에 있으면 안쪽 요청에 보충한다.
         # 만약 안쪽 요청이 이미 source_schedule_id가 있다면 덮어쓰지는 않는다. (이거 예외처리)
+        inner_source_schedule_id = normalized.get("source_schedule_id")
         if (
             outer_source_schedule_id is not None
-            and normalized.get("source_schedule_id") is None
+            and (
+                inner_source_schedule_id is None
+                or (
+                    isinstance(inner_source_schedule_id, str)
+                    and not inner_source_schedule_id.strip()
+                )
+            )
         ):
             normalized["source_schedule_id"] = outer_source_schedule_id
 
@@ -523,7 +605,7 @@ def personal_create_schedule(
     end_time: str = "미정",
     attendees: list[str] | None = None,
 ) -> str:
-    """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
+    """Week 1 임시 메모리 호환 전용 도구입니다. 사용자가 임시 일정도 함께 만들라고 명시한 경우에만 호출하며 SQLite에도 저장합니다."""
 
     # Week 1의 일정 생성 규칙, 임시 ID, session scope를 복제하지 않고 이미 검증된 원래 Week 1 tool을 정확히 한 번 호출하게 한다.
     week01_result_text = week01_personal_create_schedule.invoke(
@@ -869,11 +951,31 @@ def week03_prompt_parts() -> list[str]:
     """1~3주차 system prompt 조각을 누적합니다."""
 
     return [
+        # Week 1과 Week 2에서 학습한 자연어 구조화 규칙을 그대로 이어받는다.
         *week02_prompt_parts(),
-        # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
+
+        # SQLite가 대화 메모리와 다른 영속 기록장이라는 점을 설명한다.
         SQLITE_MEMORY_PROMPT,
+
+        # 저장·조회·수정·삭제 도구의 올바른 호출 순서를 설명한다.
         WEEK03_TOOL_CALL_PROMPT,
-        # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+
+        f"""
+        너는 Nana 일정 앱의 Week 3 단일 Agent다.
+
+        현재 앱 기준일은 {current_app_date_iso()}이다.
+        상대 날짜는 이 기준일로 해석하고, 확실하지 않은 날짜나 시간을 추측하지 않는다.
+
+        Week 3에서는 자연어 구조화, Pydantic 입력 검증, SQLite 저장과 조회·수정·삭제까지 수행한다.
+        이 단계에서는 RAG, embedding 검색, 다중 Agent, 외부 멤버 일정 조율을 구현하지 않는다.
+
+        system prompt는 모델의 도구 선택을 유도하는 행동 규칙이며 데이터 안전성을 단독으로 보장하지 않는다.
+        Pydantic은 입력 모양과 타입을, Python guard는 조건 없는 삭제 차단을,
+        AppSQLiteStore는 SQL 삭제 범위를 통제한다.
+        사용자가 전체 일정 삭제를 명시했는지는 현재 Agent 지시와 tool 선택에 의존한다.
+        더 강한 보장이 필요하면 별도의 런타임 확인 절차를 사용한다.
+        모델의 판단, temperature 또는 다른 sampling 설정을 데이터 안전성의 보안 경계로 간주하지 않는다.
+        """,
     ]
 
 
@@ -884,8 +986,11 @@ def build_week03_agent() -> object:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     global _WEEK03_AGENT
     if _WEEK03_AGENT is None:
-        # TODO: chat_model(), week03_tools(), week03_system_prompt()로 Week 3 LangChain agent를 생성하세요.
-        ...
+        _WEEK03_AGENT = create_agent(
+            model=chat_model(),
+            tools=week03_tools(),
+            system_prompt=week03_system_prompt(),
+        )
     return _WEEK03_AGENT
 
 
