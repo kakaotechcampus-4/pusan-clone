@@ -426,9 +426,60 @@ def _delete_saved_schedules(
 ) -> dict[str, Any]:
     """삭제 guard와 DB 호출을 한 곳에 둡니다."""
 
-    # TODO: 삭제 조건이 없으면 거부하고, delete_all 또는 명시 필터에 맞는 store 메서드를 호출하세요.
-    # TODO: deleted_count, filters, deleted가 포함된 tool 결과 dict를 반환하세요.
-    ...
+    # delete_all=True라서 다른 필터가 무시되더라도 원래 입력은 filters에 보존한다.
+    filters = {
+        "schedule_ids": schedule_ids,
+        "date": date,
+        "title": title,
+        "start_time": start_time,
+        "time_unspecified": time_unspecified,
+        "delete_all": delete_all,
+    }
+
+    # 빈 ID 목록과 빈 문자열은 실제 삭제 범위를 제한하지 못하므로 삭제 조건으로 인정하지 않는다.
+    # time_unspecified=True는 시간이 없는 일정을 찾는 명시적인 조건이다.
+    has_filter = any(
+        (
+            bool(schedule_ids),
+            bool(date),
+            bool(title),
+            bool(start_time),
+            time_unspecified,
+        )
+    )
+
+    # 전체 삭제도 아니고 명시적인 필터도 없으면 위험한 무조건 삭제를 시작하지 않는다.
+    if not delete_all and not has_filter:
+        return tool_result(
+            "personal_delete_saved_schedules",
+            ok=False,
+            error="삭제 조건이 없습니다.",
+            filters=filters,
+            deleted_count=0,
+            deleted=[],
+        )
+
+    # delete_all은 다른 필터보다 우선한다.
+    # title이나 schedule_ids가 함께 전달되어도 전체 일정 삭제 Store 메서드만 호출한다.
+    if delete_all:
+        deleted = store.delete_all_schedules()
+    else:
+        # limit은 따로 전달하지 않아 Store의 현재 기본 상한인 100개를 유지한다.
+        deleted = store.delete_schedules_by_filter(
+            schedule_ids=schedule_ids,
+            date=date,
+            title=title,
+            start_time=start_time,
+            time_unspecified=time_unspecified,
+        )
+
+    # 유효한 조건으로 실행했지만 일치하는 일정이 없는 것은 오류가 아니다.
+    return tool_result(
+        "personal_delete_saved_schedules",
+        filters=filters,
+        deleted_count=len(deleted),
+        deleted=deleted,
+    )
 
 
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
@@ -682,8 +733,20 @@ def delete_saved_schedules_dict(
 ) -> dict[str, Any]:
     """tool invoke 없이 저장 일정 삭제 로직을 직접 호출합니다."""
 
-    # TODO: 전달받은 store 또는 기본 store로 _delete_saved_schedules(...)를 호출하세요.
-    ...
+    # 테스트나 내부 호출에서 Store를 전달했다면 그 인스턴스를 그대로 사용한다.
+    # 전달하지 않았을 때만 애플리케이션 기본 Store를 생성한다.
+    store = app_store if app_store is not None else _store()
+
+    # 삭제 조건 검사와 실제 Store 분기는 공통 함수 한 곳에 위임한다.
+    return _delete_saved_schedules(
+        store=store,
+        schedule_ids=schedule_ids,
+        date=date,
+        title=title,
+        start_time=start_time,
+        time_unspecified=time_unspecified,
+        delete_all=delete_all,
+    )
 
 
 @tool(args_schema=SavedScheduleUpdateInput)
@@ -763,8 +826,19 @@ def personal_delete_saved_schedules(
 ) -> str:
     """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다."""
 
-    # TODO: _delete_saved_schedules(...)에 삭제 조건을 전달하고 결과를 JSON 문자열로 반환하세요.
-    ...
+    # 공통 삭제 정책에 기본 Store와 Agent가 전달한 모든 조건을 넘긴다.
+    # 공통 함수가 이미 tool_result 형식을 만들었으므로 JSON 문자열로만 변환한다.
+    result = _delete_saved_schedules(
+        store=_store(),
+        schedule_ids=schedule_ids,
+        date=date,
+        title=title,
+        start_time=start_time,
+        time_unspecified=time_unspecified,
+        delete_all=delete_all,
+    )
+
+    return json_payload(result)
 
 
 def week03_tools() -> list[Any]:
