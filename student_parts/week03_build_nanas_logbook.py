@@ -249,6 +249,7 @@ def tool_response(func : Callable[..., dict[str, Any]]):
     @wraps(func)
     def wrapper(*args, **kwargs) -> str:
         res = func(*args, **kwargs)
+        res.setdefault("ok", True)
         res["tool_name"] = func.__name__
         return json_payload(res)
     
@@ -377,10 +378,7 @@ def save_structured_request(
     res = _store().save_structured_request(saving_data)
 
     # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
-    return {
-        "ok" : True,
-        "result" : res
-    }
+    return { "result" : res }
 
 
 @tool(args_schema=SavedRequestListInput)
@@ -399,10 +397,7 @@ def list_saved_requests(
         date_to=date_to
     )
 
-    return {
-        "ok" : True,
-        "rows" : rows or []
-    }
+    return { "rows" : rows or [] }
 
 
 @tool(args_schema=SavedRequestGetInput)
@@ -434,7 +429,6 @@ def personal_list_saved_schedules(
 
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
     return {
-        "ok" : True,
         "filters" : filters,
         "schedules" : schedules
     }
@@ -531,7 +525,11 @@ def build_week03_agent() -> object:
     global _WEEK03_AGENT
     if _WEEK03_AGENT is None:
         # TODO: chat_model(), week03_tools(), week03_system_prompt()로 Week 3 LangChain agent를 생성하세요.
-        ...
+        _WEEK03_AGENT = create_agent(
+            model=chat_model(),
+            tools=week03_tools(),
+            system_prompt=week03_system_prompt()
+        )
     return _WEEK03_AGENT
 
 
