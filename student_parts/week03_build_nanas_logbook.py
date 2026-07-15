@@ -444,8 +444,11 @@ def personal_create_schedule(
         "end_time" : end_time,
         "attendees" : attendees
     }
-    res = week01_personal_create_schedule.invoke(req)
-    structured_req = extract_structured_request(res)
+    raw = week01_personal_create_schedule.invoke(req)
+    week01_result = json.loads(raw)
+    structured_req = structured_request_from_week01_schedule(
+        week01_result["create_schedule"]
+    )
     sqlite_save = _store().save_structured_request(structured_req)
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
     return json_payload(tool_result(
