@@ -500,12 +500,23 @@ def week03_system_prompt() -> str:
 def week03_prompt_parts() -> list[str]:
     """1~3주차 system prompt 조각을 누적합니다."""
 
+    today = current_app_date_iso()
+
     return [
         *week02_prompt_parts(),
         # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
+        # WEEK03_TOOL_CALL_PROMPT 에 이미 있으므로 생략
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+        f"""- [금지] Week 3에서는 위 Week 2의 "생성 tool 호출 금지", "SQLite 저장 금지" 지시를 따르지 않는다.
+        - [금지] 이번 주차 범위는 SQLite 기록장의 저장/조회/수정/삭제까지다. 다른 주차에 진행하는 RAG 검색/요약/추천/외부 멤버 일정 조율 등은 하지 않는다. 
+        - Week 3은 위 SQLite 저장/조회/수정/삭제 tool을 적극적으로 호출한다.
+        - 오늘 날짜는 {today}이다. "내일", "다음 주 화요일" 같은 상대 표현은 이 날짜를 기준으로 YYYY-MM-DD로 바꿔 tool 인자에 넣는다.
+        - 사용자 요청을 먼저 저장/조회/수정/삭제 중 하나의 의도로 분류하고, 그 의도에 맞는 흐름 하나만 실행한다. 사용자의 한 요청에 여러 흐름을 섞지 않는다.
+        - 후보가 여러 개거나 하나로 특정되지 않는 등 수정, 삭제 대상이 모호할 때는 절대로 임의로 실행하지 않는다. 대신 personal_list_saved_schedules 결과를 보여주며 어떤 일정인지 사용자에게 먼저 확인한다.
+        - 명시적인 조건 없이 전체 삭제(delete_all)는 사용자가 분명하게 요청했을 때만 한다.
+        - 답변은 tool이 실제로 반환한 결과(rows/row/schedules)만 근거로 만든다. 저장과 조회 결과를 지어내지 않는다."""
     ]
 
 
@@ -517,7 +528,11 @@ def build_week03_agent() -> object:
     global _WEEK03_AGENT
     if _WEEK03_AGENT is None:
         # TODO: chat_model(), week03_tools(), week03_system_prompt()로 Week 3 LangChain agent를 생성하세요.
-        ...
+        _WEEK03_AGENT = create_agent(
+            model=chat_model(),
+            tools=week03_tools(),
+            system_prompt=week03_system_prompt(),
+        )
     return _WEEK03_AGENT
 
 
