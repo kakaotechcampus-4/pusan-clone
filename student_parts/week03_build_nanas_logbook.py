@@ -28,10 +28,10 @@ from student_parts.week02_structure_natural_language_requests import (
 _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = "이제 일정을 SQLite에 저장/조회 할 수 있도록, 영속합니다."
+SQLITE_MEMORY_PROMPT = "일정, 할 일, 알림은 SQLite에 저장되어 새 대화에서도 유지됩니다. 과거 일정을 물으면 반드시 조회 tool을 사용해서 DB를 조회해 대답하세요."
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = "tool을 구조화 -> 저장 -> 조회/수정/삭제 순으로 작성합니다."
+WEEK03_TOOL_CALL_PROMPT = "구조화는 StructuredRequest 형식에 맞춰서 구조화합니다. 저장 요청은 extract_schedule_request로 구조화한 뒤, 그 필드를 그대로 save_structured_request에 넘긴다. 삭제는 personal_list_saved_schedules로 후보를 확인한 뒤 실행합니다."
 
 
 # [3주차 수강생 구현 가이드]
