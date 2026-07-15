@@ -69,21 +69,90 @@ WEEK03_TOOL_CALL_PROMPT = ""
 #      - @tool(args_schema=SaveStructuredRequestInput)으로 Week 2 구조화 결과를 검증합니다.
 #      - tool 본문에서는 Pydantic class를 다시 만들지 말고, 함수 인자로 들어온 값을 바로 저장 dict로 정리합니다.
 #      - 자연어 문자열이나 ok/tool_name/base_date wrapper를 직접 저장하지 않습니다.
-#
+@tool(args_schema=SaveStructuredRequestInput)
+def save_structured_request(
+    kind: RequestKind = "unknown",
+    title: str | None = None,
+    date: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    members: list[str] | None = None,
+    priority: str | None = None,
+    reason: str | None = None,
+    original_text: str = "",
+    source_schedule_id: str | None = None,
+) -> str:
+    """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
+
+    payload = {
+        "kind": kind,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "members": members or [],
+        "priority": priority,
+        "reason": reason,
+        "original_text": original_text,
+        "source_schedule_id": source_schedule_id,
+    }
+    # None 값 제외 (members는 위에서 []로 이미 처리)
+    payload = {k: v for k, v in payload.items() if v is not None}
+    result = _store().save_structured_request(payload)
+    return json_payload(tool_result("save_structured_request", **result))
 #   2. list_saved_requests / get_saved_request
 #      - list는 kind/date_from/date_to 필터를 AppSQLiteStore.list_saved_requests(...)에 그대로 넘깁니다.
 #      - get은 request_id 하나로 단건 조회합니다.
 #      - 조회 결과가 없어도 예외를 던지지 말고 rows=[] 또는 row=None 형태를 유지합니다.
-#
+@tool(args_schema=SavedRequestListInput)
+def list_saved_requests(
+    kind: RequestKind | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> str:
+    """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
+
+    rows = _store().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)
+    return json_payload(tool_result("list_saved_requests", rows=rows))
+
+
+@tool(args_schema=SavedRequestGetInput)
+def get_saved_request(request_id: str) -> str:
+    """request_id로 구조화 요청 행 하나를 조회합니다."""
+
+    row = _store().get_saved_request(request_id)
+    return json_payload(tool_result("get_saved_request", row=row))
 #   3. personal_list_saved_schedules
 #      - 저장된 일정 목록을 반환해 "내 일정 보여줘" 같은 조회 질문과 이후 수정/삭제 후보 확인에 씁니다.
 #      - 날짜가 명확한 조회는 date_from/date_to로 범위를 좁히고, 너무 많은 row가 들어가지 않게 limit을 사용합니다.
-#
+@tool(args_schema=SavedScheduleListInput)
+def personal_list_saved_schedules(
+    limit: int = 50,
+    kind: RequestKind | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> str:
+    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+
+    effective_kind = kind or "personal_schedule"
+    schedules = _store().list_schedules(
+        limit=limit,
+        kind=effective_kind,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    filters = {
+        "kind": effective_kind,
+        "date_from": date_from,
+        "date_to": date_to,
+        "limit": limit,
+    }
+    return json_payload(tool_result("personal_list_saved_schedules", filters=filters, schedules=schedules))
 # 추가 과제 구현 대상
 #   1. personal_update_saved_schedule
 #      - AppSQLiteStore.update_schedule(...) 결과를 JSON 응답으로 완성하고, 공유 일정 복사본 동기화 결과(shared_sync)도 함께 반환합니다.
 #      - None으로 들어온 필드는 "수정하지 않음"이라는 뜻입니다. ID를 못 찾으면 ok=False로 답합니다.
-#
+# 빠른시일 내에 구현해 보겠습니다.
 #   2. personal_delete_saved_schedules
 #      - schedule_ids, date, title, start_time, time_unspecified, delete_all 조건을 받습니다.
 #      - 조건 없이 삭제하지 않도록 _delete_saved_schedules(...)에서 안전 규칙을 확인합니다.
