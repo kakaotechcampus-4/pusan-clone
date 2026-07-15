@@ -387,26 +387,23 @@ def save_structured_request(
     reason: str | None = None,
     original_text: str = "",
     source_schedule_id: str | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
     # TODO: 검증된 함수 인자를 저장 dict로 만들고 None 값을 제외한 뒤 SQLite에 저장하세요.
     saving_data = {
-        "kind" : kind,
-        "title" : title,
-        "date" : date,
-        "start_time" : start_time,
-        "end_time" : end_time,
-        "members" : members,
-        "priority" : priority,
-        "reason" : reason,
-        "original_text" : original_text,
-        "source_schedule_id" : source_schedule_id
-    }
-    saving_data = {
-        k : saving_data[k] 
-        for k in saving_data
-        if saving_data[k] is not None
+        k : v for k, v in {
+            "kind" : kind,
+            "title" : title,
+            "date" : date,
+            "start_time" : start_time,
+            "end_time" : end_time,
+            "members" : members,
+            "priority" : priority,
+            "reason" : reason,
+            "original_text" : original_text,
+            "source_schedule_id" : source_schedule_id
+        }.items() if v is not None
     }
     res = _store().save_structured_request(saving_data)
 
