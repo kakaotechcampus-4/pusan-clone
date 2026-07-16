@@ -235,47 +235,68 @@ class SaveStructuredRequestInput(StructuredRequest):
     @model_validator(mode="before")
     @classmethod
     def unwrap_legacy_payload(cls, value: Any) -> Any:
-        """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
+        """예전 trace의 payload wrapper를 저장 입력 형태로 정규화합니다."""
 
-        # TODO: StructuredRequest와 예전 payload/structured_request wrapper를 저장 입력 형태로 정규화하세요.
-        # 입력 정규화 및 SQLite 저장 helper
         if isinstance(value, StructuredRequest):
             return value.model_dump()
+
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return value
 
         if not isinstance(value, dict):
             return value
 
-        data = dict(value)
-        field_names = set(cls.model_fields)
+        outer = dict(value)
+        payload = outer.get("payload")
 
-        while isinstance(data, dict):
-            wrapped = next(
-                (
-                    data.get(key)
-                    for key in ("payload", "structured_request")
-                    if key in data
-                ),
-                None,
-            )
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = None
 
-            if isinstance(wrapped, str):
-                try:
-                    wrapped = json.loads(wrapped)
-                except json.JSONDecodeError:
-                    break
+        if isinstance(payload, StructuredRequest):
+            payload = payload.model_dump()
 
-            if isinstance(wrapped, StructuredRequest):
-                wrapped = wrapped.model_dump()
+        container = dict(payload) if isinstance(payload, dict) else outer
+        request = container.get("structured_request")
 
-            if not isinstance(wrapped, dict):
-                break
+        if isinstance(request, str):
+            try:
+                request = json.loads(request)
+            except json.JSONDecodeError:
+                request = None
 
-            outer_fields = {
-                key: item for key, item in data.items() if key in field_names
-            }
-            data = {**wrapped, **outer_fields}
+        if isinstance(request, StructuredRequest):
+            request = request.model_dump()
 
-        return data
+        if isinstance(request, dict):
+            normalized_request = dict(request)
+
+            if "source_schedule_id" not in normalized_request:
+                source_schedule_id = container.get("source_schedule_id") or outer.get(
+                    "source_schedule_id"
+                )
+                if source_schedule_id:
+                    normalized_request["source_schedule_id"] = source_schedule_id
+
+            return normalized_request
+
+        if isinstance(payload, dict):
+            normalized_payload = dict(payload)
+
+            if (
+                outer.get("source_schedule_id")
+                and "source_schedule_id" not in normalized_payload
+            ):
+                normalized_payload["source_schedule_id"] = outer["source_schedule_id"]
+
+            return normalized_payload
+
+        return outer
 
 
 def _save_input_from(
@@ -283,12 +304,8 @@ def _save_input_from(
 ) -> SaveStructuredRequestInput:
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
-    # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
     if isinstance(value, SaveStructuredRequestInput):
         return value
-
-    if isinstance(value, StructuredRequest):
-        return SaveStructuredRequestInput.model_validate(value.model_dump())
 
     if isinstance(value, str):
         try:
