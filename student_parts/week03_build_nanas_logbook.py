@@ -440,15 +440,28 @@ def structured_request_from_week01_schedule(
 ) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
-    # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
+    title = str(schedule.get("title") or "제목 없는")
+    date = str(schedule.get("date") or "날짜 미정")
+    start_time = str(schedule.get("start_time") or "시간 미정")
+    end_time = schedule.get("end_time")
+    members = schedule.get("attendees") or []
+
+    if end_time and end_time != "미정":
+        date_time_text = f"{date} {start_time}부터 {end_time}까지"
+    else:
+        date_time_text = f"{date} {start_time}에"
+
+    member_text = f"{', '.join(members)}와 함께 " if members else ""
+    original_text = f"{date_time_text} {member_text}{title} 일정을 만들어줘."
+
     return SaveStructuredRequestInput(
         kind="personal_schedule",
         title=schedule.get("title"),
         date=schedule.get("date"),
         start_time=schedule.get("start_time"),
-        end_time=schedule.get("end_time"),
-        members=schedule.get("attendees") or [],
-        original_text=json.dumps(schedule, ensure_ascii=False),
+        end_time=end_time,
+        members=members,
+        original_text=original_text,
         source_schedule_id=schedule.get("id") or schedule.get("schedule_id"),
     )
 
