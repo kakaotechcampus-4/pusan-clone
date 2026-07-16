@@ -132,20 +132,37 @@ class StructuredRequestBatch(BaseModel):
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
 
-    ...
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
     """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    # Chat model이 StructuredRequest로 구조화하도록 예약합니다.
+    structurer = chat_model().with_structured_output(StructuredRequest)
+    # 구조화 시 요청 & 제약 조건을 LLM에 전달합니다.
+    result = structurer.invoke([
+        ("system", "kind가 personal_schedule, group_schedule, todo, reminder, unknown 중 하나가 되도록 하고, 어느 것으로 분류해야 할 지 정하지 못하겠으면 unknown으로 하세요. title/date/start_time/end_time/members/priority/reason/original_text 필드를 채우도록 하세요.",
+         "현재 시간의 경우 current_app_date_iso()를 호출하여 기준 날짜를 확인하세요. date/start_time/end_time은 확실할 때만 YYYY-MM-DD, HH:MM 형식으로 채우세요. 모르는 값은 None 또는 빈 list로 두세요.",
+         "{"
+         "name: current_app_date_iso",
+         "description: 현재 날짜를 ISO 8601 형식으로 반환하는 함수입니다. 상대적인 날짜 표현을 해석할 때 해당 함수를 호출하여 기준 날짜를 확인하여야 합니다. 예: 2026-07-10, 2026-05-05",
+            "parameters: { type: object, properties: {}, required: [] }",
+         "}"),
+        ("human", text)
+    ])
+    result.original_text = text
+    return result
 
-    ...
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
     """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
-
-    ...
+    return json.dumps(
+        ok=True,
+        tool_name=extract_schedule_request.__name__,
+        base_date=current_app_date_iso(),
+        structured_request=extract_structured_request(query)
+    )
 
 
 def week02_tools() -> list[Any]:
