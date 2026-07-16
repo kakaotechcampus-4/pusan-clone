@@ -323,14 +323,12 @@ def save_structured_request_payload(
 ) -> dict[str, Any]:
     """검증된 structured request를 앱 DB에 저장합니다."""
 
-    # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
     validated = _save_input_from(request)
-    structured_request = validated.model_dump(exclude_none=True)
-    saved = (store or _store()).save_structured_request(structured_request)
+    payload = validated.model_dump(exclude_none=True)
+    saved = (store or _store()).save_structured_request(payload)
 
     return tool_result(
         "save_structured_request",
-        structured_request=structured_request,
         **saved,
     )
 
