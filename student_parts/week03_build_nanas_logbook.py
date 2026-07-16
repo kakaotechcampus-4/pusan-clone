@@ -390,23 +390,25 @@ def _delete_saved_schedules(
 ) -> dict[str, Any]:
     """삭제 guard와 DB 호출을 한 곳에 둡니다."""
 
-    # TODO: 삭제 조건이 없으면 거부하고, delete_all 또는 명시 필터에 맞는 store 메서드를 호출하세요.
-    # TODO: deleted_count, filters, deleted가 포함된 tool 결과 dict를 반환하세요.
-    filters = {
-        "schedule_ids": schedule_ids,
-        "date": date,
-        "title": title,
-        "start_time": start_time,
-        "time_unspecified": time_unspecified,
-        "delete_all": delete_all,
-    }
-    has_filter = bool(schedule_ids) or any([date, title, start_time, time_unspecified])
+    filters: dict[str, Any] = {}
 
-    if not delete_all and not has_filter:
+    if schedule_ids:
+        filters["schedule_ids"] = schedule_ids
+    if date:
+        filters["date"] = date
+    if title:
+        filters["title"] = title
+    if start_time:
+        filters["start_time"] = start_time
+    if time_unspecified:
+        filters["time_unspecified"] = True
+
+    if not delete_all and not filters:
         return tool_result(
             "personal_delete_saved_schedules",
             ok=False,
             error="삭제할 일정 ID 또는 날짜·제목·시간 조건이 필요합니다.",
+            delete_all=False,
             filters=filters,
             deleted_count=0,
             deleted=[],
@@ -426,6 +428,8 @@ def _delete_saved_schedules(
 
     return tool_result(
         "personal_delete_saved_schedules",
+        ok=True,
+        delete_all=delete_all,
         filters=filters,
         deleted_count=len(deleted),
         deleted=deleted,
