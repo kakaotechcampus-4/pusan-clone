@@ -228,6 +228,7 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
     # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
+
     ...
 
 
@@ -239,6 +240,7 @@ def save_structured_request_payload(
     """검증된 structured request를 앱 DB에 저장합니다."""
 
     # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
+    
     ...
 
 
@@ -341,9 +343,24 @@ def save_structured_request(
 ) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
-    # TODO: 검증된 함수 인자를 저장 dict로 만들고 None 값을 제외한 뒤 SQLite에 저장하세요.
-    # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
-    ...
+    save_dict = {
+        "kind": kind,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "members": members,
+        "priority": priority,
+        "reason": reason,
+        "original_text": original_text,
+        "source_schedule_id": source_schedule_id,
+    }
+    save_dict = {k: v for k, v in save_dict.items() if v is not None}
+    store = _store()
+    
+    result = store.save_structured_request(save_dict)
+    return json_payload(tool_result("save_structured_request", ok=True, **result))
+    
 
 
 @tool(args_schema=SavedRequestListInput)
@@ -353,17 +370,17 @@ def list_saved_requests(
     date_to: str | None = None,
 ) -> str:
     """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
-
-    # TODO: kind/date_from/date_to 필터로 저장 요청을 조회하고 rows를 JSON 문자열로 반환하세요.
-    ...
+    store = _store()
+    rows = store.list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)
+    return json_payload(tool_result("list_saved_requests", ok=True, rows=rows))
 
 
 @tool(args_schema=SavedRequestGetInput)
 def get_saved_request(request_id: str) -> str:
     """request_id로 구조화 요청 행 하나를 조회합니다."""
-
-    # TODO: request_id로 단건 조회하고, 결과가 없을 때도 row=None을 유지해 JSON 문자열로 반환하세요.
-    ...
+    store = _store()
+    row = store.get_saved_request(request_id=request_id)
+    return json_payload(tool_result("get_saved_request", ok=True, row=row))
 
 
 @tool(args_schema=SavedScheduleListInput)
@@ -374,10 +391,11 @@ def personal_list_saved_schedules(
     date_to: str | None = None,
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+    personal_kind = kind or "personal_schedule"
+    store = _store()
+    schedules = store.list_schedules(kind=personal_kind, date_from=date_from, date_to=date_to, limit=limit)
+    return json_payload(tool_result("personal_list_saved_schedules", ok=True, filters={"kind": personal_kind, "date_from": date_from, "date_to": date_to}, schedules=schedules))
 
-    # TODO: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
-    # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
-    ...
 
 
 def delete_saved_schedules_dict(
@@ -469,9 +487,12 @@ def build_week03_agent() -> object:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     global _WEEK03_AGENT
     if _WEEK03_AGENT is None:
-        # TODO: chat_model(), week03_tools(), week03_system_prompt()로 Week 3 LangChain agent를 생성하세요.
-        ...
-    return _WEEK03_AGENT
+        _WEEK03_AGENT = create_agent(
+            model=chat_model(),
+            tools=week03_tools(),
+            system_prompt=week03_system_prompt(),
+        )
+    return _WEEK03_AGENT  
 
 
 def build_week_agent() -> object:
