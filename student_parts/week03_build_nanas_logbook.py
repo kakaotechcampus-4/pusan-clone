@@ -498,12 +498,11 @@ def personal_create_schedule(
     sqlite_save = save_structured_request_payload(structured_request)
 
     return json_payload(
-        tool_result(
-            "personal_create_schedule",
-            created_schedule=schedule,
-            structured_request=structured_request.model_dump(exclude_none=True),
-            sqlite_save=sqlite_save,
-        )
+        {
+            **created,
+            "structured_request": structured_request.model_dump(exclude_none=True),
+            "sqlite_save": sqlite_save,
+        }
     )
 
 
