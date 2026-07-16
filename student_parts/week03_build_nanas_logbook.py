@@ -29,10 +29,12 @@ _WEEK03_AGENT: Any | None = None
 # 영속 메모리 및 도구 호출 규칙 프롬프트 작성
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
 SQLITE_MEMORY_PROMPT = """
-일정, 할 일, 알림은 현재 대화의 임시 메모리만 믿지 말고 SQLite 기록장에서 조회합니다.
-새 대화에서도 이전에 저장한 기록은 personal_list_saved_schedules, list_saved_requests,
-get_saved_request 도구로 확인할 수 있습니다.
-저장된 일정의 수정이나 삭제 전에는 먼저 목록을 조회해 정확한 schedule_id와 후보를 확인합니다.
+Week 3 이상에서는 일정, 할 일, 알림을 현재 대화의 임시 메모리만 믿지 말고
+SQLite 기록장에서 조회합니다.
+새 대화에서도 이전에 저장한 기록은 personal_list_saved_schedules,
+list_saved_requests, get_saved_request 도구로 확인할 수 있습니다.
+저장된 일정의 수정이나 삭제 전에는 먼저 목록을 조회해
+정확한 schedule_id와 후보를 확인합니다.
 """.strip()
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
