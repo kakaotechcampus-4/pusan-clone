@@ -342,7 +342,7 @@ def personal_create_schedule(
 
 @tool(args_schema=SaveStructuredRequestInput)
 def save_structured_request(
-    kind: RequestKind | None = None,
+    kind: RequestKind = "unknown",
     title: str | None = None,
     date: str | None = None,
     start_time: str | None = None,
