@@ -531,7 +531,7 @@ def save_structured_request(
             "date": date,
             "start_time": start_time,
             "end_time": end_time,
-            "members": members,
+            "members": members or [],
             "priority": priority,
             "reason": reason,
             "original_text": original_text,
@@ -541,10 +541,10 @@ def save_structured_request(
     }
 
     saved = _store().save_structured_request(payload)
+
     return json_payload(
         tool_result(
             "save_structured_request",
-            structured_request=payload,
             **saved,
         )
     )
