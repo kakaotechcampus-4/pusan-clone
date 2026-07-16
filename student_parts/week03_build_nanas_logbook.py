@@ -414,25 +414,24 @@ def _delete_saved_schedules(
             deleted=[],
         )
 
-    deleted = (
-        store.delete_all_schedules()
-        if delete_all
-        else store.delete_schedules_by_filter(
+    if delete_all:
+        deleted_rows = store.delete_all_schedules()
+    else:
+        deleted_rows = store.delete_schedules_by_filter(
             schedule_ids=schedule_ids,
             date=date,
             title=title,
             start_time=start_time,
             time_unspecified=time_unspecified,
         )
-    )
 
     return tool_result(
         "personal_delete_saved_schedules",
         ok=True,
         delete_all=delete_all,
         filters=filters,
-        deleted_count=len(deleted),
-        deleted=deleted,
+        deleted_count=len(deleted_rows),
+        deleted=deleted_rows,
     )
 
 
