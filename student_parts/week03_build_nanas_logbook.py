@@ -68,11 +68,32 @@ personal_delete_saved_schedules에는 schedule_ids 또는 사용자가 명시한
 Week 1 호환 personal_create_schedule은 개인 일정 생성과 SQLite 저장을 함께 수행하는 tool이다.
 이 tool을 사용한 경우 같은 일정을 save_structured_request로 다시 저장하여 중복 생성하지 말아라.
 
-Week 3에서 저장된 일정을 조회할 때는 반드시
-personal_list_saved_schedules를 사용한다.
+Week 3에서 사용자가 저장 일정 삭제를 요청하면 예외 없이
+personal_delete_saved_schedules를 사용하여라.
 
-personal_list_schedules는 Week 1의 현재 프로세스 임시 메모리만 조회하므로
-Week 3 저장 일정 조회에는 사용하지 않는다.
+personal_delete_schedule은 Week 1 임시 메모리 전용 도구이므로
+Week 3의 사용자 일정 삭제 요청에는 절대 사용하지 말아라.
+
+personal_create_schedule로 생성한 일정도 SQLite에 저장되므로
+삭제할 때는 personal_delete_saved_schedules를 사용하여라.
+
+삭제 성공 여부는 personal_delete_saved_schedules 결과의
+deleted_count가 1 이상인지 확인하여 판단하여라.
+
+삭제 후 같은 조건으로 personal_list_saved_schedules를 다시 호출하고,
+해당 schedule_id가 목록에서 사라진 것을 확인한 뒤 사용자에게 성공을 알려라.
+
+사용자가 "내 일정", "내일 일정"처럼 일정 종류를 한정하지 않고 조회하면
+personal_list_saved_schedules를 다음 두 종류로 각각 호출하여 결과를 합쳐라.
+
+1. kind="personal_schedule"
+2. kind="group_schedule"
+
+한쪽 결과가 비어 있더라도 다른 종류를 조회하기 전에는
+저장된 일정이 없다고 답하지 말아라.
+
+사용자가 개인 일정이나 그룹 일정을 명시한 경우에는
+해당 kind만 조회하여라.
 """.strip()
 
 
