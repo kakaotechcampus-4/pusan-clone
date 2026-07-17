@@ -39,10 +39,25 @@ SQLITE_MEMORY_PROMPT = (
 WEEK03_TOOL_CALL_PROMPT = (
     "일정/할 일/알림을 저장해야 하는 자연어 요청이 들어오면, 먼저 extract_schedule_request를 호출해 요청을 "
     "구조화하고, 그 결과 JSON의 structured_request 필드 안에 있는 값들을 그대로 save_structured_request의 "
-    "인자로 옮겨 담아 호출해 SQLite에 저장한다. personal_create_schedule / personal_list_schedules / "
-    "personal_delete_schedule은 Week 1부터 있던 현재 대화 전용 임시 메모리 tool이므로, 대화가 끝나도 남아야 "
-    "하는 저장/조회 요청에는 사용하지 않는다. 저장된 일정을 조회할 때는 personal_list_saved_schedules를, "
-    "구조화 요청 원본 기록을 조회할 때는 list_saved_requests / get_saved_request를 사용한다."
+    "인자로 옮겨 담아 호출해 SQLite에 저장한다. personal_list_schedules / personal_delete_schedule은 Week 1부터 "
+    "있던 현재 대화 전용 임시 메모리 tool이므로, 대화가 끝나도 남아야 하는 저장/조회/수정/삭제 요청에는 "
+    "절대 사용하지 않는다. 저장된 일정을 조회할 때는 반드시 personal_list_saved_schedules를, 수정할 때는 "
+    "personal_update_saved_schedule을, 삭제할 때는 반드시 personal_delete_saved_schedules를 사용한다. "
+    "구조화 요청 원본 기록을 조회할 때는 list_saved_requests / get_saved_request를 사용한다. "
+    "personal_list_schedules가 빈 목록을 반환하더라도 그것은 '저장된 일정이 없다'는 뜻이 아니다 — 그 tool은 "
+    "임시 메모리만 보므로 비어 있을 수 있다. 일정이 있는지 없는지, 혹은 삭제할 일정이 있는지 판단할 때는 "
+    "항상 personal_list_saved_schedules로 SQLite를 직접 확인한 뒤에만 결론을 내린다. "
+    "삭제 요청의 대상이 명확하지 않은 경우(예: 특정 일정을 지칭하지 않고 그냥 '삭제해줘', '지워줘'라고만 "
+    "말한 경우)에는, personal_list_saved_schedules로 조회한 전체 목록의 schedule_id를 임의로 모아 바로 "
+    "personal_delete_saved_schedules를 호출하지 않는다. 대신 조회 결과를 사용자에게 보여주고 어떤 일정을 "
+    "삭제할지, 정말 전부 삭제할 것인지 먼저 확인 질문을 던진다. 사용자가 특정 일정을 명확히 지칭했거나 "
+    "'전부/모두 삭제해줘'처럼 전체 삭제 의도를 분명히 확인해 준 경우에만 실제 삭제 tool을 호출한다. "
+    "일정을 조회/수정할 때 사용자가 날짜를 특정하지 않았다면, 임의로 '오늘'로 좁혀서 조회하지 않는다 — "
+    "date_from/date_to 없이 전체를 조회해서 후보를 먼저 확인한다. personal_list_saved_schedules 조회 결과 "
+    "제목이 같은 일정이 여러 개(날짜/시간이 다른 경우 포함) 나오면, 그중 하나를 임의로 골라 "
+    "personal_update_saved_schedule을 바로 호출하지 않는다. 반드시 후보 목록(날짜/시간 포함)을 사용자에게 "
+    "보여주고 어떤 일정을 수정할 것인지 확인받은 뒤에만 수정 tool을 호출한다. 후보가 하나뿐일 때만 확인 "
+    "없이 바로 수정한다."
 )
 
 
@@ -608,8 +623,8 @@ def week03_prompt_parts() -> list[str]:
         WEEK03_TOOL_CALL_PROMPT,
         (
             f"오늘 날짜는 {current_app_date_iso()}이다. 이번 주차에는 Week 1의 임시 메모리 tool과 "
-            "Week 3의 SQLite 영속 tool이 함께 노출되므로, 대화가 끝나도 유지되어야 하는 저장/조회 요청에는 "
-            "반드시 SQLite tool을 선택한다. 저장된 일정의 수정/삭제는 이번 주차 범위 밖이다."
+            "Week 3의 SQLite 영속 tool이 함께 노출되므로, 대화가 끝나도 유지되어야 하는 저장/조회/수정/삭제 "
+            "요청에는 반드시 SQLite tool을 선택한다."
         ),
     ]
 
