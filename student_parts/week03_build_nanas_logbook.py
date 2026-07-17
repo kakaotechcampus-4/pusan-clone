@@ -249,27 +249,30 @@ class SaveStructuredRequestInput(StructuredRequest):
         return value
 
 
-def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str) -> SaveStructuredRequestInput:
-    """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
+def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dict[str, Any]) -> SaveStructuredRequestInput:
+    """dict/StructuredRequest 계열 저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
-    # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
     if isinstance(value, SaveStructuredRequestInput):
         return value
     if isinstance(value, StructuredRequest):
         return SaveStructuredRequestInput(**value.model_dump())
     if isinstance(value, dict):
         return SaveStructuredRequestInput.model_validate(value)
-    if isinstance(value, str):
-        text = value.strip()
-        try:
-            parsed = json.loads(text)
-        except (TypeError, ValueError):
-            parsed = None
-        if isinstance(parsed, dict):
-            return SaveStructuredRequestInput.model_validate(parsed)
-        structured = extract_structured_request(text)
-        return SaveStructuredRequestInput(**structured.model_dump())
     raise ValueError(f"지원하지 않는 request 타입입니다: {type(value)}")
+
+
+def _save_input_from_text(text: str) -> SaveStructuredRequestInput:
+    """JSON 문자열 또는 자연어 문자열 저장 입력을 SaveStructuredRequestInput으로 변환합니다."""
+
+    text = text.strip()
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict):
+        return SaveStructuredRequestInput.model_validate(parsed)
+    structured = extract_structured_request(text)
+    return SaveStructuredRequestInput(**structured.model_dump())
 
 
 def save_structured_request_payload(
@@ -283,10 +286,10 @@ def save_structured_request_payload(
     if request is None:
         raise ValueError("request가 필요합니다.")
 
-    save_input = _save_input_from(request)
+    save_input = _save_input_from_text(request) if isinstance(request, str) else _save_input_from(request)
     active_store = store or _store()
     saved_request = active_store.save_structured_request(save_input.model_dump())
-    return tool_result("save_structured_request_payload", ok=True, saved_request=saved_request)
+    return tool_result("save_structured_request", ok=True, **saved_request)
 
 
 
@@ -413,7 +416,8 @@ def personal_create_schedule(
     schedule = created["created_schedule"]
     save_input = structured_request_from_week01_schedule(schedule)
     store = _store()
-    sqlite_save = store.save_structured_request(save_input.model_dump())
+    save_result = save_structured_request_payload(save_input, store=store)
+    sqlite_save = {k: v for k, v in save_result.items() if k not in ("ok", "tool_name")}
 
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
     return json_payload(
@@ -458,7 +462,7 @@ def save_structured_request(
     store = _store()
     saved = store.save_structured_request(payload)
 
-    return json_payload(tool_result("save_structured_request", ok=True, saved_request=saved))
+    return json_payload(tool_result("save_structured_request", ok=True, **saved))
 
 @tool(args_schema=SavedRequestListInput)
 def list_saved_requests(
@@ -567,7 +571,6 @@ def personal_update_saved_schedule(
     return json_payload(
         tool_result(
             "personal_update_saved_schedule",
-            ok=True,
             updated_schedule=result["schedule"],
             shared_sync=result["shared_sync"],
         )
