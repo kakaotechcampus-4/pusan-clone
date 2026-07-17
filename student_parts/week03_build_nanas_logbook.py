@@ -14,6 +14,7 @@ from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
     personal_create_schedule as week01_personal_create_schedule,
+    personal_delete_schedule as week01_personal_delete_schedule,
     week01_tools,
 )
 from student_parts.week02_structure_natural_language_requests import (
@@ -35,6 +36,7 @@ save_structured_request로 저장한 내용은 새 대화에서도 유지된다.
 # 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내합니다.
 WEEK03_TOOL_CALL_PROMPT = """저장 요청은 먼저 extract_schedule_request로 구조화하고, 반환된 structured_request의 필드를
 save_structured_request에 그대로 전달한다. wrapper 전체나 자연어 원문을 save_structured_request 인자 하나로 넘기지 않는다.
+personal_create_schedule을 호출할 때는 original_text에 사용자의 요청 원문을 그대로 전달한다.
 조회·수정·삭제 전에는 personal_list_saved_schedules로 후보와 schedule_id를 확인한다.
 Week 1의 personal_list_schedules와 personal_delete_schedule은 현재 대화의 임시 메모리만 다루므로 Week 3 조회·삭제에 사용하지 않는다.
 할 일과 알림은 list_saved_requests에 kind=todo 또는 kind=reminder를 전달해 조회한다.
@@ -233,7 +235,13 @@ class SaveStructuredRequestInput(StructuredRequest):
             for key in ("payload", "structured_request"):
                 wrapped = value.get(key)
                 if isinstance(wrapped, (dict, StructuredRequest)):
-                    return wrapped.model_dump() if isinstance(wrapped, StructuredRequest) else wrapped
+                    wrapped_data = wrapped.model_dump() if isinstance(wrapped, StructuredRequest) else dict(wrapped)
+                    outer_data = {
+                        field: field_value
+                        for field, field_value in value.items()
+                        if field not in {"payload", "structured_request"}
+                    }
+                    return {**wrapped_data, **outer_data}
         return value
 
 
@@ -245,10 +253,16 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     if isinstance(value, StructuredRequest):
         return SaveStructuredRequestInput.model_validate(value.model_dump())
     if isinstance(value, str):
+        if not value.strip():
+            raise ValueError("저장할 요청이 비어 있습니다.")
         try:
-            value = json.loads(value)
+            parsed = json.loads(value)
         except json.JSONDecodeError:
             value = extract_structured_request(value)
+        else:
+            if not isinstance(parsed, dict):
+                raise ValueError("저장 요청 JSON은 object 형식이어야 합니다.")
+            value = parsed
     return SaveStructuredRequestInput.model_validate(value)
 
 
@@ -337,14 +351,18 @@ def _delete_saved_schedules(
     return tool_result("personal_delete_saved_schedules", filters=filters, deleted_count=len(deleted), deleted=deleted)
 
 
-def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
+def structured_request_from_week01_schedule(
+    schedule: dict[str, Any],
+    *,
+    original_text: str = "",
+) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
     return SaveStructuredRequestInput(
         kind="personal_schedule", title=schedule.get("title"), date=schedule.get("date"),
         start_time=schedule.get("start_time"), end_time=schedule.get("end_time"),
         members=list(schedule.get("attendees") or []), source_schedule_id=schedule.get("id"),
-        original_text=json.dumps(schedule, ensure_ascii=False),
+        original_text=original_text,
     )
 
 
@@ -355,14 +373,25 @@ def personal_create_schedule(
     start_time: str,
     end_time: str = "미정",
     attendees: list[str] | None = None,
+    original_text: str = "",
 ) -> str:
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
     week01_result = json.loads(week01_personal_create_schedule.invoke({
         "title": title, "date": date, "start_time": start_time, "end_time": end_time, "attendees": attendees
     }))
-    structured = structured_request_from_week01_schedule(week01_result["created_schedule"])
-    sqlite_save = save_structured_request_payload(structured)
+    schedule = week01_result["created_schedule"]
+    try:
+        structured = structured_request_from_week01_schedule(schedule, original_text=original_text)
+        sqlite_save = save_structured_request_payload(structured)
+    except Exception as exc:
+        rollback = json.loads(week01_personal_delete_schedule.invoke({"schedule_id": schedule["id"]}))
+        return json_payload({
+            "ok": False,
+            "tool_name": "personal_create_schedule",
+            "error": f"SQLite 저장 실패: {type(exc).__name__}",
+            "rolled_back": rollback.get("deleted", 0) > 0,
+        })
     return json_payload({**week01_result, "structured_request": structured.model_dump(), "sqlite_save": sqlite_save})
 
 
