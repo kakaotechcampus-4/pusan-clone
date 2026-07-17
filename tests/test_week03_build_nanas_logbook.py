@@ -92,7 +92,12 @@ def test_save_structured_request_payload_with_json_string(store):
 
     assert result["ok"] is True
     assert result["kind"] == "todo"
-    assert result["title"] if "title" in result else True  # title은 raw payload에만 있을 수 있음
+
+    # save_structured_request의 반환에는 title이 없으므로, 실제 저장 여부는 DB 재조회로 확인합니다.
+    saved_row = store.get_saved_request(result["request_id"])
+    assert saved_row is not None
+    assert saved_row["title"] == "장보기"
+    assert saved_row["date"] == "2026-07-19"
 
 
 def test_save_structured_request_payload_with_natural_language(store, monkeypatch):
@@ -218,6 +223,111 @@ def test_delete_saved_schedules_dict_matches_real_tool_name_and_deletes(store):
 
 def test_delete_saved_schedules_dict_without_condition_is_rejected(store):
     result = w3.delete_saved_schedules_dict(app_store=store)
+
+    assert result["ok"] is False
+    assert result["deleted_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 6. 조회 tool: list_saved_requests / get_saved_request / personal_list_saved_schedules
+# ---------------------------------------------------------------------------
+
+
+def test_list_and_get_saved_requests(store):
+    saved = w3.save_structured_request_payload({"kind": "todo", "title": "청소하기", "date": "2026-07-20"}, store=store)
+    w3.save_structured_request_payload({"kind": "reminder", "title": "약 먹기", "date": "2026-07-21"}, store=store)
+
+    listed = json.loads(w3.list_saved_requests.invoke({"kind": "todo"}))
+    assert listed["ok"] is True
+    assert len(listed["rows"]) == 1
+    assert listed["rows"][0]["request_id"] == saved["request_id"]
+
+    fetched = json.loads(w3.get_saved_request.invoke({"request_id": saved["request_id"]}))
+    assert fetched["ok"] is True
+    assert fetched["row"]["title"] == "청소하기"
+
+
+def test_get_saved_request_returns_none_row_when_missing(store):
+    fetched = json.loads(w3.get_saved_request.invoke({"request_id": "req_does_not_exist"}))
+
+    assert fetched["ok"] is True
+    assert fetched["row"] is None
+
+
+def test_personal_list_saved_schedules_defaults_to_personal_schedule_kind(store):
+    json.loads(
+        w3.personal_create_schedule.invoke(
+            {"title": "회의", "date": "2026-07-23", "start_time": "13:00", "attendees": []}
+        )
+    )
+    w3.save_structured_request_payload({"kind": "todo", "title": "관련없는 할일", "date": "2026-07-23"}, store=store)
+
+    listed = json.loads(w3.personal_list_saved_schedules.invoke({}))
+
+    assert listed["ok"] is True
+    assert listed["filters"]["kind"] == "personal_schedule"
+    assert len(listed["schedules"]) == 1
+    assert listed["schedules"][0]["title"] == "회의"
+
+
+# ---------------------------------------------------------------------------
+# 7. 수정 tool: personal_update_saved_schedule
+# ---------------------------------------------------------------------------
+
+
+def test_personal_update_saved_schedule_updates_fields(store):
+    created = json.loads(
+        w3.personal_create_schedule.invoke(
+            {"title": "원래 제목", "date": "2026-07-24", "start_time": "10:00", "attendees": []}
+        )
+    )
+    schedule_id = created["created_schedule"]["id"]
+
+    updated = json.loads(
+        w3.personal_update_saved_schedule.invoke(
+            {"schedule_id": schedule_id, "title": "바뀐 제목", "start_time": "11:00"}
+        )
+    )
+
+    assert updated["ok"] is True
+    assert updated["updated_schedule"]["title"] == "바뀐 제목"
+    assert updated["updated_schedule"]["start_time"] == "11:00"
+    assert updated["updated_schedule"]["date"] == "2026-07-24"  # 지정 안 한 필드는 유지되어야 함
+
+    saved_row = store.get_saved_request(created["sqlite_save"]["request_id"])
+    assert saved_row["title"] == "바뀐 제목"
+
+
+def test_personal_update_saved_schedule_missing_id_returns_ok_false(store):
+    updated = json.loads(w3.personal_update_saved_schedule.invoke({"schedule_id": "sch_missing", "title": "x"}))
+
+    assert updated["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# 8. 삭제 tool 자체: personal_delete_saved_schedules
+# ---------------------------------------------------------------------------
+
+
+def test_personal_delete_saved_schedules_tool_deletes_by_filter(store):
+    json.loads(
+        w3.personal_create_schedule.invoke(
+            {"title": "필터로 지울 일정", "date": "2026-07-25", "start_time": "09:00", "attendees": []}
+        )
+    )
+
+    result = json.loads(w3.personal_delete_saved_schedules.invoke({"date": "2026-07-25"}))
+
+    assert result["ok"] is True
+    assert result["tool_name"] == "personal_delete_saved_schedules"
+    assert result["deleted_count"] == 1
+
+    remaining = json.loads(w3.personal_list_saved_schedules.invoke({"date_from": "2026-07-25", "date_to": "2026-07-25"}))
+    assert remaining["schedules"] == []
+
+
+def test_personal_delete_saved_schedules_tool_rejects_empty_condition(store):
+    result = json.loads(w3.personal_delete_saved_schedules.invoke({}))
 
     assert result["ok"] is False
     assert result["deleted_count"] == 0
