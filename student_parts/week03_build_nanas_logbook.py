@@ -259,7 +259,7 @@ def save_structured_request_payload(
     save_input = _save_input_from(request)
     store = store or _store()
     saved = store.save_structured_request(save_input.model_dump())
-    return tool_result("save_structured_request", saved=saved)
+    return tool_result("save_structured_request", **saved)
     ...
 
 
@@ -430,7 +430,7 @@ def save_structured_request(
     dic = {k: v for k, v in dic.items() if v is not None}
     # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
     result = _store().save_structured_request(dic)
-    return json_payload(tool_result("save_structured_request", save=result))
+    return json_payload(tool_result("save_structured_request", **result))
     ...
 
 
