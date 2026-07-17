@@ -268,7 +268,6 @@ class SaveStructuredRequestInput(StructuredRequest):
             return value
         
         value = value.get("payload", value)
-
         if isinstance(value, dict):
             value = value.get("structured_request", value)
 
@@ -310,7 +309,7 @@ def save_structured_request_payload(
     res = store.save_structured_request(form.model_dump(exclude_none=True))
 
     return tool_result(
-        result=res,
+        saved=res,
         tool_name=_tool_name(save_structured_request)
     )
 
@@ -509,7 +508,7 @@ def save_structured_request(
 
     # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
     return json_payload(tool_result(
-        result=res,
+        saved=res,
         tool_name=_tool_name(save_structured_request)
     ))
 
