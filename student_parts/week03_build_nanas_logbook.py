@@ -399,7 +399,8 @@ def personal_create_schedule(
     })
     created = json.loads(created_raw)
     save_input = structured_request_from_week01_schedule(created["created_schedule"])
-    saved = _store().save_structured_request(save_input.model_dump())
+    payload = save_structured_request_payload(save_input)
+    saved = {i: j for i, j in payload.items() if i not in ("ok", "tool_name")}
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
     return json_payload({
         **created,
