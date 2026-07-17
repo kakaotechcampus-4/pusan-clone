@@ -40,10 +40,6 @@ WEEK03_TOOL_CALL_PROMPT = (
     "먼저 extract_schedule_request로 자연어를 구조화한 뒤, "
     "그 결과를 그대로 save_structured_request 인자로 전달해 저장하세요. "
     "저장된 내용을 조회할 때는 list_saved_requests/get_saved_request/personal_list_saved_schedules를 사용하세요. "
-    "personal_list_schedules와 personal_delete_schedule은 Week 1의 임시 메모리 도구로, "
-    "현재 대화가 끝나면 사라지는 내용만 보여주므로 절대 사용하지 마세요. "
-    "일정을 조회/수정/삭제할 때는 반드시 personal_list_saved_schedules, personal_update_saved_schedule, "
-    "personal_delete_saved_schedules처럼 이름에 saved가 들어간 SQLite 기반 도구만 사용하세요. "
     "personal_list_saved_schedules는 personal_schedule/group_schedule 같은 일정만 보여주므로, "
     "할 일이나 알림을 조회할 때는 list_saved_requests에 kind=todo 또는 kind=reminder를 넘겨서 조회하세요. "
     "일정을 수정하거나 삭제하기 전에는 반드시 personal_list_saved_schedules로 먼저 후보를 조회해 "
@@ -537,8 +533,15 @@ def personal_delete_saved_schedules(
 def week03_tools() -> list[Any]:
     """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
 
+    # Week 3부터는 personal_list_schedules/personal_delete_schedule(Week 1 임시 메모리 조회/삭제)이
+    # personal_list_saved_schedules/personal_delete_saved_schedules(SQLite)로 완전히 대체되므로,
+    # 이름이 비슷한 Week 1 tool을 agent에게 아예 노출하지 않는다. 프롬프트로 "쓰지 마세요"라고
+    # 지시하는 대신, 애초에 호출할 수 없게 만들어 LLM이 잘못된 tool을 고를 여지를 없앤다.
+    superseded_week01_tool_names = {"personal_list_schedules", "personal_delete_schedule"}
     base_tools = [
-        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item for item in week01_tools()
+        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item
+        for item in week01_tools()
+        if _tool_name(item) not in superseded_week01_tool_names
     ]
     return [
         *base_tools,
@@ -569,8 +572,6 @@ def week03_prompt_parts() -> list[str]:
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
         f"오늘 날짜는 {current_app_date_iso()}입니다.",
         "Week 3의 범위는 구조화된 일정/할 일/알림을 SQLite에 저장하고 조회/수정/삭제하는 것까지입니다.",
-        "여러 사람의 일정을 조율하는 기능, 외부 캘린더 동기화 확인, 문서/대화 검색(RAG)은 "
-        "이번 주차 범위가 아니니 시도하지 마세요.",
     ]
 
 
