@@ -31,7 +31,7 @@ _WEEK03_AGENT: Any | None = None
 SQLITE_MEMORY_PROMPT = (
     "Nana가 저장하는 일정/할 일/알림은 이제 SQLite 앱 DB에 영구 저장된다. 이 정보는 현재 대화가 끝나거나 "
     "앱이 재시작되어도 사라지지 않는다. 사용자가 이전에 저장했던 내용을 물어보면 현재 대화의 기억에만 "
-    "의존하지 말고, 반드시 list_saved_requets / get_saved_srequest / personal_list_saved_schedules 같은 "
+    "의존하지 말고, 반드시 list_saved_requests / get_saved_request / personal_list_saved_schedules 같은 "
     "SQLite 조회 tool을 호출해 실제 저장된 값을 확인한 뒤 답한다."
 )
 
@@ -400,7 +400,6 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    kind = kind or "personal_schedule"
     schedules = _store().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to)
     filters = {"kind": kind, "date_from": date_from, "date_to": date_to, "limit": limit}
     return json_payload(tool_result("personal_list_saved_schedules", filters=filters, schedules=schedules))
