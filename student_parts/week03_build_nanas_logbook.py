@@ -362,12 +362,11 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
         try:
             original = value
             value = json.loads(value)
-            if not isinstance(value, dict):
-                raise ValueError(f"'{original}'는 자연어 혹은 요청 json 데이터로 처리할 수 없는 값입니다.")
         except json.JSONDecodeError:
             value = extract_structured_request(value)
-        except ValueError as err:
-            raise err
+        else:
+            if not isinstance(value, dict):
+                raise ValueError(f"'{original}'는 자연어 혹은 요청 json 데이터로 처리할 수 없는 값입니다.")
 
     return SaveStructuredRequestInput.model_validate(value)
 
