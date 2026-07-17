@@ -344,7 +344,7 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
             "date" : schedule["date"],
             "start_time" : schedule["start_time"] ,
             "end_time" : schedule["end_time"] ,
-            "kind" : "personal_schedule" if schedule.get("attendees") is None else "group_schedule",
+            "kind" : "personal_schedule" if not schedule.get("attendees") else "group_schedule",
             "members" : schedule["attendees"]
     }
     
