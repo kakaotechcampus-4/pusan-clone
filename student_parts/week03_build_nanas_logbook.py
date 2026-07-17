@@ -232,15 +232,39 @@ class SaveStructuredRequestInput(StructuredRequest):
     def unwrap_legacy_payload(cls, value: Any) -> Any:
         """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
 
-        # TODO: StructuredRequest와 예전 payload/structured_request wrapper를 저장 입력 형태로 정규화하세요.
-        return value
+        if not isinstance(value, dict):
+            return value
+
+        inner = value.get("payload")
+        if not isinstance(inner, dict):
+            inner = value.get("structured_request")
+        if not isinstance(inner, dict):
+            return value
+
+        rest = {key: val for key, val in value.items() if key not in ("payload", "structured_request")}
+        return {**rest, **inner}
 
 
 def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str) -> SaveStructuredRequestInput:
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
-    # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
-    ...
+    if isinstance(value, SaveStructuredRequestInput):
+        return value
+    if isinstance(value, StructuredRequest):
+        return SaveStructuredRequestInput(**value.model_dump())
+    if isinstance(value, dict):
+        return SaveStructuredRequestInput.model_validate(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return SaveStructuredRequestInput.model_validate(parsed)
+        structured = extract_structured_request(value)
+        return SaveStructuredRequestInput(**structured.model_dump())
+
+    raise TypeError(f"지원하지 않는 저장 입력 타입입니다: {type(value).__name__}")
 
 
 def save_structured_request_payload(
@@ -250,8 +274,10 @@ def save_structured_request_payload(
 ) -> dict[str, Any]:
     """검증된 structured request를 앱 DB에 저장합니다."""
 
-    # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
-    ...
+    save_input = _save_input_from(request)
+    payload = save_input.model_dump(exclude_none=True)
+    saved = (store or _store()).save_structured_request(payload)
+    return tool_result("save_structured_request", **saved)
 
 
 class SavedRequestListInput(BaseModel):
