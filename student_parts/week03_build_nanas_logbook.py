@@ -15,6 +15,7 @@ from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
     personal_create_schedule as week01_personal_create_schedule,
+    personal_delete_schedule as week01_personal_delete_schedule,
     week01_tools,
 )
 from student_parts.week02_structure_natural_language_requests import (
@@ -24,7 +25,6 @@ from student_parts.week02_structure_natural_language_requests import (
     extract_structured_request,
     week02_prompt_parts,
 )
-
 
 _WEEK03_AGENT: Any | None = None
 
@@ -287,10 +287,18 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
         return value
     
     if isinstance(value, str):
+        if len(value.strip()) == 0:
+            raise ValueError("공백 문자열을 요청으로 변환할 수 없습니다.")
+
         try:
+            original = value
             value = json.loads(value)
+            if not isinstance(value, dict):
+                raise ValueError(f"'{original}'는 자연어 혹은 요청 json 데이터로 처리할 수 없는 값입니다.")
         except json.JSONDecodeError:
             value = extract_structured_request(value)
+        except ValueError as err:
+            raise err
 
     return SaveStructuredRequestInput.model_validate(value)
 
@@ -462,10 +470,28 @@ def personal_create_schedule(
     }
     raw = week01_personal_create_schedule.invoke(req)
     week01_result = json.loads(raw)
+    if not week01_result["ok"]:
+        return json_payload(tool_result(
+            ok=False, 
+            tool_name=_tool_name(personal_create_schedule),
+            structured_request={},
+            sqlite_save={}
+        ))
+
     structured_req = structured_request_from_week01_schedule(
         week01_result["created_schedule"]
     )
-    sqlite_save = _store().save_structured_request(structured_req.model_dump())
+    try:
+        sqlite_save = _store().save_structured_request(structured_req.model_dump())
+    except Exception as err: # 어떠한 이유로 위 작업이 실패한 경우
+        week01_personal_delete_schedule.invoke({ "schedule_id" : week01_result["created_schedule"]["id"] })
+        return json_payload(tool_result(
+            ok=False, 
+            tool_name=_tool_name(personal_create_schedule), 
+            structured_request=structured_req.model_dump(),
+            sqlite_save={}
+        ))
+
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
     return json_payload({
         **week01_result,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from sqlite3 import OperationalError
 from types import SimpleNamespace
 from typing import Any
 
@@ -8,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from fixed.runtime_clock import current_app_date_iso
+import student_parts.week01_wake_up_nana as week01
 import student_parts.week03_build_nanas_logbook as week03
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
 from student_parts.week03_build_nanas_logbook import (
@@ -227,6 +229,23 @@ class TestSaveInputFrom:
         assert result.kind == "todo"
         assert result.title == "보고서 작성"
 
+    @pytest.mark.parametrize("value", ["[]", "123", "null"])
+    def test_rejects_values_that_are_neither_natural_language_nor_request_json(self, value):
+        with pytest.raises(ValueError) as exc_info:
+            _save_input_from(value)
+
+        assert str(exc_info.value) == (
+            f"'{value}'는 자연어 혹은 요청 json 데이터로 처리할 수 없는 값입니다."
+        )
+
+    @pytest.mark.parametrize("value", [" ", "", "   ", "\n"])
+    def test_rejects_empty_string(self, value):
+        with pytest.raises(ValueError) as exc_info:
+            _save_input_from("")
+
+        assert str(exc_info.value) == (
+            "공백 문자열을 요청으로 변환할 수 없습니다."
+        )
 
 # ---------------------------------------------------------------------------
 # 4. 저장 helper / save_structured_request tool
@@ -248,7 +267,7 @@ class TestSaveStructuredRequest:
         assert "date" not in saved
         assert result["ok"] is True
         assert result["tool_name"] == "save_structured_request"
-        assert result["result"] == store.save_result
+        assert result["saved"] == store.save_result
 
     def test_payload_helper_uses_default_store(self, monkeypatch):
         store = RecordingStore()
@@ -273,7 +292,7 @@ class TestSaveStructuredRequest:
         assert "date" not in saved
         assert payload["ok"] is True
         assert payload["tool_name"] == "save_structured_request"
-        assert payload["result"] == store.save_result
+        assert payload["saved"] == store.save_result
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +616,133 @@ class TestCompatiblePersonalCreateSchedule:
         assert payload["sqlite_save"] == store.save_result
         assert store.calls[0][0] == "save_structured_request"
         assert isinstance(store.calls[0][1], dict)
+
+    def test_returns_failure_without_sqlite_save_when_week01_create_fails(self, monkeypatch):
+        def fake_week01_create(arguments: dict[str, Any]) -> str:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "tool_name": "personal_create_schedule",
+                },
+                ensure_ascii=False,
+            )
+
+        monkeypatch.setattr(
+            week03,
+            "week01_personal_create_schedule",
+            SimpleNamespace(invoke=fake_week01_create),
+        )
+        monkeypatch.setattr(
+            week03,
+            "_store",
+            lambda: pytest.fail("Week 1 생성 실패 시 SQLite 저장소에 접근하면 안 됩니다."),
+        )
+
+        raw = personal_create_schedule.invoke(
+            {
+                "title": "생성 실패 테스트",
+                "date": "2026-07-17",
+                "start_time": "13:00",
+                "end_time": "14:00",
+                "attendees": [],
+            }
+        )
+        payload = json.loads(raw)
+
+        assert payload == {
+            "ok": False,
+            "tool_name": "personal_create_schedule",
+            "structured_request": {},
+            "sqlite_save": {},
+        }
+
+    def test_compensates_week01_schedule_when_sqlite_save_fails(self, monkeypatch):
+        created_schedule = {
+            "id": "personal_rollback_1",
+            "title": "보상 테스트",
+            "date": "2026-07-17",
+            "start_time": "14:00",
+            "end_time": "15:00",
+            "attendees": [],
+        }
+        delete_calls: list[dict[str, Any]] = []
+
+        def fake_week01_create(arguments: dict[str, Any]) -> str:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "tool_name": "personal_create_schedule",
+                    "created_schedule": created_schedule,
+                },
+                ensure_ascii=False,
+            )
+
+        def fake_week01_delete(arguments: dict[str, Any]) -> str:
+            delete_calls.append(arguments)
+            return json.dumps(
+                {
+                    "ok": True,
+                    "tool_name": "personal_delete_schedule",
+                    "deleted": True,
+                },
+                ensure_ascii=False,
+            )
+
+        class FailingStore:
+            def save_structured_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+                raise OperationalError("SQLite 저장 실패")
+
+        monkeypatch.setattr(
+            week03,
+            "week01_personal_create_schedule",
+            SimpleNamespace(invoke=fake_week01_create),
+        )
+        monkeypatch.setattr(
+            week03,
+            "week01_personal_delete_schedule",
+            SimpleNamespace(invoke=fake_week01_delete),
+        )
+        monkeypatch.setattr(week03, "_store", lambda: FailingStore())
+
+        raw = personal_create_schedule.invoke(
+            {
+                "title": "보상 테스트",
+                "date": "2026-07-17",
+                "start_time": "14:00",
+                "end_time": "15:00",
+                "attendees": [],
+            }
+        )
+        payload = json.loads(raw)
+
+        assert payload["ok"] is False
+        assert payload["tool_name"] == "personal_create_schedule"
+        assert delete_calls == [{"schedule_id": "personal_rollback_1"}]
+
+    def test_sqlite_failure_removes_schedule_from_actual_week01_store(self, monkeypatch):
+        class FailingStore:
+            def save_structured_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+                raise OperationalError("SQLite 저장 실패")
+
+        monkeypatch.setattr(week03, "_store", lambda: FailingStore())
+        schedules_before = list(week01.PERSONAL_SCHEDULES)
+
+        try:
+            raw = personal_create_schedule.invoke(
+                {
+                    "title": "실제 보상 삭제 테스트",
+                    "date": "2026-07-17",
+                    "start_time": "16:00",
+                    "end_time": "17:00",
+                    "attendees": [],
+                }
+            )
+            payload = json.loads(raw)
+
+            assert payload["ok"] is False
+            assert week01.PERSONAL_SCHEDULES == schedules_before
+        finally:
+            week01.PERSONAL_SCHEDULES[:] = schedules_before
 
 
 # ---------------------------------------------------------------------------
