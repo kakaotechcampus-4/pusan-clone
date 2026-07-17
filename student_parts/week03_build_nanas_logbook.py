@@ -12,6 +12,7 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
+    PERSONAL_SCHEDULES,
     join_system_prompt,
     personal_create_schedule as week01_personal_create_schedule,
     week01_tools,
@@ -297,6 +298,15 @@ class SavedScheduleDeleteInput(BaseModel):
     delete_all: bool = False
 
 
+def _sync_temp_memory_deletion(deleted_rows: list[dict[str, Any]]) -> None:
+    # 삭제한 ID
+    removed_ids = {row.get("source_schedule_id") for row in deleted_rows if row.get("source_schedule_id")}
+    if not removed_ids:
+        return
+    # 삭제한 ID를 없애 임시 메모리를 동기화시킴
+    PERSONAL_SCHEDULES[:] = [s for s in PERSONAL_SCHEDULES if s.get("id") not in removed_ids]
+
+
 def _delete_saved_schedules(
     *,
     store: AppSQLiteStore,
@@ -324,6 +334,7 @@ def _delete_saved_schedules(
             time_unspecified=time_unspecified
         )
     )
+    _sync_temp_memory_deletion(deleted)
 
     return tool_result(
         "delete_saved_schedules",
@@ -340,12 +351,12 @@ def _delete_saved_schedules(
         deleted=deleted
     )
 
-def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
+def structured_request_from_week01_schedule(schedule: dict[str, Any], kind: RequestKind) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
     # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
     return SaveStructuredRequestInput(
-        kind=schedule.get("kind", "personal_schedule"),
+        kind=kind,
         title=schedule.get("title"),
         date=schedule.get("date"),
         start_time=schedule.get("start_time"),
@@ -377,21 +388,53 @@ def personal_create_schedule(
             }
         )
     )
-    created_schedule = week01_result["created_schedule"]
-    structured_request = structured_request_from_week01_schedule(created_schedule)
+
     store = _store()
-    store.save_structured_request(structured_request.model_dump())
+
+    # Todo 중복 확인 로직 추가
+    search_todos = store.list_saved_requests(kind="personal_schedule", date_from=date, date_to=date)
+
+    for todo in search_todos:
+        if todo["title"] == title and todo["start_time"] == start_time:
+            return json_payload(
+                tool_result(
+                    "personal_create_schedule",
+                    ok=False,
+                    error="이미 같은 일정이 존재합니다.",
+                    existing_schedule=todo
+                )
+            )
+
+    created_schedule = week01_result["created_schedule"]
+    structured_request = structured_request_from_week01_schedule(created_schedule, kind="personal_schedule")
+    
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
-    return json_payload(
-        tool_result(
-            "personal_create_schedule",
-            ok=True,
-            structured_request=structured_request.model_dump(),
-            sqlite_save=True,
-        )
+    try:
+        result = store.save_structured_request(structured_request.model_dump())
+        return json_payload(
+            tool_result(
+                "personal_create_schedule",
+                ok=True,
+                structured_request=structured_request.model_dump(),
+                sqlite_save=True,
+                saved_rows=result.get("saved_rows", [])
+            )
     )
-
-
+    except Exception as e:
+        PERSONAL_SCHEDULES[:] = [
+            # 추가하고자 하는 ID를 제외
+            s for s in PERSONAL_SCHEDULES if s.get("id") != created_schedule.get("id")
+        ]
+        # 저장되지 않았다는 JSON 반환
+        return json_payload(
+            tool_result(
+                "personal_create_schedule",
+                ok=False,
+                error=str(e)
+            )
+        )
+   
+    
 
 @tool(args_schema=SaveStructuredRequestInput) # 입력값의 형태
 def save_structured_request(
@@ -598,6 +641,8 @@ def week03_prompt_parts() -> list[str]:
         "personal_list_saved_schedules를 사용하고, 실제 삭제는 personal_delete_schedule이 아닌 "
         "personal_delete_saved_schedules를 호출합니다. personal_list_schedules와 personal_delete_schedule은 "
         "Week 1 전용 임시 도구이므로 Week 3 조회/수정/삭제 흐름에서는 호출하지 않습니다.",
+        "일정 생성 요청은 개인 일정이라고 판단되지 않으면 personal_create_schedule을 직접 호출하지 않고, "
+        "extract_schedule_request로 자연어를 구조화한 뒤 save_structured_request로 저장합니다. "
         "현재 날짜는 current_app_date_iso()로 확인합니다.",
         "{"
         "name: 'current_app_date_iso',"
