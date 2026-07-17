@@ -525,7 +525,7 @@ def delete_saved_schedules_dict(
 
     # TODO: 전달받은 store 또는 기본 store로 _delete_saved_schedules(...)를 호출하세요.
     active_store = app_store or _store()
-    return _delete_saved_schedules(
+    result = _delete_saved_schedules(
         store=active_store,
         schedule_ids=schedule_ids,
         date=date,
@@ -534,6 +534,8 @@ def delete_saved_schedules_dict(
         time_unspecified=time_unspecified,
         delete_all=delete_all,
     )
+    result["tool_name"] = "personal_delete_saved_schedules"
+    return result
 
 
 @tool(args_schema=SavedScheduleUpdateInput)
