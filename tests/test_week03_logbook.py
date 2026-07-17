@@ -8,7 +8,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+import fixed.app_store as app_store_module
+from fixed.app_store import AppSQLiteStore
 from fixed.runtime_clock import current_app_date_iso
+from fixed.session_scope import conversation_session_scope
 import student_parts.week01_wake_up_nana as week01
 import student_parts.week03_build_nanas_logbook as week03
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
@@ -125,6 +128,25 @@ class TestPayloadHelpers:
 # ---------------------------------------------------------------------------
 
 class TestSaveStructuredRequestInput:
+    def test_public_tool_schemas_keep_original_fields(self):
+        structured_fields = {
+            "kind",
+            "title",
+            "date",
+            "start_time",
+            "end_time",
+            "members",
+            "priority",
+            "reason",
+            "original_text",
+            "source_schedule_id",
+        }
+        create_fields = {"title", "date", "start_time", "end_time", "attendees"}
+
+        assert set(SaveStructuredRequestInput.model_json_schema()["properties"]) == structured_fields
+        assert set(save_structured_request.args_schema.model_json_schema()["properties"]) == structured_fields
+        assert set(personal_create_schedule.args_schema.model_json_schema()["properties"]) == create_fields
+
     def test_defaults(self):
         form = SaveStructuredRequestInput()
         assert form.kind == "unknown"
@@ -293,6 +315,7 @@ class TestSaveStructuredRequest:
         assert payload["ok"] is True
         assert payload["tool_name"] == "save_structured_request"
         assert payload["saved"] == store.save_result
+        assert set(payload) == {"ok", "tool_name", "saved"}
 
 
 # ---------------------------------------------------------------------------
@@ -567,34 +590,71 @@ class TestSavedScheduleTools:
 # 9. Week 1 호환 personal_create_schedule
 # ---------------------------------------------------------------------------
 
-class TestCompatiblePersonalCreateSchedule:
-    def test_preserves_week01_result_and_saves_to_sqlite(self, monkeypatch):
-        created_schedule = {
-            "id": "personal_1",
-            "title": "코칭",
+class TestWeek01InternalCreateHelper:
+    def test_public_create_keeps_random_id_behavior(self):
+        schedules_before = list(week01.PERSONAL_SCHEDULES)
+        arguments = {
+            "title": "Week 1 공개 생성",
+            "date": "2026-07-16",
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "attendees": [],
+        }
+
+        try:
+            first = json.loads(week01.personal_create_schedule.invoke(arguments))
+            second = json.loads(week01.personal_create_schedule.invoke(arguments))
+
+            assert first["created_schedule"]["id"] != second["created_schedule"]["id"]
+        finally:
+            week01.PERSONAL_SCHEDULES[:] = schedules_before
+
+    def test_internal_create_reuses_provided_id(self):
+        schedules_before = list(week01.PERSONAL_SCHEDULES)
+        arguments = {
+            "title": "Week 3 내부 생성",
             "date": "2026-07-16",
             "start_time": "10:00",
             "end_time": "11:00",
             "attendees": [],
+            "schedule_id": "personal_stable_test",
         }
+
+        try:
+            first, first_created = week01._create_personal_schedule_dict(**arguments)
+            second, second_created = week01._create_personal_schedule_dict(**arguments)
+
+            assert first_created is True
+            assert second_created is False
+            assert second is first
+            assert sum(
+                row["id"] == arguments["schedule_id"]
+                for row in week01.PERSONAL_SCHEDULES
+            ) == 1
+        finally:
+            week01.PERSONAL_SCHEDULES[:] = schedules_before
+
+
+class TestCompatiblePersonalCreateSchedule:
+    def test_uses_stable_week01_id_and_saves_to_sqlite(self, monkeypatch):
         week01_calls: list[dict[str, Any]] = []
 
-        def fake_week01_invoke(arguments: dict[str, Any]) -> str:
+        def fake_week01_create(**arguments: Any) -> tuple[dict[str, Any], bool]:
             week01_calls.append(arguments)
-            return json.dumps(
-                {
-                    "ok": True,
-                    "tool_name": "personal_create_schedule",
-                    "created_schedule": created_schedule,
-                },
-                ensure_ascii=False,
-            )
+            return {
+                "id": arguments["schedule_id"],
+                "title": arguments["title"],
+                "date": arguments["date"],
+                "start_time": arguments["start_time"],
+                "end_time": arguments["end_time"],
+                "attendees": arguments["attendees"],
+            }, True
 
         store = RecordingStore()
         monkeypatch.setattr(
             week03,
-            "week01_personal_create_schedule",
-            SimpleNamespace(invoke=fake_week01_invoke),
+            "week01_create_personal_schedule_dict",
+            fake_week01_create,
         )
         monkeypatch.setattr(week03, "_store", lambda: store)
 
@@ -611,71 +671,171 @@ class TestCompatiblePersonalCreateSchedule:
 
         assert week01_calls[0]["title"] == "코칭"
         assert payload["ok"] is True
-        assert payload["created_schedule"] == created_schedule
-        assert payload["structured_request"]["source_schedule_id"] == "personal_1"
+        stable_id = payload["created_schedule"]["id"]
+        assert stable_id.startswith("personal_")
+        assert week01_calls[0]["schedule_id"] == stable_id
+        assert payload["structured_request"]["source_schedule_id"] == stable_id
         assert payload["sqlite_save"] == store.save_result
+        assert set(payload) == {
+            "ok",
+            "tool_name",
+            "created_schedule",
+            "structured_request",
+            "sqlite_save",
+        }
         assert store.calls[0][0] == "save_structured_request"
         assert isinstance(store.calls[0][1], dict)
-
-    def test_returns_failure_without_sqlite_save_when_week01_create_fails(self, monkeypatch):
-        def fake_week01_create(arguments: dict[str, Any]) -> str:
-            return json.dumps(
-                {
-                    "ok": False,
-                    "tool_name": "personal_create_schedule",
-                },
-                ensure_ascii=False,
-            )
-
-        monkeypatch.setattr(
-            week03,
-            "week01_personal_create_schedule",
-            SimpleNamespace(invoke=fake_week01_create),
-        )
-        monkeypatch.setattr(
-            week03,
-            "_store",
-            lambda: pytest.fail("Week 1 생성 실패 시 SQLite 저장소에 접근하면 안 됩니다."),
-        )
-
-        raw = personal_create_schedule.invoke(
-            {
-                "title": "생성 실패 테스트",
-                "date": "2026-07-17",
-                "start_time": "13:00",
-                "end_time": "14:00",
-                "attendees": [],
-            }
-        )
-        payload = json.loads(raw)
-
-        assert payload == {
-            "ok": False,
-            "tool_name": "personal_create_schedule",
-            "structured_request": {},
-            "sqlite_save": {},
+        assert set(store.calls[0][1]) == {
+            "kind",
+            "title",
+            "date",
+            "start_time",
+            "end_time",
+            "members",
+            "original_text",
+            "source_schedule_id",
         }
 
-    def test_compensates_week01_schedule_when_sqlite_save_fails(self, monkeypatch):
-        created_schedule = {
-            "id": "personal_rollback_1",
-            "title": "보상 테스트",
-            "date": "2026-07-17",
-            "start_time": "14:00",
-            "end_time": "15:00",
+    def test_same_request_is_replayed_without_duplicate_rows(self, monkeypatch, tmp_path):
+        store = AppSQLiteStore(tmp_path / "week03-idempotency.sqlite3")
+        monkeypatch.setattr(week03, "_store", lambda: store)
+        monkeypatch.setattr(
+            app_store_module,
+            "sync_personal_schedule_to_shared",
+            lambda schedule: {"ok": True, "schedule_id": schedule["schedule_id"]},
+        )
+        schedules_before = list(week01.PERSONAL_SCHEDULES)
+        arguments = {
+            "title": "멱등성 테스트",
+            "date": "2026-07-20",
+            "start_time": "10:00",
+            "end_time": "11:00",
             "attendees": [],
         }
+
+        try:
+            first = json.loads(personal_create_schedule.invoke(arguments))
+            second = json.loads(personal_create_schedule.invoke(arguments))
+
+            rows = store.list_schedules(limit=20)
+            requests = store.list_saved_requests(limit=20)
+            stable_id = first["created_schedule"]["id"]
+            assert len(rows) == 1
+            assert len(requests) == 1
+            assert rows[0]["schedule_id"] == stable_id
+            assert second["created_schedule"]["id"] == stable_id
+            assert "replayed" not in first
+            assert "replayed" not in second
+            assert second["sqlite_save"]["already_exists"] is True
+            assert sum(row["id"] == stable_id for row in week01.PERSONAL_SCHEDULES) == 1
+        finally:
+            week01.PERSONAL_SCHEDULES[:] = schedules_before
+
+    def test_replay_cleans_only_newly_recreated_memory_schedule(self, monkeypatch, tmp_path):
+        store = AppSQLiteStore(tmp_path / "week03-recreated-memory.sqlite3")
+        monkeypatch.setattr(week03, "_store", lambda: store)
+        monkeypatch.setattr(
+            app_store_module,
+            "sync_personal_schedule_to_shared",
+            lambda schedule: {"ok": True, "schedule_id": schedule["schedule_id"]},
+        )
+        schedules_before = list(week01.PERSONAL_SCHEDULES)
+        arguments = {
+            "title": "재생 임시 일정",
+            "date": "2026-07-21",
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "attendees": [],
+        }
+
+        try:
+            first = json.loads(personal_create_schedule.invoke(arguments))
+            stable_id = first["created_schedule"]["id"]
+            week01.PERSONAL_SCHEDULES[:] = [
+                row for row in week01.PERSONAL_SCHEDULES if row["id"] != stable_id
+            ]
+
+            second = json.loads(personal_create_schedule.invoke(arguments))
+
+            assert second["sqlite_save"]["already_exists"] is True
+            assert all(row["id"] != stable_id for row in week01.PERSONAL_SCHEDULES)
+        finally:
+            week01.PERSONAL_SCHEDULES[:] = schedules_before
+
+    def test_identical_schedules_in_different_conversations_are_distinct(self, monkeypatch, tmp_path):
+        store = AppSQLiteStore(tmp_path / "week03-conversation-scope.sqlite3")
+        monkeypatch.setattr(week03, "_store", lambda: store)
+        monkeypatch.setattr(
+            app_store_module,
+            "sync_personal_schedule_to_shared",
+            lambda schedule: {"ok": True, "schedule_id": schedule["schedule_id"]},
+        )
+        schedules_before = list(week01.PERSONAL_SCHEDULES)
+        arguments = {
+            "title": "대화별 동일 일정",
+            "date": "2026-07-22",
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "attendees": [],
+        }
+
+        try:
+            with conversation_session_scope("conversation-1"):
+                first = json.loads(personal_create_schedule.invoke(arguments))
+            with conversation_session_scope("conversation-2"):
+                second = json.loads(personal_create_schedule.invoke(arguments))
+
+            assert first["created_schedule"]["id"] != second["created_schedule"]["id"]
+            assert len(store.list_schedules(limit=20)) == 2
+            assert len(store.list_saved_requests(limit=20)) == 2
+        finally:
+            week01.PERSONAL_SCHEDULES[:] = schedules_before
+
+    def test_compatible_create_then_structured_save_reuses_same_schedule(self, monkeypatch, tmp_path):
+        store = AppSQLiteStore(tmp_path / "week03-cross-tool-replay.sqlite3")
+        monkeypatch.setattr(week03, "_store", lambda: store)
+        monkeypatch.setattr(
+            app_store_module,
+            "sync_personal_schedule_to_shared",
+            lambda schedule: {"ok": True, "schedule_id": schedule["schedule_id"]},
+        )
+        schedules_before = list(week01.PERSONAL_SCHEDULES)
+        arguments = {
+            "title": "도구 간 중복 테스트",
+            "date": "2026-07-23",
+            "start_time": "10:00",
+            "end_time": "11:00",
+        }
+
+        try:
+            personal_create_schedule.invoke({**arguments, "attendees": []})
+            saved = json.loads(
+                save_structured_request.invoke(
+                    {"kind": "personal_schedule", **arguments, "members": []}
+                )
+            )
+
+            assert saved["ok"] is True
+            assert set(saved) == {"ok", "tool_name", "saved"}
+            assert saved["saved"]["already_exists"] is True
+            assert len(store.list_schedules(limit=20)) == 1
+        finally:
+            week01.PERSONAL_SCHEDULES[:] = schedules_before
+
+    def test_compensates_week01_schedule_when_sqlite_save_fails(self, monkeypatch):
+        created_ids: list[str] = []
         delete_calls: list[dict[str, Any]] = []
 
-        def fake_week01_create(arguments: dict[str, Any]) -> str:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "tool_name": "personal_create_schedule",
-                    "created_schedule": created_schedule,
-                },
-                ensure_ascii=False,
-            )
+        def fake_week01_create(**arguments: Any) -> tuple[dict[str, Any], bool]:
+            created_ids.append(arguments["schedule_id"])
+            return {
+                "id": arguments["schedule_id"],
+                "title": arguments["title"],
+                "date": arguments["date"],
+                "start_time": arguments["start_time"],
+                "end_time": arguments["end_time"],
+                "attendees": arguments["attendees"],
+            }, True
 
         def fake_week01_delete(arguments: dict[str, Any]) -> str:
             delete_calls.append(arguments)
@@ -694,8 +854,8 @@ class TestCompatiblePersonalCreateSchedule:
 
         monkeypatch.setattr(
             week03,
-            "week01_personal_create_schedule",
-            SimpleNamespace(invoke=fake_week01_create),
+            "week01_create_personal_schedule_dict",
+            fake_week01_create,
         )
         monkeypatch.setattr(
             week03,
@@ -717,7 +877,35 @@ class TestCompatiblePersonalCreateSchedule:
 
         assert payload["ok"] is False
         assert payload["tool_name"] == "personal_create_schedule"
-        assert delete_calls == [{"schedule_id": "personal_rollback_1"}]
+        assert delete_calls == [{"schedule_id": created_ids[0]}]
+
+    def test_sqlite_failure_keeps_preexisting_week01_schedule(self, monkeypatch):
+        store = RecordingStore()
+        monkeypatch.setattr(week03, "_store", lambda: store)
+        schedules_before = list(week01.PERSONAL_SCHEDULES)
+        arguments = {
+            "title": "기존 임시 일정 보존",
+            "date": "2026-07-17",
+            "start_time": "15:00",
+            "end_time": "16:00",
+            "attendees": [],
+        }
+
+        class FailingStore:
+            def save_structured_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+                raise OperationalError("SQLite 저장 실패")
+
+        try:
+            first = json.loads(personal_create_schedule.invoke(arguments))
+            stable_id = first["created_schedule"]["id"]
+            monkeypatch.setattr(week03, "_store", lambda: FailingStore())
+
+            second = json.loads(personal_create_schedule.invoke(arguments))
+
+            assert second["ok"] is False
+            assert sum(row["id"] == stable_id for row in week01.PERSONAL_SCHEDULES) == 1
+        finally:
+            week01.PERSONAL_SCHEDULES[:] = schedules_before
 
     def test_sqlite_failure_removes_schedule_from_actual_week01_store(self, monkeypatch):
         class FailingStore:
@@ -741,6 +929,50 @@ class TestCompatiblePersonalCreateSchedule:
 
             assert payload["ok"] is False
             assert week01.PERSONAL_SCHEDULES == schedules_before
+        finally:
+            week01.PERSONAL_SCHEDULES[:] = schedules_before
+
+
+class TestWeek01Week03StoreBoundary:
+    def test_delete_tools_do_not_cross_memory_and_sqlite(self, monkeypatch, tmp_path):
+        store = AppSQLiteStore(tmp_path / "week03-store-boundary.sqlite3")
+        monkeypatch.setattr(week03, "_store", lambda: store)
+        monkeypatch.setattr(
+            app_store_module,
+            "sync_personal_schedule_to_shared",
+            lambda schedule: {"ok": True, "schedule_id": schedule["schedule_id"]},
+        )
+        monkeypatch.setattr(
+            app_store_module,
+            "delete_personal_schedule_from_shared",
+            lambda request_id: True,
+        )
+        schedules_before = list(week01.PERSONAL_SCHEDULES)
+        arguments = {
+            "title": "저장소 경계 테스트",
+            "date": "2026-07-24",
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "attendees": [],
+        }
+
+        try:
+            created = json.loads(personal_create_schedule.invoke(arguments))
+            stable_id = created["created_schedule"]["id"]
+
+            week01.personal_delete_schedule.invoke({"schedule_id": stable_id})
+
+            assert all(row["id"] != stable_id for row in week01.PERSONAL_SCHEDULES)
+            assert store.find_schedules(schedule_ids=[stable_id], limit=10)
+
+            week01._create_personal_schedule_dict(
+                **arguments,
+                schedule_id=stable_id,
+            )
+            personal_delete_saved_schedules.invoke({"schedule_ids": [stable_id]})
+
+            assert store.find_schedules(schedule_ids=[stable_id], limit=10) == []
+            assert any(row["id"] == stable_id for row in week01.PERSONAL_SCHEDULES)
         finally:
             week01.PERSONAL_SCHEDULES[:] = schedules_before
 

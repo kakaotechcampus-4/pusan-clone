@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, TypedDict
 from functools import wraps
@@ -12,9 +13,10 @@ from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
+from fixed.session_scope import current_session_scope
 from student_parts.week01_wake_up_nana import (
+    _create_personal_schedule_dict as week01_create_personal_schedule_dict,
     join_system_prompt,
-    personal_create_schedule as week01_personal_create_schedule,
     personal_delete_schedule as week01_personal_delete_schedule,
     week01_tools,
 )
@@ -250,6 +252,52 @@ def tool_result(tool_name: str, *, ok: bool = True, **payload: Any) -> dict[str,
     return {"ok": ok, "tool_name": tool_name, **payload}
 
 
+def _schedule_payload_hash(payload: dict[str, Any]) -> str:
+    """일정의 실제 저장 필드를 정규화해 재시도 비교용 해시를 만듭니다."""
+
+    members = sorted(
+        str(member).strip()
+        for member in (payload.get("members") or [])
+        if str(member).strip()
+    )
+    end_time = payload.get("end_time")
+    if end_time == "미정":
+        end_time = None
+    canonical = {
+        "kind": payload.get("kind") or "personal_schedule",
+        "title": str(payload.get("title") or "").strip(),
+        "date": payload.get("date"),
+        "start_time": payload.get("start_time"),
+        "end_time": end_time,
+        "members": members,
+    }
+    encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _prepare_save_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """고정 저장소의 source_schedule_id 중복 방지를 사용할 수 있게 payload를 보강합니다."""
+
+    prepared = dict(payload)
+    if prepared.get("kind") not in {"personal_schedule", "group_schedule"}:
+        return prepared
+
+    if not prepared.get("source_schedule_id"):
+        scoped_key = json.dumps(
+            {
+                "scope": current_session_scope(),
+                "operation": "create_schedule",
+                "payload_hash": _schedule_payload_hash(prepared),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(scoped_key.encode("utf-8")).hexdigest()[:24]
+        prepared["source_schedule_id"] = f"personal_{digest}"
+    return prepared
+
+
 class SaveStructuredRequestInput(StructuredRequest):
     """SQLite 저장 직전에 검증하는 Week 3 입력 스키마입니다."""
 
@@ -314,7 +362,8 @@ def save_structured_request_payload(
     # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
     store = store or _store()
     form = _save_input_from(request)    
-    res = store.save_structured_request(form.model_dump(exclude_none=True))
+    payload = _prepare_save_payload(form.model_dump(exclude_none=True))
+    res = store.save_structured_request(payload)
 
     return tool_result(
         saved=res,
@@ -461,36 +510,44 @@ def personal_create_schedule(
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
     # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
-    req = {
+    structured_req = SaveStructuredRequestInput.model_validate({
+        "kind" : "group_schedule" if attendees else "personal_schedule",
         "title" : title,
         "date" : date,
         "start_time" : start_time,
-        "end_time" : end_time,
-        "attendees" : attendees
-    }
-    raw = week01_personal_create_schedule.invoke(req)
-    week01_result = json.loads(raw)
-    if not week01_result["ok"]:
-        return json_payload(tool_result(
-            ok=False, 
-            tool_name=_tool_name(personal_create_schedule),
-            structured_request={},
-            sqlite_save={}
-        ))
-
-    structured_req = structured_request_from_week01_schedule(
-        week01_result["created_schedule"]
+        "end_time" : None if end_time == "미정" else end_time,
+        "members" : attendees or [],
+    })
+    sqlite_payload = _prepare_save_payload(structured_req.model_dump(exclude_none=True))
+    structured_req = SaveStructuredRequestInput.model_validate(sqlite_payload)
+    stable_schedule_id = str(structured_req.source_schedule_id)
+    schedule, memory_created = week01_create_personal_schedule_dict(
+        title=title,
+        date=date,
+        start_time=start_time,
+        end_time=end_time,
+        attendees=attendees,
+        schedule_id=stable_schedule_id,
     )
+    week01_result = tool_result(
+        tool_name="personal_create_schedule",
+        created_schedule=schedule,
+    )
+    store = _store()
     try:
-        sqlite_save = _store().save_structured_request(structured_req.model_dump())
-    except Exception as err: # 어떠한 이유로 위 작업이 실패한 경우
-        week01_personal_delete_schedule.invoke({ "schedule_id" : week01_result["created_schedule"]["id"] })
+        sqlite_save = store.save_structured_request(sqlite_payload)
+    except Exception: # 어떠한 이유로 위 작업이 실패한 경우
+        if memory_created:
+            week01_personal_delete_schedule.invoke({"schedule_id": stable_schedule_id})
         return json_payload(tool_result(
             ok=False, 
             tool_name=_tool_name(personal_create_schedule), 
             structured_request=structured_req.model_dump(),
             sqlite_save={}
         ))
+
+    if sqlite_save.get("already_exists") and memory_created:
+        week01_personal_delete_schedule.invoke({"schedule_id": stable_schedule_id})
 
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
     return json_payload({
@@ -527,10 +584,12 @@ def save_structured_request(
             "priority" : priority,
             "reason" : reason,
             "original_text" : original_text,
-            "source_schedule_id" : source_schedule_id
+            "source_schedule_id" : source_schedule_id,
         }.items() if v is not None
     }
-    res = _store().save_structured_request(saving_data)
+    saving_data = _prepare_save_payload(saving_data)
+    store = _store()
+    res = store.save_structured_request(saving_data)
 
     # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
     return json_payload(tool_result(
