@@ -31,7 +31,10 @@ SQLITE_MEMORY_PROMPT = (
     "이제부터 일정/할 일/알림은 현재 대화에만 남는 임시 메모리가 아니라 앱 SQLite DB에 영구적으로 저장된다."
     "저장된 기록은 앱을 다시 시작하거나 새 대화를 열어도 그대로 유지된다."
     "사용자의 저장 요청은 반드시 저장 tool save_structured_request를 호출해 SQLite에 기록해야 하고, "
-    "조회 요청은 personal_list_saved_schedules를 호출해 SQLite에서 가져와서 답한다."
+    "조회 요청은 종류에 따라 도구가 다르다. "
+    "일정(personal_schedule/group_schedule) 조회는 personal_list_saved_schedules를 호출하고, "
+    "할 일(todo)이나 알림(reminder) 조회는 list_saved_requests에 kind='todo' 또는 kind='reminder'를 넘겨 호출한다. "
+    "할 일은 schedules 테이블이 아니라 structured_requests/todos에 저장되므로 personal_list_saved_schedules로는 조회되지 않는다."
 )
 
 WEEK03_TOOL_CALL_PROMPT = (
@@ -413,6 +416,21 @@ def personal_create_schedule(
     ))
 
 
+def _find_duplicate_saved_request(
+    store: AppSQLiteStore,
+    *,
+    kind: str,
+    title: str | None,
+    date: str | None,
+    start_time: str | None,
+) -> dict[str, Any] | None:
+    candidates = store.list_saved_requests(kind=kind, date_from=date, date_to=date, limit=200)
+    title_norm = title or "제목 없음"
+    for row in candidates:
+        if row.get("title") == title_norm and row.get("start_time") == start_time:
+            return row
+    return None
+
 @tool(args_schema=SaveStructuredRequestInput)
 def save_structured_request(
     kind: RequestKind = "unknown",
@@ -441,6 +459,18 @@ def save_structured_request(
         "source_schedule_id": source_schedule_id,
     }
     payload = {key: value for key, value in payload.items() if value is not None}
+    store = _store()
+    duplicate = _find_duplicate_saved_request(
+        store, kind=kind, title=title, date=date, start_time=start_time
+    )
+    if duplicate is not None:
+        return json_payload(tool_result(
+            "save_structured_request",
+            already_exists=True,
+            request_id=duplicate.get("request_id"),
+            duplicate=duplicate,
+            message="이미 동일한 내용이 저장되어 있어 새로 저장하지 않았습니다.",
+        ))
     result = _store().save_structured_request(payload)
     return json_payload(tool_result("save_structured_request", **result))
 
@@ -475,7 +505,7 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    kind = kind or "personal_schedule"
+
     schedules = _store().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to)
     filters = {"kind": kind, "date_from": date_from, "date_to": date_to, "limit": limit}
     return json_payload(tool_result("personal_list_saved_schedules", filters=filters, schedules=schedules))
@@ -587,7 +617,7 @@ def week03_prompt_parts() -> list[str]:
         WEEK03_TOOL_CALL_PROMPT,
         f"오늘 날짜는 {current_app_date_iso()}이며, 상대 날짜는 이 날짜를 기준으로 YYYY-MM-DD 형식으로 계산한다.",
         "저장 요청에는 반드시 save_structured_request tool을 호출하고, "
-        "조회 요청에는 list_saved_requests, get_saved_request, personal_list_saved_schedules tool을 호출한다.",
+        "조회 요청에는 personal_list_saved_schedules, 할 일/알림 조회에는 list_saved_requests, 저장 원본 단건 확인은 get_saved_request를 호출해야 한다.",
         "이번 주차 범위는 구조화 결과를 SQLite에 저장하고, 저장된 요청/일정을 다시 조회/수정/삭제하는 것이다.",
     ]
 
