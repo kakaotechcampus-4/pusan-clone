@@ -263,7 +263,7 @@ class TestSaveInputFrom:
     @pytest.mark.parametrize("value", [" ", "", "   ", "\n"])
     def test_rejects_empty_string(self, value):
         with pytest.raises(ValueError) as exc_info:
-            _save_input_from("")
+            _save_input_from(value)
 
         assert str(exc_info.value) == (
             "공백 문자열을 요청으로 변환할 수 없습니다."
