@@ -244,7 +244,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
     after = len(PERSONAL_SCHEDULES)
 
     deleted = before != after
-    return _json({"ok": True, "tool_name": "personal_delete_schedules", "deleted": deleted})
+    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted})
 
 
 def week01_tools() -> list[Any]:
