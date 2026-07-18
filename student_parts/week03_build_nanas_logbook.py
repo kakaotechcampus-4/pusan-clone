@@ -38,6 +38,7 @@ SQLITE_MEMORY_PROMPT = """
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
 WEEK03_TOOL_CALL_PROMPT = """
+생성 요청이면: 제목/날짜/시간이 이미 명확히 주어진 단순 개인 일정 생성 요청(예: "내일 10시 개인 코칭 잡아줘")은 personal_create_schedule을 바로 호출해 임시 일정 생성과 SQLite 저장을 한 번에 처리하고, 생성 결과를 자연어로 알린 뒤 결과 JSON을 코드블록으로 덧붙입니다. 반면 자연어가 더 복잡하거나(날짜/시간이 불명확해 해석이 필요하거나, 여러 항목이 섞여 있는 경우) 요청 종류가 todo/reminder/group_schedule처럼 personal_create_schedule로 표현할 수 없는 경우에는 extract_schedule_request로 구조화한 뒤 save_structured_request를 호출하는 저장 경로를 대신 씁니다.
 저장 요청이면: extract_schedule_request로 구조화 한 뒤 save_structured_request를 호출해 SQLite에 저장하고, 무엇을 언제로 저장했는지 자연어로 알린 뒤 저장 결과 JSON을 코드블록으로 덧붙입니다.
 조회 요청이면: personal_list_saved_schedules 또는 list_saved_requests / get_saved_request를 호출해 SQLite에 저장된 내용을 조회하고, 조회 결과를 자연어 문장으로 정리한 뒤 조회 결과 JSON을 코드블록으로 덧붙입니다.
 수정 요청이면: personal_list_saved_schedules로 대상 schedule_id를 찾아 personal_update_saved_schedule을 호출해 SQLite에 저장된 내용을 수정하고, 무엇이 어떻게 바뀌었는지 자연어로 알린 뒤 수정 결과 JSON을 코드블록으로 덧붙입니다.
@@ -606,10 +607,19 @@ def personal_delete_saved_schedules(
 
 
 def week03_tools() -> list[Any]:
-    """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
+    """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다.
 
+    Week 1의 personal_list_schedules/personal_delete_schedule은 임시 메모리 기반이라
+    SQLite 버전(personal_list_saved_schedules/personal_delete_saved_schedules)과 같은
+    "조회"/"삭제" 액션을 두고 서로 다른 저장소를 가리키므로, Week 3부터는 노출하지 않고
+    SQLite 버전으로 완전히 대체한다.
+    """
+
+    _LEGACY_TOOL_NAMES = {"personal_list_schedules", "personal_delete_schedule"}
     base_tools = [
-        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item for item in week01_tools()
+        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item
+        for item in week01_tools()
+        if _tool_name(item) not in _LEGACY_TOOL_NAMES
     ]
     return [
         *base_tools,
@@ -640,6 +650,11 @@ def week03_prompt_parts() -> list[str]:
         "2주차의 '최종 응답은 반드시 StructuredRequestBatch 구조화 출력(JSON)만 반환한다', "
         "'인사말/확인 문구/요약 등 어떤 자연어 텍스트도 JSON 앞뒤에 덧붙이지 않는다'는 지침은 "
         "3주차부터는 적용하지 않는다. 3주차 agent는 response_format 없이 자유 텍스트로 답하는 일반 대화형 agent다.",
+        "1주차의 'personal_list_schedules 도구를 호출한 뒤 빠른 날짜 순으로 답한다', "
+        "'personal_delete_schedule 도구를 호출한 뒤 personal_list_schedules 도구를 호출해 확인한다'는 지침은 "
+        "3주차부터는 적용하지 않는다. personal_list_schedules/personal_delete_schedule은 임시 메모리만 다루는 "
+        "1주차 전용 도구이며 3주차 agent에는 더 이상 노출되지 않으므로, 일정 조회/삭제 요청은 항상 SQLite 기반 "
+        "personal_list_saved_schedules/personal_delete_saved_schedules만 사용한다.",
         "최종 답변은 자연어 요약 문장을 먼저 쓰고, 그 근거가 된 tool 결과 JSON은 뒤에 ```json 코드블록으로 덧붙인다. "
         "자연어 문장 없이 JSON만 출력하거나, 코드블록 없이 JSON을 문장 중간에 섞어 쓰지 않는다.",
         "저장 요청이면 무엇을 언제로 저장했는지, 조회 요청이면 조회된 항목을 사람이 읽기 쉽게, "

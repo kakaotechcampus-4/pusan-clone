@@ -311,6 +311,44 @@ def test_get_current_date_tool_is_actually_bound_for_week03_agent():
 
 
 # ---------------------------------------------------------------------------
+# 4-2. week03 tool 목록: Week 1의 임시 메모리 기반 personal_list_schedules/
+#    personal_delete_schedule은 SQLite 버전과 같은 조회/삭제 액션을 두고 서로
+#    충돌하는 지시를 만들어내므로, Week 3부터는 아예 노출되지 않아야 한다.
+# ---------------------------------------------------------------------------
+
+
+def test_week03_tools_excludes_legacy_week1_memory_crud_tools():
+    tool_names = {w3._tool_name(tool) for tool in w3.week03_tools()}
+
+    assert "personal_list_schedules" not in tool_names
+    assert "personal_delete_schedule" not in tool_names
+    assert "personal_list_saved_schedules" in tool_names
+    assert "personal_delete_saved_schedules" in tool_names
+
+
+def test_week03_prompt_overrides_legacy_week1_list_and_delete_instructions():
+    """week01_prompt_parts()의 personal_list_schedules/personal_delete_schedule 지시가
+    week02/week03 프롬프트에 그대로 상속되지만, week03부터는 더 이상 적용하지 않는다는
+    명시적인 무효화 문구가 들어있어야 한다.
+    """
+
+    week03_prompt = w3.week03_system_prompt()
+
+    assert "personal_list_schedules 도구를 호출한 뒤 빠른 날짜 순으로 답한다" in week03_prompt
+    assert "3주차부터는 적용하지 않는다" in week03_prompt
+    assert "personal_list_saved_schedules/personal_delete_saved_schedules만 사용한다" in week03_prompt
+
+
+def test_week03_tool_call_prompt_distinguishes_create_from_save_paths():
+    """생성 액션(personal_create_schedule)과 저장 액션(extract_schedule_request →
+    save_structured_request)의 사용 기준이 프롬프트에 명시되어 있어야 한다.
+    """
+
+    assert "personal_create_schedule" in w3.WEEK03_TOOL_CALL_PROMPT
+    assert "todo/reminder/group_schedule" in w3.WEEK03_TOOL_CALL_PROMPT
+
+
+# ---------------------------------------------------------------------------
 # 5. delete_saved_schedules_dict 헬퍼: 실제 personal_delete_saved_schedules tool과
 #    같은 tool_name으로 응답하고, 삭제가 실제로 반영되는지 확인합니다.
 # ---------------------------------------------------------------------------
