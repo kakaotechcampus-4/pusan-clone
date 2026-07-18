@@ -252,6 +252,48 @@ def test_save_input_from_text_sends_week1_wrapper_json_through_llm(monkeypatch):
     assert parsed.members == ["철수", "영희"]
 
 
+def test_save_input_from_text_prefixes_today_date_before_llm_call(monkeypatch):
+    """_save_input_from_text는 extract_structured_request(구조화 LLM, tool 호출 불가)에 넘기기 전에
+    상대 날짜 해석 기준이 되도록 오늘 날짜를 '[오늘 날짜: YYYY-MM-DD]' 접두사로 직접 붙여야 합니다.
+    """
+
+    calls: list[str] = []
+
+    def fake_extract(text: str) -> StructuredRequest:
+        calls.append(text)
+        return StructuredRequest(kind="todo", title="빨래 널기", original_text=text)
+
+    monkeypatch.setattr(w3, "extract_structured_request", fake_extract)
+
+    w3._save_input_from_text("빨래 좀 널어줘")
+
+    assert calls == [f"[오늘 날짜: {w3.current_app_date_iso()}] 빨래 좀 널어줘"]
+
+
+# ---------------------------------------------------------------------------
+# 4-1. week03 프롬프트: extract_schedule_request 내부 구조화 LLM은 get_current_date tool을
+#    호출할 수 없으므로, 외부 agent가 먼저 get_current_date로 오늘 날짜를 확인해 문장에 붙여
+#    넘기라는 지시가 프롬프트에 실제로 들어있는지, 그리고 그 안내가 가리키는 get_current_date가
+#    week03 agent에 실제로 bind된 tool이 맞는지 확인합니다. (프롬프트가 존재하지 않는 tool을
+#    가리키는 회귀 방지)
+# ---------------------------------------------------------------------------
+
+
+def test_week03_prompt_instructs_get_current_date_before_extract_schedule_request():
+    prompt = w3.week03_system_prompt()
+
+    assert "get_current_date" in prompt
+    assert "extract_schedule_request" in prompt
+    assert "오늘 날짜" in prompt
+
+
+def test_get_current_date_tool_is_actually_bound_for_week03_agent():
+    tool_names = {w3._tool_name(tool) for tool in w3.week03_tools()}
+
+    assert "get_current_date" in tool_names
+    assert "extract_schedule_request" in tool_names
+
+
 # ---------------------------------------------------------------------------
 # 5. delete_saved_schedules_dict 헬퍼: 실제 personal_delete_saved_schedules tool과
 #    같은 tool_name으로 응답하고, 삭제가 실제로 반영되는지 확인합니다.

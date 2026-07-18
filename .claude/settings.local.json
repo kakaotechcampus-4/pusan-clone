@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m py_compile student_parts/week03_build_nanas_logbook.py)",
+      "Bash(python3 -m py_compile \"/home/e/ktc_level1_assignment/student_parts/week03_build_nanas_logbook.py\")",
+      "Bash(python3 -m py_compile \"//wsl.localhost/Ubuntu-20.04/home/e/ktc_level1_assignment/student_parts/week03_build_nanas_logbook.py\")",
+      "Bash(/c/Python314/python -m py_compile \"//wsl.localhost/Ubuntu-20.04/home/e/ktc_level1_assignment/student_parts/week03_build_nanas_logbook.py\")",
+      "Bash(find \"//wsl.localhost/Ubuntu-20.04/home/e/ktc_level1_assignment\" -iname \"*test*\" -not -path \"*/node_modules/*\" 2>/dev/null | head -50)",
+      "Read(///wsl.localhost/Ubuntu-20.04/home/e/**)",
+      "Bash(find \"//wsl.localhost/Ubuntu-20.04/home/e/ktc_level1_assignment\" -path \"*/.venv\" -prune -o -iname \"app_store.py\" -print -o -iname \"*week01*\" -print 2>/dev/null)",
+      "Bash(grep -n \"^def \\\\|^async def \\\\|requests\\\\.\\\\|httpx\\\\.\\\\|url\" \"//wsl.localhost/Ubuntu-20.04/home/e/ktc_level1_assignment/fixed/external_mcp.py\" | head -40)",
+      "Read(///wsl.localhost/Ubuntu-20.04/home/e/ktc_level1_assignment/fixed/**)",
+      "Bash(sed -n '1,80p' \"//wsl.localhost/Ubuntu-20.04/home/e/ktc_level1_assignment/fixed/mcp_client.py\" 2>/dev/null)",
+      "Bash(sed -n '1,60p' \"//wsl.localhost/Ubuntu-20.04/home/e/ktc_level1_assignment/fixed/config.py\" 2>/dev/null)",
+      "Bash(ls \"//wsl.localhost/Ubuntu-20.04/home/e/ktc_level1_assignment\" 2>/dev/null)",
+      "Bash(wsl.exe -e echo hi)",
+      "Bash(wsl.exe -e bash -lc \"cd /home/e/ktc_level1_assignment && ls .venv/bin/python* 2>&1 | head; cat pyproject.toml | head -20\")",
+      "Bash(wsl.exe -e bash -lc \"cd /home/e/ktc_level1_assignment && .venv/bin/python -m pytest -q tests/test_week03_build_nanas_logbook.py 2>&1 | tail -100\")",
+      "Bash(wsl.exe -e bash -lc \"cd /home/e/ktc_level1_assignment && .venv/bin/python -m pip install -q pytest 2>&1 | tail -30\")",
+      "Bash(wsl.exe -e bash -lc \"which uv pytest python3 2>&1; python3 -c 'import sys; print\\(sys.version\\)' 2>&1\")",
+      "Bash(wsl.exe -e bash -lc \"cd /home/e/ktc_level1_assignment && uv run --with pytest pytest -q tests/test_week03_build_nanas_logbook.py 2>&1 | tail -150\")",
+      "Bash(wsl.exe -e bash -lc \"cd /home/e/ktc_level1_assignment && cat run.sh | head -30\")",
+      "Bash(wsl.exe -e bash -lc \"cd /home/e/ktc_level1_assignment && PYTHONPATH=. uv run --with pytest pytest -q tests/test_week03_build_nanas_logbook.py 2>&1 | tail -200\")",
+      "Bash(wsl.exe -e bash -lc \"cd /home/e/ktc_level1_assignment && grep -n 'pytest\\\\|tool.pytest' pyproject.toml\")",
+      "Bash(wsl.exe -e bash -lc \"cd /home/e/ktc_level1_assignment && uv run --with pytest pytest -q tests/test_week03_build_nanas_logbook.py 2>&1 | tail -200\")"
+    ]
+  }
+}
