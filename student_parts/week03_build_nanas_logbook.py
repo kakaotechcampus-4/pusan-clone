@@ -499,7 +499,6 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    kind = kind if kind is not None else "personal_schedule" 
     schedules = _store().list_schedules(limit, kind, date_from, date_to)
     
     filters = {
@@ -584,7 +583,10 @@ def week03_tools() -> list[Any]:
     """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
 
     base_tools = [
-        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item for item in week01_tools()
+        personal_create_schedule if _tool_name(item) == "personal_create_schedule"
+        else item
+        for item in week01_tools()
+        if _tool_name(item) != "personal_delete_schedule"
     ]
     return [
         *base_tools,
