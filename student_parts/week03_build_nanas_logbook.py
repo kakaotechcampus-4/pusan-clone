@@ -244,7 +244,8 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     if isinstance(value , SaveStructuredRequestInput):
         return value
     if isinstance(value, StructuredRequest):
-        return SaveStructuredRequestInput(**value.model_dump())
+        # return SaveStructuredRequestInput(**value.model_dump())
+        return SaveStructuredRequestInput.model_validate(value.model_dump())
     if isinstance(value, dict):
         return SaveStructuredRequestInput(**value)
     if isinstance(value, str):
