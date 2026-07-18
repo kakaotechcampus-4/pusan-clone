@@ -123,8 +123,8 @@ def test_save_structured_request_payload_with_natural_language(store, monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# 3. personal_create_schedule tool: 헬퍼를 재사용하고, saved_request 키가 아니라
-#    실제 반환 구조에서 안전하게 sqlite_save를 만드는지 확인합니다. (KeyError 회귀 방지)
+# 3. personal_create_schedule tool: 헬퍼를 재사용하고, save_structured_request_payload의
+#    반환값(ok/tool_name 포함)을 그대로 sqlite_save로 노출하는지 확인합니다. (KeyError 회귀 방지)
 # ---------------------------------------------------------------------------
 
 
@@ -145,8 +145,8 @@ def test_personal_create_schedule_builds_sqlite_save_without_keyerror(store):
     assert "structured_request" in result
 
     sqlite_save = result["sqlite_save"]
-    assert "ok" not in sqlite_save
-    assert "tool_name" not in sqlite_save
+    assert sqlite_save["ok"] is True
+    assert sqlite_save["tool_name"] == "save_structured_request"
     assert "request_id" in sqlite_save
     assert sqlite_save["kind"] == "personal_schedule"
 

@@ -415,7 +415,7 @@ def personal_create_schedule(
     save_input = structured_request_from_week01_schedule(schedule)
     store = _store()
     save_result = save_structured_request_payload(save_input, store=store)
-    sqlite_save = {k: v for k, v in save_result.items() if k not in ("ok", "tool_name")}
+    sqlite_save = save_result
 
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
     return json_payload(
