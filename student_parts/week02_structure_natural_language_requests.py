@@ -254,12 +254,18 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """단건 구조화 후 비즈니스 규칙(check_schedule_is_group)을 적용합니다.
+    """자연어를 LLM structured output으로 StructuredRequest로 변환한 뒤 비즈니스 규칙을 적용합니다."""
 
-    이후 회차에서 LLM 파싱이 구현되면 raw 결과를 받아 후처리합니다.
-    """
-    # TODO: LLM 파싱 구현 후 raw = llm_parse(text) 로 교체
-    raw = StructuredRequest(original_text=text)
+    structured_model = chat_model().with_structured_output(
+        StructuredRequest,
+        method="function_calling",
+    )
+    raw = structured_model.invoke(
+        [
+            {"role": "system", "content": join_system_prompt(week02_prompt_parts())},
+            {"role": "user", "content": text},
+        ]
+    )
     return check_schedule_is_group(raw)
 
 
