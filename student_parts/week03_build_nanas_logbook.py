@@ -233,6 +233,14 @@ class SaveStructuredRequestInput(StructuredRequest):
     @classmethod
     def unwrap_legacy_payload(cls, value: Any) -> Any:
         """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, ValueError):
+                return value
+
+        if isinstance(value, StructuredRequest):
+            value = value.model_dump()
 
         if isinstance(value, dict):
             for key in ("structured_request", "payload"):
@@ -345,6 +353,7 @@ def _delete_saved_schedules(
     if not has_condition:
         return {
             "ok": False,
+            "tool_name": "personal_delete_saved_schedules",
             "error": "삭제 조건이 없습니다. schedule_ids, 날짜/제목/시간 필터, delete_all 중 하나가 필요합니다.",
             "deleted_count": 0,
             "filters": filters,
@@ -364,6 +373,7 @@ def _delete_saved_schedules(
 
     return {
         "ok": True,
+        "tool_name": "personal_delete_saved_schedules",
         "deleted_count": len(deleted),
         "filters": filters,
         "deleted": deleted,
@@ -415,7 +425,7 @@ def personal_create_schedule(
         {
             **created,
             "tool_name": "personal_create_schedule",
-            "structured_request": save_input.model_dump(),
+            "structured_request": save_input.model_dump(exclude_none=True),
             "sqlite_save": sqlite_save,
         }
     )
@@ -442,13 +452,13 @@ def save_structured_request(
         "date": date,
         "start_time": start_time,
         "end_time": end_time,
-        "members": members,
         "priority": priority,
         "reason": reason,
         "original_text": original_text,
         "source_schedule_id": source_schedule_id,
     }
     save_payload = {key: value for key, value in fields.items() if value is not None}
+    save_payload["members"] = members or []
     result = _store().save_structured_request(save_payload)
     return json_payload(tool_result("save_structured_request", **result))
 
@@ -529,7 +539,7 @@ def personal_update_saved_schedule(
     """앱 DB에 저장된 내 일정 원본을 수정하고 공유 일정 복사본을 같은 값으로 갱신합니다."""
 
     result = _store().update_schedule(
-        schedule_id,
+        schedule_id=schedule_id,
         title=title,
         date=date,
         start_time=start_time,
@@ -541,12 +551,14 @@ def personal_update_saved_schedule(
             tool_result(
                 "personal_update_saved_schedule",
                 ok=False,
+                schedule_id=schedule_id,
                 error=f"schedule_id={schedule_id}에 해당하는 저장 일정을 찾을 수 없습니다.",
             )
         )
     return json_payload(
         tool_result(
             "personal_update_saved_schedule",
+            schedule_id=schedule_id,
             updated_schedule=result["schedule"],
             shared_sync=result["shared_sync"],
         )
@@ -573,7 +585,7 @@ def personal_delete_saved_schedules(
         time_unspecified=time_unspecified,
         delete_all=delete_all,
     )
-    return json_payload(tool_result("personal_delete_saved_schedules", **result))
+    return json_payload(result)
 
 
 def week03_tools() -> list[Any]:
