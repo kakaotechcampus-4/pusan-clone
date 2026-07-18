@@ -217,6 +217,33 @@ def tool_result(tool_name: str, *, ok: bool = True, **payload: Any) -> dict[str,
     return {"ok": ok, "tool_name": tool_name, **payload}
 
 
+class SaveResult(BaseModel):
+    """저장 결과 응답 DTO — trace에 필요한 정보만 노출합니다."""
+
+    request_id: str
+    kind: RequestKind
+    schedule_id: str | None = None
+    created_at: str | None = None
+    saved: bool = True
+    already_exists: bool = False
+
+    @staticmethod
+    def from_store(raw: dict[str, Any]) -> "SaveResult":
+        schedule_id = None
+        for row in raw.get("saved_rows", []):
+            if row.get("table") == "schedules":
+                schedule_id = row.get("id")
+                break
+        return SaveResult(
+            request_id=raw["request_id"],
+            kind=raw.get("kind", "unknown"),
+            schedule_id=schedule_id,
+            created_at=raw.get("created_at"),
+            saved=True,
+            already_exists=raw.get("already_exists", False),
+        )
+
+
 class SaveStructuredRequestInput(StructuredRequest):
     """SQLite 저장 직전에 검증하는 Week 3 입력 스키마입니다."""
 
@@ -263,15 +290,16 @@ def save_structured_request_payload(
     request: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str,
     *,
     store: AppSQLiteStore | None = None,
-) -> dict[str, Any]:
+) -> SaveResult:
     """검증된 structured request를 앱 DB에 저장합니다."""
 
     validate = _save_input_from(request)
-    
-    # pydantic 객체를 dict로 변환하고 None 값은 제외 
+
+    # pydantic 객체를 dict로 변환하고 None 값은 제외
     payload = validate.model_dump(exclude_none=True)
     st = store or _store()
-    return st.save_structured_request(payload)
+    raw = st.save_structured_request(payload)
+    return SaveResult.from_store(raw)
 
 
 class SavedRequestListInput(BaseModel):
@@ -367,11 +395,11 @@ def personal_create_schedule(
     
     validate = structured_request_from_week01_schedule(created_schedule["created_schedule"])
     result = save_structured_request_payload(validate)
-    
+
     return json_payload({
         **created_schedule,
         "structured_request": validate.model_dump(),
-        "sqlite_save" : result,
+        "sqlite_save": result.model_dump(exclude_none=True),
     })
 
 
@@ -403,11 +431,11 @@ def save_structured_request(
         "source_schedule_id" : source_schedule_id
     }
     payload = {k : v for k ,v in payload.items() if v is not None}
-    result = _store().save_structured_request(payload)
+    raw = _store().save_structured_request(payload)
+    result = SaveResult.from_store(raw)
 
-    
     return json_payload(
-        tool_result("save_structured_request", **result)
+        tool_result("save_structured_request", **result.model_dump(exclude_none=True))
     )
 
 
