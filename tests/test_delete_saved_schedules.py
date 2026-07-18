@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from fixed.app_store import AppSQLiteStore
-from student_parts.week03_build_nanas_logbook import _delete_saved_schedules
+from student_parts.week03_build_nanas_logbook import _delete_saved_schedules, delete_saved_schedules_dict
 
 
 @pytest.fixture()
@@ -90,3 +90,17 @@ class TestDeleteAll:
         result = _delete_saved_schedules(store=store, delete_all=True)
         assert result["ok"] is True
         assert result["deleted_count"] == 0
+
+
+class TestDeleteSavedSchedulesDict:
+    """delete_saved_schedules_dict helper를 검증합니다."""
+
+    def test_delegates_to_internal(self, store: AppSQLiteStore):
+        _save_schedule(store, "회의", "2026-07-20")
+        result = delete_saved_schedules_dict(date="2026-07-20", app_store=store)
+        assert result["ok"] is True
+        assert result["deleted_count"] == 1
+
+    def test_no_filter_rejected(self, store: AppSQLiteStore):
+        result = delete_saved_schedules_dict(app_store=store)
+        assert result["ok"] is False
