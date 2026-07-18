@@ -252,11 +252,14 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
         return SaveStructuredRequestInput.model_validate(value.model_dump())
     elif isinstance(value, dict):
         return SaveStructuredRequestInput.model_validate(value)
-    elif isinstance(value, str):
+    elif isinstance(value, str): # JSON 과 자연어 분기 처리
         value = value.strip()
+        if value.startswith("{") and value.endswith("}"): # JSON
+            return SaveStructuredRequestInput.model_validate(json.loads(value))
+        # 자연어
         structured = extract_structured_request(value)
-        if value.startswith("{") and value.endswith("}"):
-            return SaveStructuredRequestInput.model_validate(structured.model_dump())
+        return SaveStructuredRequestInput.model_validate(structured.model_dump())
+    raise RuntimeError(f"지원하지 않는 입력 타입: {type(value).__name__}")
 
 
 def save_structured_request_payload(
@@ -269,7 +272,8 @@ def save_structured_request_payload(
     # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
     validated_request = _save_input_from(request)
     store = store or _store()
-    return tool_result("save_structured_request_payload", store.save_structured_request(store))
+    saved = store.save_structured_request(validated_request.model_dump(exclude_none=True))
+    return tool_result(tool_name="save_structured_request_payload", saved_structured_request=saved)
 
 
 class SavedRequestListInput(BaseModel):
@@ -342,8 +346,8 @@ def _delete_saved_schedules(
         }.items() if value
     }
 
-    if not delete_all or not delete_filters:
-        return tool_result(tool_name="_delete_saved_schedules", ok=False, deleted_filters=delete_filters, deleted=[])
+    if not delete_all and not delete_filters:
+        return tool_result(tool_name="_delete_saved_schedules", ok=False, filters=delete_filters, deleted_count=0, deleted=[])
 
     if delete_all:
         deleted = store.delete_all_schedules()
@@ -356,7 +360,7 @@ def _delete_saved_schedules(
             time_unspecified= time_unspecified
         )
     
-    return tool_result(tool_name="_delete_saved_schedules", deleted_filters=delete_filters, deleted=deleted)
+    return tool_result(tool_name="_delete_saved_schedules", filters=delete_filters, deleted_count=len(deleted), deleted=deleted)
 
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
@@ -364,7 +368,7 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
     # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
     return SaveStructuredRequestInput(
         title= schedule["title"],
-        date= schedule["dadte"],
+        date= schedule["date"],
         start_time=schedule["start_time"],
         end_time=schedule["end_time"],
         members=schedule["attendees"],
@@ -427,7 +431,7 @@ def save_structured_request(
     save_result = store.save_structured_request(save_dict)
 
     # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
-    return json_payload(tool_result("save_structured_request", ok=True, save_request=save_result))
+    return json_payload(tool_result("save_structured_request", save_request=save_result))
 
 
 @tool(args_schema=SavedRequestListInput)
@@ -446,7 +450,7 @@ def list_saved_requests(
         date_to=date_to
         )
     
-    return json_payload(tool_result(ok=True, tool_name= "list_saved_requests", rows= rows_))
+    return json_payload(tool_result(tool_name= "list_saved_requests", rows= rows_))
 
 
 
@@ -457,7 +461,7 @@ def get_saved_request(request_id: str) -> str:
     # TODO: request_id로 단건 조회하고, 결과가 없을 때도 row=None을 유지해 JSON 문자열로 반환하세요.
     store = _store()
     row_ = store.get_saved_request(request_id=request_id)
-    return json_payload(tool_result(ok=True, tool_name= "get_saved_request", row= row_))
+    return json_payload(tool_result(tool_name= "get_saved_request", row= row_))
 
 
 @tool(args_schema=SavedScheduleListInput)
@@ -505,7 +509,7 @@ def delete_saved_schedules_dict(
     store = app_store or _store()
 
     return _delete_saved_schedules(
-        store,
+        store=store,
         schedule_ids=schedule_ids,
         date= date,
         title= title,
@@ -529,8 +533,9 @@ def personal_update_saved_schedule(
 
     # TODO: None이 아닌 수정 필드를 AppSQLiteStore.update_schedule(...)에 전달하세요.
     # TODO: ID가 없으면 ok=False, 있으면 updated_schedule/shared_sync를 담아 JSON 문자열로 반환하세요.
-    if schedule_id is None:
-        return json_payload(tool_result(tool_name="personal_update_saved_schedule", ok=False, error= "schedule_id 없음"))
+    search = _store().update_schedule(schedule_id=schedule_id)
+    if search is None:
+        return json_payload(tool_result(tool_name="personal_update_saved_schedule", ok=False, error= "schedule_id is Not in DB"))
     else:
         store = _store()
         updated_schedule = store.update_schedule(
@@ -543,7 +548,6 @@ def personal_update_saved_schedule(
         )
 
         return json_payload(tool_result(tool_name="personal_update_saved_schedule", updated_schedule= updated_schedule))
-        # return json_payload({"ok": True, "tool_name": "personal_update_saved_schedule", "updated_schedule": updated_schedule})
 
 
 @tool(args_schema=SavedScheduleDeleteInput)
@@ -559,6 +563,7 @@ def personal_delete_saved_schedules(
 
     # TODO: _delete_saved_schedules(...)에 삭제 조건을 전달하고 결과를 JSON 문자열로 반환하세요.
     result = _delete_saved_schedules(
+        store=_store(),
         schedule_ids= schedule_ids,
         date= date,
         title= title,
