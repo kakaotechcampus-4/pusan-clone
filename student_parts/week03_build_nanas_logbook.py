@@ -42,17 +42,22 @@ WEEK03_TOOL_CALL_PROMPT = (
     "인자로 넘겨 저장한다. 자연어 원문이나 ok/tool_name/base_date 같은 wrapper를 구조화 없이 바로 "
     "저장하지 않는다. 저장된 일정을 조회할 때는 personal_list_saved_schedules로 후보를 확인하고, "
     "원본 구조화 요청 기록은 list_saved_requests·get_saved_request로 조회한다. "
-    "수정/삭제 요청(예: '개인 코칭 시간 바꿔줘', 'X 일정 지워줘')을 받으면, 어떤 경우에도 사용자에게 "
-    "날짜나 존재 여부를 되묻기 전에 반드시 먼저 personal_list_saved_schedules를 호출한다. "
-    "일정이 있는지 모른다는 이유로 되묻지 않는다 — 그건 네가 이 조회 tool로 직접 확인할 일이다. "
-    "사용자가 날짜를 말하지 않았으면 date_from/date_to를 절대 채우지 말고(특히 '오늘'로 좁히지 말 것) "
-    "비운 채 전체 기간을 조회한 뒤 제목으로 대상을 고른다. "
-    "예: '개인 코칭 시간을 오후 2시로 바꿔줘' → 먼저 personal_list_saved_schedules(limit=50) 호출 → "
-    "결과에서 title이 '개인 코칭'인 항목의 schedule_id를 찾아 "
-    "personal_update_saved_schedule(schedule_id=<그 id>, start_time='14:00') 호출. "
-    "조회 결과가 실제로 비어 있을 때만 사용자에게 확인한다. "
-    "단, 제목이 여러 건 매칭되고 사용자가 날짜/시간으로 대상을 특정하지 않았으면 임의로 하나를 고르지 "
-    "말고, 후보들의 날짜·시간을 제시하며 어느 것인지 되묻는다. 정확히 한 건일 때만 바로 수정/삭제한다."
+    "수정 요청('개인 코칭 시간 바꿔줘')은 목록을 먼저 조회하지 말고, personal_update_saved_schedule에 "
+    "target_query(대상 제목)를 바로 넘긴다. 이 tool이 대상을 스스로 찾는다. 대상을 '찾는' 조건은 "
+    "target_query(제목)와 target_date(날짜)이고, '새로 바꿀 값'은 title/date/start_time이다 — 이 둘을 절대 "
+    "섞지 마라. 사용자가 날짜로 대상을 특정하면(예: '7월 20일 개인 코칭') 그 날짜는 target_date에 넣지 date에 "
+    "넣지 않는다(date는 일정 날짜 자체를 바꿀 때만 쓴다). "
+    "예: '개인 코칭 시간을 오후 2시로 바꿔줘' → personal_update_saved_schedule(target_query='개인 코칭', "
+    "start_time='14:00'). 예: '7월 20일 개인 코칭을 오후 2시로' → personal_update_saved_schedule("
+    "target_query='개인 코칭', target_date='2026-07-20', start_time='14:00'). "
+    "tool이 ok=false와 candidates(여러 건)를 돌려주면 그때만 후보들의 날짜·시간을 사용자에게 제시해 어느 "
+    "것인지 되묻고, 사용자가 고르면 그 schedule_id로 다시 호출한다. "
+    "tool이 대상을 못 찾았다고 할 때만 사용자에게 존재 여부를 확인한다. "
+    "삭제 요청('X 일정 지워줘')은 사용자에게 되묻기 전에 먼저 personal_list_saved_schedules로 대상을 조회해 "
+    "schedule_id를 확인한 뒤 personal_delete_saved_schedules에 넘긴다. 날짜를 안 주면 date_from/date_to를 "
+    "비워(특히 '오늘'로 좁히지 말 것) 전체 기간에서 제목으로 찾고, 여러 건이면 임의로 지우지 말고 후보를 제시해 "
+    "되묻는다. 전체 삭제(delete_all)는 되돌릴 수 없으므로, 사용자가 전체 삭제를 명시적으로 재확인한 경우에만 "
+    "confirm=True를 함께 넘겨 호출한다."
 )
 
 
@@ -264,12 +269,14 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     if isinstance(value, str):
         text = value.strip()
         try:
-            # JSON 문자열이면 그대로 파싱해 검증한다.
-            return SaveStructuredRequestInput.model_validate(json.loads(text))
-        except (json.JSONDecodeError, ValueError):
-            # 자연어면 Week 2 bridge로 먼저 구조화한 뒤 저장 입력으로 맞춘다.
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            # JSON이 아니면 자연어로 보고 Week 2 bridge로 먼저 구조화한다.
             structured = extract_structured_request(text)
             return SaveStructuredRequestInput.model_validate(structured.model_dump())
+        # JSON으로 파싱됐다면 구조화 payload를 넘기려는 의도다. 이때 검증 실패(ValidationError)는
+        # 조용히 자연어 재해석으로 넘기지 않고 그대로 올려 잘못된 payload가 드러나게 한다.
+        return SaveStructuredRequestInput.model_validate(parsed)
     raise RuntimeError(f"저장 입력으로 변환할 수 없는 타입입니다: {type(value).__name__}")
 
 
@@ -309,9 +316,16 @@ class SavedScheduleListInput(BaseModel):
 
 
 class SavedScheduleUpdateInput(BaseModel):
-    """저장 일정 수정 입력입니다."""
+    """저장 일정 수정 입력입니다.
 
-    schedule_id: str
+    대상은 schedule_id로 직접 지정하거나, target_query(제목)와 target_date(날짜)로 찾는다.
+    찾은 결과가 여러 건이면 tool이 임의로 고르지 않고 candidates를 돌려준다.
+    title/date/... 는 "새로 바꿀 값"이므로, "대상을 찾는" target_query/target_date와 역할이 다르다.
+    """
+
+    schedule_id: str | None = None
+    target_query: str | None = None
+    target_date: str | None = None
     title: str | None = None
     date: str | None = None
     start_time: str | None = None
@@ -328,6 +342,7 @@ class SavedScheduleDeleteInput(BaseModel):
     start_time: str | None = None
     time_unspecified: bool = False
     delete_all: bool = False
+    confirm: bool = False
 
 
 def _delete_saved_schedules(
@@ -339,6 +354,7 @@ def _delete_saved_schedules(
     start_time: str | None = None,
     time_unspecified: bool = False,
     delete_all: bool = False,
+    confirm: bool = False,
 ) -> dict[str, Any]:
     """삭제 guard와 DB 호출을 한 곳에 둡니다."""
 
@@ -349,6 +365,7 @@ def _delete_saved_schedules(
         "start_time": start_time,
         "time_unspecified": time_unspecified,
         "delete_all": delete_all,
+        "confirm": confirm,
     }
     # 파괴적 연산이므로 delete_all도 아니고 필터도 하나 없으면 거부한다(전체 삭제 사고 방지).
     has_filter = any([schedule_ids, date, title, start_time, time_unspecified])
@@ -360,6 +377,17 @@ def _delete_saved_schedules(
             filters=filters,
             deleted=[],
             error="삭제 조건이 없습니다. schedule_ids나 날짜/제목/시간 필터, 또는 delete_all을 지정하세요.",
+        )
+
+    # 전체 삭제는 되돌릴 수 없으므로, 프롬프트 유도가 아니라 코드에서 명시적 confirm을 요구한다.
+    if delete_all and not confirm:
+        return tool_result(
+            "personal_delete_saved_schedules",
+            ok=False,
+            deleted_count=0,
+            filters=filters,
+            deleted=[],
+            error="전체 삭제(delete_all)는 되돌릴 수 없어 confirm=True를 함께 넘겨야 실행됩니다.",
         )
 
     if delete_all:
@@ -519,6 +547,7 @@ def delete_saved_schedules_dict(
     start_time: str | None = None,
     time_unspecified: bool = False,
     delete_all: bool = False,
+    confirm: bool = False,
     app_store: AppSQLiteStore | None = None,
 ) -> dict[str, Any]:
     """tool invoke 없이 저장 일정 삭제 로직을 직접 호출합니다."""
@@ -531,12 +560,15 @@ def delete_saved_schedules_dict(
         start_time=start_time,
         time_unspecified=time_unspecified,
         delete_all=delete_all,
+        confirm=confirm,
     )
 
 
 @tool(args_schema=SavedScheduleUpdateInput)
 def personal_update_saved_schedule(
-    schedule_id: str,
+    schedule_id: str | None = None,
+    target_query: str | None = None,
+    target_date: str | None = None,
     title: str | None = None,
     date: str | None = None,
     start_time: str | None = None,
@@ -545,9 +577,56 @@ def personal_update_saved_schedule(
 ) -> str:
     """앱 DB에 저장된 내 일정 원본을 수정하고 공유 일정 복사본을 같은 값으로 갱신합니다."""
 
+    store = _store()
+
+    # 대상 확정: schedule_id 직접 지정이 최우선. 없으면 target_query(제목)+target_date(날짜)로 찾는다.
+    # target_date/target_query는 "찾는 조건"이고, 아래 date/title 등은 "새로 바꿀 값"이라 역할이 다르다.
+    # 후보가 2건 이상이면 임의로 하나를 고르지 않고 candidates를 반환한다
+    # (파괴적일 수 있는 "어느 일정을 고칠지" 판단을 프롬프트가 아니라 코드에서 막는다).
+    if schedule_id is None:
+        if not target_query:
+            return json_payload(
+                tool_result(
+                    "personal_update_saved_schedule",
+                    ok=False,
+                    error="수정 대상을 지정하세요(schedule_id 또는 target_query).",
+                )
+            )
+        matches = store.find_schedules(title=target_query, date=target_date)
+        if len(matches) == 0:
+            return json_payload(
+                tool_result(
+                    "personal_update_saved_schedule",
+                    ok=False,
+                    target_query=target_query,
+                    target_date=target_date,
+                    error=f"'{target_query}'에 해당하는 일정을 찾을 수 없습니다.",
+                )
+            )
+        if len(matches) > 1:
+            candidates = [
+                {
+                    "schedule_id": m["schedule_id"],
+                    "title": m.get("title"),
+                    "date": m.get("date"),
+                    "start_time": m.get("start_time"),
+                }
+                for m in matches
+            ]
+            return json_payload(
+                tool_result(
+                    "personal_update_saved_schedule",
+                    ok=False,
+                    target_query=target_query,
+                    candidates=candidates,
+                    error="일치하는 일정이 여러 건입니다. candidates에서 하나를 골라 schedule_id로 다시 요청하세요.",
+                )
+            )
+        schedule_id = matches[0]["schedule_id"]
+
     # None은 "수정하지 않음"이라는 뜻이므로 제외하지 않고 그대로 넘긴다.
     # store.update_schedule 이 필드별로 None이면 기존값을 유지한다.
-    result = _store().update_schedule(
+    result = store.update_schedule(
         schedule_id,
         title=title,
         date=date,
@@ -581,6 +660,7 @@ def personal_delete_saved_schedules(
     start_time: str | None = None,
     time_unspecified: bool = False,
     delete_all: bool = False,
+    confirm: bool = False,
 ) -> str:
     """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다."""
 
@@ -592,6 +672,7 @@ def personal_delete_saved_schedules(
         start_time=start_time,
         time_unspecified=time_unspecified,
         delete_all=delete_all,
+        confirm=confirm,
     )
     return json_payload(result)
 
@@ -650,8 +731,9 @@ def build_week03_agent() -> object:
     if _WEEK03_AGENT is None:
         # 구조화 tool과 저장 tool이 순서 의존(extract_schedule_request → save_structured_request)이므로
         # 병렬 tool 호출을 꺼서 "구조화 결과를 못 받은 채 저장"하는 경로를 구조적으로 차단한다.
-        # chat_model()이 캐시된 싱글턴을 반환하더라도 다른 주차 agent에 영향이 없도록,
-        # 공유 인스턴스를 직접 수정하지 않고 Week 3 전용 복사본(방어적 복사)을 만든다.
+        # 현재 chat_model()은 매 호출 새 인스턴스를 반환하므로 이 model_kwargs를 직접 수정해도 안전하다.
+        # model_copy는 지금 당장 필요한 조치는 아니고, 나중에 chat_model()이 캐싱/싱글턴으로 바뀌더라도
+        # 다른 주차 agent가 이 설정에 오염되지 않도록 하는 대비용(방어적 복사)이다.
         base_model = chat_model()
         model = base_model.model_copy(
             update={"model_kwargs": {**base_model.model_kwargs, "parallel_tool_calls": False}}
