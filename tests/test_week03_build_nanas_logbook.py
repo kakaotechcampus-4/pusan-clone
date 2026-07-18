@@ -280,11 +280,27 @@ def test_save_input_from_text_prefixes_today_date_before_llm_call(monkeypatch):
 
 
 def test_week03_prompt_instructs_get_current_date_before_extract_schedule_request():
-    prompt = w3.week03_system_prompt()
+    """week02_prompt_parts()에도 예전부터 'get_current_date tool을 호출해 상대 날짜를
+    해석한다'는 문구가 있어서, get_current_date/extract_schedule_request/오늘 날짜라는
+    단어만 포함됐는지 보면 week03에 새로 추가한 문장을 지워도 이 테스트가 그대로
+    통과해버린다(week02 쪽 문구만으로 키워드가 다 채워지므로). 그래서 이번에 week03에
+    새로 추가한 문장 자체가 실제로 들어있는지 확인한다.
+    """
 
-    assert "get_current_date" in prompt
-    assert "extract_schedule_request" in prompt
-    assert "오늘 날짜" in prompt
+    new_instruction = (
+        "extract_schedule_request는 호출 중에 get_current_date tool을 다시 호출할 수 없으므로, "
+        "상대 날짜(내일/모레/다음 주 등) 계산이 필요한 요청을 extract_schedule_request에 넘기기 전에 "
+        "먼저 get_current_date로 오늘 날짜를 확인하고, 그 날짜를 '[오늘 날짜: YYYY-MM-DD]' 형태로 "
+        "요청 문장 앞에 붙여서 넘긴다."
+    )
+
+    week02_prompt = w3.join_system_prompt(w3.week02_prompt_parts())
+    week03_prompt = w3.week03_system_prompt()
+
+    # week02 prompt에는 이 문장이 없어야 한다(week03에서만 새로 추가된 문장이라는 전제 확인).
+    assert new_instruction not in week02_prompt
+    # week03 prompt에는 이 문장이 정확히 그대로 들어있어야 한다.
+    assert new_instruction in week03_prompt
 
 
 def test_get_current_date_tool_is_actually_bound_for_week03_agent():
