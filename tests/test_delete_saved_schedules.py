@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from fixed.app_store import AppSQLiteStore
-from student_parts.week03_build_nanas_logbook import _delete_saved_schedules, delete_saved_schedules_dict
+import json
+
+from student_parts.week03_build_nanas_logbook import _delete_saved_schedules, delete_saved_schedules_dict, personal_delete_saved_schedules
 
 
 @pytest.fixture()
@@ -104,3 +106,25 @@ class TestDeleteSavedSchedulesDict:
     def test_no_filter_rejected(self, store: AppSQLiteStore):
         result = delete_saved_schedules_dict(app_store=store)
         assert result["ok"] is False
+
+
+class TestPersonalDeleteSavedSchedulesTool:
+    """personal_delete_saved_schedules tool을 검증합니다."""
+
+    def test_returns_json_string(self, store: AppSQLiteStore, monkeypatch):
+        _save_schedule(store, "회의", "2026-07-20")
+        monkeypatch.setattr("student_parts.week03_build_nanas_logbook._store", lambda: store)
+
+        raw = personal_delete_saved_schedules.invoke({"date": "2026-07-20"})
+        result = json.loads(raw)
+        assert result["ok"] is True
+        assert result["tool_name"] == "personal_delete_saved_schedules"
+        assert result["deleted_count"] == 1
+
+    def test_no_filter_returns_error(self, store: AppSQLiteStore, monkeypatch):
+        monkeypatch.setattr("student_parts.week03_build_nanas_logbook._store", lambda: store)
+
+        raw = personal_delete_saved_schedules.invoke({})
+        result = json.loads(raw)
+        assert result["ok"] is False
+        assert result["deleted_count"] == 0
