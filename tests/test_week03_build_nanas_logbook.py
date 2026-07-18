@@ -85,8 +85,12 @@ def test_save_structured_request_payload_with_dict(store):
     assert "request_id" in result
 
 
-def test_save_structured_request_payload_with_json_string(store):
+def test_save_structured_request_payload_with_json_string(store, monkeypatch):
+    """JSON 문자열도 이제 항상 extract_structured_request(LLM)를 거치므로 stub으로 대체해 결정적으로 검증합니다."""
+
     payload_text = json.dumps({"kind": "todo", "title": "장보기", "date": "2026-07-19"}, ensure_ascii=False)
+    stub_result = StructuredRequest(kind="todo", title="장보기", date="2026-07-19", original_text=payload_text)
+    monkeypatch.setattr(w3, "extract_structured_request", lambda text: stub_result)
 
     result = w3.save_structured_request_payload(payload_text, store=store)
 
@@ -175,8 +179,14 @@ def test_save_input_from_rejects_str_and_unsupported_types():
         w3._save_input_from(12345)
 
 
-def test_save_input_from_text_parses_json_string():
-    parsed = w3._save_input_from_text(json.dumps({"kind": "todo", "title": "청소"}))
+def test_save_input_from_text_parses_json_string(monkeypatch):
+    """JSON 문자열도 이제 항상 extract_structured_request(LLM)를 거치므로 stub으로 대체해 결정적으로 검증합니다."""
+
+    json_text = json.dumps({"kind": "todo", "title": "청소"})
+    stub_result = StructuredRequest(kind="todo", title="청소", original_text=json_text)
+    monkeypatch.setattr(w3, "extract_structured_request", lambda text: stub_result)
+
+    parsed = w3._save_input_from_text(json_text)
     assert parsed.kind == "todo"
     assert parsed.title == "청소"
 
@@ -189,6 +199,56 @@ def test_save_input_from_text_falls_back_to_llm_extraction(monkeypatch):
 
     assert parsed.kind == "todo"
     assert parsed.title == "빨래 널기"
+
+
+def test_save_input_from_text_sends_week1_wrapper_json_through_llm(monkeypatch):
+    """personal_create_schedule의 원본 출력처럼 ok/tool_name/created_schedule로 중첩되고
+    필드명도 다른(attendees vs members) JSON 문자열이 들어와도, model_validate로 바로
+    검증하지 않고 항상 extract_structured_request(LLM)를 거쳐야 함을 확인합니다.
+
+    수정 전 코드는 이 문자열이 JSON으로 파싱 가능하다는 이유만으로 바로
+    model_validate를 태워서, title/members 등이 조용히 유실(kind="unknown")됐습니다.
+    """
+
+    week1_wrapper_text = json.dumps(
+        {
+            "ok": True,
+            "tool_name": "personal_create_schedule",
+            "created_schedule": {
+                "title": "팀 회의",
+                "date": "2026-07-22",
+                "start_time": "15:00",
+                "attendees": ["철수", "영희"],
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    calls: list[str] = []
+
+    def fake_extract(text: str) -> StructuredRequest:
+        calls.append(text)
+        return StructuredRequest(
+            kind="personal_schedule",
+            title="팀 회의",
+            date="2026-07-22",
+            start_time="15:00",
+            members=["철수", "영희"],
+            original_text=text,
+        )
+
+    monkeypatch.setattr(w3, "extract_structured_request", fake_extract)
+
+    parsed = w3._save_input_from_text(week1_wrapper_text)
+
+    # extract_structured_request가 실제로 호출됐는지(원본 문자열 그대로 넘어갔는지) 확인합니다.
+    assert calls == [week1_wrapper_text]
+
+    # stub이 돌려준 값대로 필드가 채워져야 하고, kind="unknown"/title=None으로 유실되면 안 됩니다.
+    assert parsed.kind == "personal_schedule"
+    assert parsed.title == "팀 회의"
+    assert parsed.date == "2026-07-22"
+    assert parsed.members == ["철수", "영희"]
 
 
 # ---------------------------------------------------------------------------

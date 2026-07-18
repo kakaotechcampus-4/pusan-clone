@@ -262,15 +262,14 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
 
 
 def _save_input_from_text(text: str) -> SaveStructuredRequestInput:
-    """JSON 문자열 또는 자연어 문자열 저장 입력을 SaveStructuredRequestInput으로 변환합니다."""
+    """JSON 문자열 또는 자연어 문자열 저장 입력을 SaveStructuredRequestInput으로 변환합니다.
+
+    입력 문자열이 이미 저장용 payload 형태라는 보장이 없다(예: 다른 tool의 원본 출력이
+    중첩/다른 필드명으로 들어올 수 있음). 그래서 "JSON처럼 생겼는지"로 분기하지 않고,
+    문자열이면 항상 LLM 기반 extract_structured_request로 구조화한다.
+    """
 
     text = text.strip()
-    try:
-        parsed = json.loads(text)
-    except (TypeError, ValueError):
-        parsed = None
-    if isinstance(parsed, dict):
-        return SaveStructuredRequestInput.model_validate(parsed)
     structured = extract_structured_request(text)
     return SaveStructuredRequestInput(**structured.model_dump())
 
