@@ -302,7 +302,8 @@ def save_structured_request_payload(
     # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
     save_input = _save_input_from(request)
     app_store = store or _store()
-    saved = app_store.save_structured_request(save_input.model_dump())
+    # tool 버전 save_structured_request와 동일하게 None 필드는 저장 payload에서 제외한다.
+    saved = app_store.save_structured_request(save_input.model_dump(exclude_none=True))
     return tool_result("save_structured_request", **saved)
 
 
