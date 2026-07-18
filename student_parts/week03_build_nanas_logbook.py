@@ -36,7 +36,8 @@ SQLITE_MEMORY_PROMPT = (
 WEEK03_TOOL_CALL_PROMPT = (
     "사용자의 요청에 먼저 extract_schedule_request 로 요청을 구조화합니다. "
     "구조화된 요청을 save_structured_request 넘기고, SQLite DB에 저장합니다. "
-    "수정/삭제 시에는 이전 데이터를 먼저 조회합니다. "
+    "수정/삭제 요청 시에는 반드시 personal_list_saved_schedules를 먼저 호출하여 대상 일정을 확인한 뒤, "
+    "확인된 schedule_id나 필터를 사용하여 personal_update_saved_schedule 또는 personal_delete_saved_schedules를 호출합니다. "
     "사용자의 일정 저장 요청에 저장할까요? 라고 재질문하지 않고 일정을 저장합니다. "
     
 )
@@ -614,7 +615,8 @@ def week03_prompt_parts() -> list[str]:
         f"현재 날짜는 {today} 값을 이용",
         "SQLite DB 에 일정을 저장하고, 조회할 수 있습니다. ",
         "사용 가능한 도구는 extract_schedule_request, save_structured_request, "
-        "list_saved_requests, get_saved_request, personal_list_saved_schedules 입니다 ."
+        "list_saved_requests, get_saved_request, personal_list_saved_schedules, "
+        "personal_update_saved_schedule, personal_delete_saved_schedules 입니다."
     ]
 
 
