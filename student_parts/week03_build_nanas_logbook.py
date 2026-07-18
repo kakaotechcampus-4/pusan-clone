@@ -233,7 +233,6 @@ class SaveStructuredRequestInput(StructuredRequest):
         """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
 
         # TODO: StructuredRequest와 예전 payload/structured_request wrapper를 저장 입력 형태로 정규화하세요.
-
         return value
 
 
@@ -396,8 +395,6 @@ def personal_create_schedule(
         sqlite_save=saved,
         ))
 
-    
-
 
 @tool(args_schema=SaveStructuredRequestInput)
 def save_structured_request(
@@ -443,7 +440,7 @@ def list_saved_requests(
     """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
 
     # TODO: kind/date_from/date_to 필터로 저장 요청을 조회하고 rows를 JSON 문자열로 반환하세요.
-    rows= _store().list_saved_requests(kind, date_from, date_to)
+    rows= _store().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)
     return json_payload(tool_result("list_saved_requests", rows=rows))
 
 @tool(args_schema=SavedRequestGetInput)
@@ -515,13 +512,20 @@ def personal_update_saved_schedule(
         "attendees":attendees,
     }
     fields = {k: v for k, v in fields.items() if v is not None}
-    result = _store().update_schedule(schedule_id, **fields)
+    result = _store().update_schedule(schedule_id=schedule_id, **fields)
 
     if result is None:
-        return json_payload(tool_result("personal_update_saved_schedule", ok=False, error=f"schedule_id: {schedule_id} 없음"))
+        return json_payload(tool_result(
+            "personal_update_saved_schedule",
+            ok=False,
+            error=f"schedule_id: {schedule_id} 없음",
+            updated_schedule=None,
+            shared_sync=None,
+        ))
     
     return json_payload(tool_result(
         "personal_update_saved_schedule",
+        error=None,
         updated_schedule=result["schedule"],
         shared_sync=result["shared_sync"]
     ))    
