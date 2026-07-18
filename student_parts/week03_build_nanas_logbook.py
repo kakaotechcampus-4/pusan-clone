@@ -487,7 +487,7 @@ def personal_list_saved_schedules(
         date_to= date_to
     )
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
-    return json_payload(tool_result(ok=True, tool_name="personal_list_saved_schedules", filters=filters_, schedules= schedules_))
+    return json_payload(tool_result(tool_name="personal_list_saved_schedules", filters=filters_, schedules= schedules_))
 
 
 def delete_saved_schedules_dict(
@@ -529,7 +529,21 @@ def personal_update_saved_schedule(
 
     # TODO: None이 아닌 수정 필드를 AppSQLiteStore.update_schedule(...)에 전달하세요.
     # TODO: ID가 없으면 ok=False, 있으면 updated_schedule/shared_sync를 담아 JSON 문자열로 반환하세요.
-    ...
+    if schedule_id is None:
+        return json_payload(tool_result(tool_name="personal_update_saved_schedule", ok=False, error= "schedule_id 없음"))
+    else:
+        store = _store()
+        updated_schedule = store.update_schedule(
+            schedule_id=schedule_id,
+            title=title,
+            date=date,
+            start_time=start_time,
+            end_time=end_time,
+            attendees=attendees
+        )
+
+        return json_payload(tool_result(tool_name="personal_update_saved_schedule", updated_schedule= updated_schedule))
+        # return json_payload({"ok": True, "tool_name": "personal_update_saved_schedule", "updated_schedule": updated_schedule})
 
 
 @tool(args_schema=SavedScheduleDeleteInput)
