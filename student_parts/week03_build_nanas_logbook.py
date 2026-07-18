@@ -64,6 +64,21 @@ WEEK03_TOOL_CALL_PROMPT = (
     "조건 없는 삭제는 거부되며, delete_all=True는 사용자가 명시적으로 전체 삭제를 요청했을 때만 쓴다."
 )
 
+# 저장/조회 결과를 사용자에게 보여줄 때의 kind별 답변 포맷 규칙.
+# Week 1 한 줄 포맷은 '일정' 전용 문구라 reminder/todo에는 적용 근거가 없었고,
+# Week 2의 '[Week 1 답변 규칙 무효화]' 조각이 스택에 남아 있어 재활성화가 필요하다.
+WEEK03_ANSWER_FORMAT_PROMPT = (
+    "[Week 3 답변 포맷] Week 2의 '[Week 1 답변 규칙 무효화]'는 Week 3에서는 적용하지 않는다. "
+    "저장·조회·수정·삭제 결과로 기록을 보여줄 때는 kind와 관계없이 항상 아래 한 줄 포맷을 쓴다. "
+    "일정(personal_schedule/group_schedule)은 Week 1 포맷 그대로 "
+    "'- [제목] MM/DD HH:MM ~ HH:MM (참여자: 이름, 이름)'을 쓴다. "
+    "알림(reminder)은 '- [제목] MM/DD HH:MM (알림)'으로 쓰되 시간이 없으면 HH:MM을 생략한다. "
+    "할 일(todo)은 '- [제목] ~MM/DD (우선순위: 값)'으로 쓰되 마감일이 없으면 '~MM/DD'를, "
+    "priority가 없으면 '(우선순위: ...)' 부분을 생략한다. "
+    "여러 건이면 한 건씩 줄바꿈해 나열하고, request_id·raw_json·created_at 같은 내부 필드 값은 "
+    "표기하지 않는다. 이 포맷 규칙은 reminder·todo 조회 결과에도 예외 없이 적용한다."
+)
+
 
 # [3주차 수강생 구현 가이드]
 #
@@ -676,10 +691,11 @@ def week03_prompt_parts() -> list[str]:
             "끝내지 말고 save_structured_request로 SQLite에 저장한 뒤 결과를 알린다. "
             "Week 2의 '구조화 결과는 아직 저장하지 않는다'는 범위 규칙과 '최종 답변은 항상 "
             "StructuredRequestBatch'라는 답변 규칙은 Week 3에서 적용하지 않는다. 최종 답변은 다시 "
-            "자연어 텍스트로 하고, 일정을 보여줄 때는 Week 1의 일정 한 줄 포맷을 사용한다."
+            "자연어 텍스트로 하고, 기록을 보여줄 때는 [Week 3 답변 포맷]의 kind별 한 줄 포맷을 사용한다."
         ),
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
+        WEEK03_ANSWER_FORMAT_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
         (
             f"[Week 3 범위] 너는 Week 3 기록장 agent다. 오늘은 {current_app_date_iso()}이며 상대 날짜는 "
