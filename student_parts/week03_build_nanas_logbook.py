@@ -457,7 +457,7 @@ def save_structured_request(  # 메인
 
     saved = _store().save_structured_request(payload)
 
-    return json_payload(tool_result("save_structured_request", saved=saved))
+    return json_payload(tool_result("save_structured_request", **saved))
 
 
 @tool(args_schema=SavedRequestListInput)
