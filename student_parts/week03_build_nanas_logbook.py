@@ -269,7 +269,6 @@ def _save_input_from_text(text: str) -> SaveStructuredRequestInput:
     문자열이면 항상 LLM 기반 extract_structured_request로 구조화한다.
     """
 
-    text = text.strip()
     structured = extract_structured_request(text)
     return SaveStructuredRequestInput(**structured.model_dump())
 
