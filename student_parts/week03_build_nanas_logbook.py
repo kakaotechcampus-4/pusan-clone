@@ -425,7 +425,10 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
         end_time=None if end_time == "미정" else end_time,
         members=list(schedule.get("attendees") or []),
         reason="Week 1 personal_create_schedule 임시 일정을 SQLite에 이중 기록",
-        original_text=json.dumps(schedule, ensure_ascii=False),
+        # original_text=
+        # original_text는 "사용자 자연어 원문" 전용 필드다. 이 경로에는 사용자 원문이 없으므로
+        # schedule dict JSON을 넣지 않고 비워 둔다(출처 추적은 reason/source_schedule_id가 담당).
+        # JSON을 넣으면 raw_json LIKE 검색(search_saved_requests)에서 키 이름까지 매칭되는 오염이 생긴다.
         source_schedule_id=schedule.get("id"),
     )
 
