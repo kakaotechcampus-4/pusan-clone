@@ -269,7 +269,7 @@ def save_structured_request_payload(
     validate = _save_input_from(request)
     
     # pydantic 객체를 dict로 변환하고 None 값은 제외 
-    payload = {k :v for k ,v in validate.model_dump().items() if v is not None}
+    payload = validate.model_dump(exclude_none=True)
     st = store or _store()
     return st.save_structured_request(payload)
 
