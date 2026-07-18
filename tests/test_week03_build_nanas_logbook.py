@@ -241,8 +241,9 @@ def test_save_input_from_text_sends_week1_wrapper_json_through_llm(monkeypatch):
 
     parsed = w3._save_input_from_text(week1_wrapper_text)
 
-    # extract_structured_request가 실제로 호출됐는지(원본 문자열 그대로 넘어갔는지) 확인합니다.
-    assert calls == [week1_wrapper_text]
+    # extract_structured_request가 실제로 호출됐는지, 그리고 상대 날짜 계산을 위해
+    # 오늘 날짜가 접두사로 붙어 원본 문자열을 감싸서 넘어갔는지 확인합니다.
+    assert calls == [f"[오늘 날짜: {w3.current_app_date_iso()}] {week1_wrapper_text}"]
 
     # stub이 돌려준 값대로 필드가 채워져야 하고, kind="unknown"/title=None으로 유실되면 안 됩니다.
     assert parsed.kind == "personal_schedule"

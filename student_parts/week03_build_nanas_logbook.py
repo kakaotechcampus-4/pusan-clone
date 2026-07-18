@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.app_store import AppSQLiteStore
+from fixed.runtime_clock import current_app_date_iso
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
     personal_create_schedule as week01_personal_create_schedule,
@@ -269,7 +270,8 @@ def _save_input_from_text(text: str) -> SaveStructuredRequestInput:
     문자열이면 항상 LLM 기반 extract_structured_request로 구조화한다.
     """
 
-    structured = extract_structured_request(text)
+    text_with_date = f"[오늘 날짜: {current_app_date_iso()}] {text}"
+    structured = extract_structured_request(text_with_date)
     return SaveStructuredRequestInput(**structured.model_dump())
 
 
@@ -652,7 +654,15 @@ def week03_prompt_parts() -> list[str]:
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
-        # 현재 날짜는 week01/week02 프롬프트에서 이미 get_current_date tool 호출로 안내하므로 중복 주입하지 않는다.
+        # week01/week02는 get_current_date tool을 직접 호출해 오늘 날짜를 확인하지만,
+        # extract_schedule_request가 내부에서 쓰는 구조화 LLM 호출(extract_structured_request)은
+        # tool을 호출할 수 없는 별도 호출이라 그 안내가 적용되지 않는다. 그래서 이번 주차는
+        # current_app_date_iso 기반으로 이미 계산된 오늘 날짜를 자연어 요청 문장에 직접 포함시켜
+        # 넘기는 방식을 쓴다는 것을 아래에 명시한다.
+        "extract_schedule_request는 호출 중에 get_current_date tool을 다시 호출할 수 없으므로, "
+        "상대 날짜(내일/모레/다음 주 등) 계산이 필요한 요청을 extract_schedule_request에 넘기기 전에 "
+        "먼저 get_current_date로 오늘 날짜를 확인하고, 그 날짜를 '[오늘 날짜: YYYY-MM-DD]' 형태로 "
+        "요청 문장 앞에 붙여서 넘긴다.",
         "저장/조회/수정/삭제 중 어떤 tool을 호출할지는 사용자의 가장 최근 메시지 의도로 판단하고, "
         "불필요하게 여러 tool을 동시에 호출하지 않습니다.",
         "이번 주차의 범위는 SQLite 기반 개인 일정/할 일/알림의 저장, 조회, 수정, 삭제까지이며, "
