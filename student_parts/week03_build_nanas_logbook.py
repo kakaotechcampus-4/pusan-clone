@@ -413,7 +413,13 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
-    created = week01_personal_create_schedule(title, date, start_time, end_time, attendees)
+    created = week01_personal_create_schedule.invoke({
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees,
+    })
     created_schedule = json.loads(created)
     
     validate = structured_request_from_week01_schedule(created_schedule["created_schedule"])
