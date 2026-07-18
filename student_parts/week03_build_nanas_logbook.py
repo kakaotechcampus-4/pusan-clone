@@ -29,22 +29,26 @@ _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
 SQLITE_MEMORY_PROMPT = (
-    "새 대화에서도 과거의 일정/할 일/알림을 조회할 수 있도록 앱 SQLite DB를 사용해 영속 메모리의 형태로 저장한다. "
-    "현재 대화에서 알 수 없는 일정/할 일/알림을 물으면 get_saved_request, list_saved_requests, personal_list_saved_schedules로 "
-    "DB를 조회한 결과를 답변한다. 저장된 기록이 없으면 없다고 답한다."
+    "일정/할 일/알림은 앱 SQLite DB에 영속 메모리로 저장되므로, 현재 대화뿐 아니라 새 대화에서도 과거 기록을 조회/수정/삭제할 수 있다. "
+    "현재 대화에서 알 수 없는 일정/할 일/알림을 물으면 get_saved_request, list_saved_requests, personal_list_saved_schedules로 DB를 조회한 결과를 답변하고, 저장된 기록이 없으면 없다고 답한다. "
+    "저장된 일정은 personal_update_saved_schedule로 수정하고 personal_delete_saved_schedules로 삭제한다. "
+    "개인 일정의 저장/수정/삭제는 외부 공유 일정 복사본에도 함께 반영된다. "
 )
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
 WEEK03_TOOL_CALL_PROMPT = (
     "일정/할 일/알림 저장 요청은 다음 순서를 따른다. "
     "1. extract_schedule_request(사용자 요청)로 자연어를 structured_request로 구조화한다. "
-    "2. structured_request의 kind/title/date/start_time/end_time/members/priority/reason/original_text 값을 save_structured_request에 인자로 전달해 SQLite에 저장한다."
-    "저장된 구조화 요청 조회는 반드시 get_saved_request이나 list_saved_requests를 쓰고, 저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
-    "personal_delete_schedule은 현재 대화에서만 유지되는 임시 메모리이다. 현재 단계에서는 일정 삭제를 진행하지 않는다. "
-    "만약 사용자가 일정 삭제를 요청할 경우, 현재 일정을 삭제할 수 없다고 안내한다. "
-    "반드시 사용자의 '현재 메시지'가 명확히 저장/조회를 요청할 때만 해당 tool을 호출한다. "
+    "2. structured_request의 kind/title/date/start_time/end_time/members/priority/reason/original_text 값을 save_structured_request에 인자로 전달해 SQLite에 저장한다. "
+    "개인 일정 생성 요청에는 personal_create_schedule을 쓴다. 이 도구는 임시 메모리와 SQLite에 함께 기록되므로 새 대화에서도 일정이 유지된다. "
+    "저장된 구조화 요청 조회는 get_saved_request(단건 요청)과 list_saved_requests(여러 요청)를 쓰고, 저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
+    "저장된 일정 수정 요청에는 personal_update_saved_schedule에 schedule_id와 바꿀 필드만 전달한다. 바꾸지 않을 필드는 넘기지 않으며, 개인 일정은 공유 일정 복사본도 함께 갱신된다. "
+    "저장된 일정 삭제 요청에는 먼저 personal_list_saved_schedules로 대상 schedule_id를 확인한 뒤 personal_delete_saved_schedules에 schedule_ids나 날짜/제목/시간 필터를 전달한다. "
+    "조건 없이 삭제하지 않으며, 사용자가 전체 삭제를 명확하게 요청할 때만 delete_all=True를 사용한다. 수정/삭제 전에는 반드시 personal_list_saved_schedules로 대상 일정을 먼저 확인한다. "
+    "사용자의 현재 메시지가 명확하게 저장/조회/수정/삭제를 요청할 때만 해당 tool을 호출한다. "
     "뜻을 알 수 없거나 일정과 무관한 입력에는 어떤 tool도 호출하지 말고 무엇을 도와줄지 되묻는다. "
-    "직전 요청에서 일정을 저장했다는 이유만으로 저장을 반복하지 않는다."
+    "직전 요청에서 일정을 저장했다는 이유만으로 저장/수정/삭제를 반복하지 않는다. "
+    "일정은 personal_list_saved_schedules, 할 일과 알림을 포함한 전체 기록은 list_saved_requests를 쓴다."
 )
 
 
@@ -621,9 +625,10 @@ def week03_prompt_parts() -> list[str]:
         WEEK03_TOOL_CALL_PROMPT,
         # DONE: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
         # (날짜 정보는 저번 추가 프롬프트에 전달됨)
-        "새 일정/할 일/알림 저장 요청에는 extract_schedule_request 후 save_structured_request를 사용하고, "
-        "저장 기록 조회는 get_saved_request/list_saved_requests/personal_list_saved_schedules를 쓴다. "
-        "구조화된 결과를 SQLite에 저장하지 못하면 오류를 반환한다.",
+        "새 일정/할 일/알림 저장 요청에는 extract_schedule_request 후 save_structured_request를 사용하고(개인 일정 직접 생성은 personal_create_schedule), "
+        "저장 기록 조회는 get_saved_request/list_saved_requests/personal_list_saved_schedules를, "
+        "저장 일정 수정은 personal_update_saved_schedule, 삭제는 personal_delete_saved_schedules를 쓴다. "
+        "수정/삭제는 personal_list_saved_schedules로 대상 schedule_id를 먼저 확인한 뒤 진행하며, 구조화된 결과를 SQLite에 저장하지 못하면 오류를 반환한다.",
     ]
 
 
