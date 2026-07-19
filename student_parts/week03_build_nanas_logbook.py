@@ -350,6 +350,25 @@ def _delete_saved_schedules(
             filters=filters,
             deleted=[],
         )
+    # 명시적 schedule_ids/delete_all 없이 필터로만 지울 때, 여러 건이 매칭되면
+    # 실수로 인한 대량 삭제를 막기 위해 삭제를 보류하고 후보를 돌려준다.
+    if not delete_all and not schedule_ids:
+        candidates = store.find_schedules(
+            date=date,
+            title=title,
+            start_time=start_time,
+            time_unspecified=time_unspecified,
+        )
+        if len(candidates) > 1:
+            return tool_result(
+                "personal_delete_saved_schedules",
+                ok=False,
+                reason="조건에 여러 일정이 매칭됩니다. schedule_id로 하나를 특정하거나 delete_all=True로 명시하세요.",
+                deleted_count=0,
+                filters=filters,
+                deleted=[],
+                candidates=candidates,
+            )
     if delete_all:
         deleted = store.delete_all_schedules()
     else:
