@@ -355,6 +355,9 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any], kind: Requ
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
     # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
+    if len(schedule.get("attendees")) > 0:
+        kind = "group_schedule"
+        
     return SaveStructuredRequestInput(
         kind=kind,
         title=schedule.get("title"),
@@ -456,6 +459,10 @@ def save_structured_request(
         # None이 아닌 value만 남기고 self는 제외.
         key: value for key, value in locals().items() if key != "self" and value is not None
     }
+
+    if len(members) > 0:
+        save_dict["kind"] = "group_schedule"
+
     store = _store()
     # request_id가 포함된 저장 결과를 받음
     # saved_rows도 포함되어 있으므로 필요에 따라 활용 가능
@@ -643,7 +650,7 @@ def week03_prompt_parts() -> list[str]:
         "personal_list_saved_schedules를 사용하고, 실제 삭제는 personal_delete_schedule이 아닌 "
         "personal_delete_saved_schedules를 호출합니다. personal_list_schedules와 personal_delete_schedule은 "
         "Week 1 전용 임시 도구이므로 Week 3 조회/수정/삭제 흐름에서는 호출하지 않습니다.",
-        "일정 생성 요청은 개인 일정이라고 판단되지 않으면 personal_create_schedule을 직접 호출하지 않고, "
+        "일정 생성 요청은 attendees가 있는 경우 personal_create_schedule을 직접 호출하지 않고, "
         "extract_schedule_request로 자연어를 구조화한 뒤 save_structured_request로 저장합니다. "
         "현재 날짜는 current_app_date_iso()로 확인합니다.",
         "{"
