@@ -188,7 +188,7 @@ class StructuredRequest(BaseModel):
 
     original_text: str = Field(
         default="",
-        description="구조화에 사용한 사용자 원문 또는 tool JSON 원문입니다.",
+        description="구조화에 사용한 실제 사용자 자연어 원문입니다. 사용자 원문을 알 수 없으면 빈 문자열로 둡니다.",
     )
 
 
@@ -305,7 +305,8 @@ def week02_prompt_parts() -> list[str]:
         members에는 참석자나 관련 사람 이름을 넣는다. 모르면 빈 list로 둔다.
         priority에는 사용자가 말한 중요도나 긴급도를 넣는다. 모르면 None으로 둔다.
         reason에는 분류와 필드 추출의 짧은 근거를 적는다.
-        original_text에는 사용자의 원문이나 구조화 대상 원본 payload를 보존한다.
+        original_text에는 실제 사용자 자연어 원문만 보존한다.
+        tool JSON payload만 받은 경우에는 사용자 원문을 추측하지 말고 빈 문자열로 둔다.
 
         확실하지 않은 날짜, 시간, 제목, 멤버를 추측하지 않는다.
         모르는 값은 None 또는 빈 list로 둔다.

@@ -428,6 +428,7 @@ def save_structured_request_payload(
     request: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str,
     *,
     store: AppSQLiteStore | None = None,
+    source_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """검증된 structured request를 앱 DB에 저장합니다."""
 
@@ -437,6 +438,10 @@ def save_structured_request_payload(
     # DB에는 Pydantic model 객체가 아니라 직렬화 가능한 dict를 전달하므로 None은 "값을 모른다"는 뜻이므로 저장 payload에서 제외한다.
     # But! 빈 list와 빈 문자열은 명시적인 값이므로 그대로 유지한다.
     save_payload = normalized_request.model_dump(exclude_none=True)
+
+    # 감사용 원본은 LLM tool 인자가 아니라 검증된 Python Adapter 경로에서만 추가한다.
+    if source_payload is not None:
+        save_payload["source_payload"] = dict(source_payload)
 
     # 테스트나 내부 코드가 Store를 주입하면 그 객체를 사용하고, 일반 앱 실행에서는 CONFIG 경로를 사용하는 기본 Store를 연다.
     app_store = store if store is not None else _store()
@@ -585,11 +590,8 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
             "Week 1 임시 일정 생성 결과를 Week 3 SQLite 기록으로 변환했습니다."
         ),
 
-        # 원본 일정 전체를 JSON으로 남겨 id, created_at, session_id까지 나중에 감사 로그에서 확인할 수 있게 한다.
-        original_text=json.dumps(
-            schedule,
-            ensure_ascii=False,
-        ),
+        # 실제 사용자 발화는 이 Adapter까지 전달되지 않으므로 추측해서 채우지 않는다.
+        original_text="",
 
         # Week 1 임시 ID를 SQLite schedule_id와 연결하고 같은 Week 1 일정을 다시 저장할 때 Store가 중복을 식별하는 기준이 된다.
         source_schedule_id=schedule.get("id"),
@@ -652,7 +654,8 @@ def personal_create_schedule(
     # 검증된 DTO의 저장 payload 구성, None 제거, Store 호출,
     # 외부 동기화는 공통 저장 helper에 정확히 한 번 위임한다.
     sqlite_save = save_structured_request_payload(
-        structured_request
+        structured_request,
+        source_payload=created_schedule,
     )
 
     # Week 1의 ok, tool_name, created_schedule을 그대로 보존하고 Week 3 변환 결과와 SQLite 저장 결과만 추가한다.

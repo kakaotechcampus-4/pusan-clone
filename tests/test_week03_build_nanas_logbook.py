@@ -149,6 +149,14 @@ class Week03InputNormalizationTest(unittest.TestCase):
         self.assertEqual(normalized.members, ["민수"])
         self.assertIsNone(normalized.source_schedule_id)
 
+    def test_public_save_schema_does_not_expose_adapter_source_payload(self) -> None:
+        # 감사용 원본은 모델이 임의로 만들 수 없도록 공개 저장 tool 입력에서 제외합니다.
+        properties = week03.save_structured_request.args_schema.model_json_schema()[
+            "properties"
+        ]
+
+        self.assertNotIn("source_payload", properties)
+
     def test_flat_fields_take_precedence_over_legacy_wrapper(self) -> None:
         # 이미 kind가 있는 현재 형식은 payload라는 추가 키가 있어도 wrapper로 오해하지 않아야 합니다.
         normalized = week03.SaveStructuredRequestInput.model_validate(
@@ -408,6 +416,7 @@ class Week03PersistenceIntegrationTest(_Week03StoreTestCase):
         self.assertNotIn("priority", raw_payload)
         self.assertNotIn("reason", raw_payload)
         self.assertNotIn("source_schedule_id", raw_payload)
+        self.assertNotIn("source_payload", raw_payload)
 
     def test_save_tool_uses_store_once_and_returns_json_contract(self) -> None:
         # 실제 agent 경로의 tool도 helper와 같은 Store 결과를 JSON으로 노출해야 합니다.
@@ -541,7 +550,7 @@ class Week03PersistenceIntegrationTest(_Week03StoreTestCase):
 
 class Week03Week01CompatibilityTest(_Week03StoreTestCase):
     def test_adapter_maps_week01_schedule_to_week03_request(self) -> None:
-        # Week 1 일정을 Week 3 DTO로 바꾸며 종류·참석자·출처 ID·변환 사유·원문까지 채워야 합니다.
+        # Week 1 일정을 Week 3 DTO로 바꿀 때 실제 사용자 원문을 추측하지 않아야 합니다.
         schedule = {
             "id": "personal_legacy",
             "title": "민수와 회의",
@@ -563,7 +572,7 @@ class Week03Week01CompatibilityTest(_Week03StoreTestCase):
         self.assertEqual(converted.members, ["민수"])
         self.assertEqual(converted.source_schedule_id, "personal_legacy")
         self.assertIn("Week 1", converted.reason)
-        self.assertEqual(json.loads(converted.original_text), schedule)
+        self.assertEqual(converted.original_text, "")
 
     def test_adapter_defaults_missing_attendees_to_empty_list(self) -> None:
         # 참석자 키가 없는 Week 1 일정도 Week 3 DTO에서는 빈 목록으로 정규화되어야 합니다.
@@ -622,8 +631,14 @@ class Week03Week01CompatibilityTest(_Week03StoreTestCase):
         self.assertEqual(created["session_id"], "chat-a")
         self.assertEqual(structured["members"], ["민수"])
         self.assertEqual(structured["source_schedule_id"], created["id"])
+        self.assertEqual(structured["original_text"], "")
+        self.assertNotIn("source_payload", structured)
         self.assertTrue(sqlite_save["ok"])
         self.assertEqual(sqlite_save["tool_name"], "save_structured_request")
+
+        raw_payload = self.raw_request_payload(sqlite_save["request_id"])
+        self.assertEqual(raw_payload["original_text"], "")
+        self.assertEqual(raw_payload["source_payload"], created)
 
         schedules = self.store.list_schedules(kind="personal_schedule", limit=10)
         self.assertEqual(len(schedules), 1)
