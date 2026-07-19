@@ -241,9 +241,9 @@ def test_save_input_from_text_sends_week1_wrapper_json_through_llm(monkeypatch):
 
     parsed = w3._save_input_from_text(week1_wrapper_text)
 
-    # extract_structured_request가 실제로 호출됐는지, 그리고 상대 날짜 계산을 위해
-    # 오늘 날짜가 접두사로 붙어 원본 문자열을 감싸서 넘어갔는지 확인합니다.
-    assert calls == [f"[오늘 날짜: {w3.current_app_date_iso()}] {week1_wrapper_text}"]
+    # extract_structured_request가 실제로 호출됐는지, 그리고 원본 문자열이 가공 없이
+    # 그대로 넘어갔는지 확인합니다.
+    assert calls == [week1_wrapper_text]
 
     # stub이 돌려준 값대로 필드가 채워져야 하고, kind="unknown"/title=None으로 유실되면 안 됩니다.
     assert parsed.kind == "personal_schedule"
@@ -252,9 +252,9 @@ def test_save_input_from_text_sends_week1_wrapper_json_through_llm(monkeypatch):
     assert parsed.members == ["철수", "영희"]
 
 
-def test_save_input_from_text_prefixes_today_date_before_llm_call(monkeypatch):
-    """_save_input_from_text는 extract_structured_request(구조화 LLM, tool 호출 불가)에 넘기기 전에
-    상대 날짜 해석 기준이 되도록 오늘 날짜를 '[오늘 날짜: YYYY-MM-DD]' 접두사로 직접 붙여야 합니다.
+def test_save_input_from_text_passes_original_text_unmodified(monkeypatch):
+    """_save_input_from_text는 원문에 날짜 등을 덧붙이지 않고 그대로
+    extract_structured_request에 넘겨야 합니다(original_text 오염 방지).
     """
 
     calls: list[str] = []
@@ -267,7 +267,7 @@ def test_save_input_from_text_prefixes_today_date_before_llm_call(monkeypatch):
 
     w3._save_input_from_text("빨래 좀 널어줘")
 
-    assert calls == [f"[오늘 날짜: {w3.current_app_date_iso()}] 빨래 좀 널어줘"]
+    assert calls == ["빨래 좀 널어줘"]
 
 
 # ---------------------------------------------------------------------------
@@ -279,19 +279,36 @@ def test_save_input_from_text_prefixes_today_date_before_llm_call(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_week03_prompt_instructs_get_current_date_before_extract_schedule_request():
-    """week02_prompt_parts()에도 예전부터 'get_current_date tool을 호출해 상대 날짜를
-    해석한다'는 문구가 있어서, get_current_date/extract_schedule_request/오늘 날짜라는
-    단어만 포함됐는지 보면 week03에 새로 추가한 문장을 지워도 이 테스트가 그대로
-    통과해버린다(week02 쪽 문구만으로 키워드가 다 채워지므로). 그래서 이번에 week03에
-    새로 추가한 문장 자체가 실제로 들어있는지 확인한다.
+def test_week03_prompt_cancels_week02_get_current_date_instruction():
+    """week02_prompt_parts()의 'get_current_date tool을 호출해 확인한다'는 지침은
+    extract_schedule_request 내부의 구조화 LLM 호출(extract_structured_request, tool 호출 불가)이
+    애초에 따를 수 없으므로, week03부터는 이를 무효화하는 지침이 프롬프트에 들어있어야 한다.
+    """
+
+    cancel_instruction = (
+        "2주차의 '오늘 날짜가 필요하거나 상대 날짜 계산이 필요한 경우 get_current_date tool을 호출해 "
+        "확인한 뒤 상대 날짜를 해석한다'는 지침은 3주차부터는 적용하지 않는다. extract_schedule_request가 "
+        "내부적으로 쓰는 구조화 LLM 호출(extract_structured_request)은 tool을 호출할 수 없는 별도 호출이라 "
+        "그 지침을 따를 수 없기 때문이다."
+    )
+
+    week02_prompt = w3.join_system_prompt(w3.week02_prompt_parts())
+    week03_prompt = w3.week03_system_prompt()
+
+    assert cancel_instruction not in week02_prompt
+    assert cancel_instruction in week03_prompt
+
+
+def test_week03_prompt_instructs_passing_original_text_unmodified():
+    """week03 agent는 오늘 날짜를 프롬프트로 직접 알고 있으므로, extract_schedule_request를
+    호출할 때 사용자 원문을 가공하거나 날짜를 붙이지 않고 그대로 넘겨야 한다는 지시가
+    프롬프트에 실제로 들어있는지 확인한다.
     """
 
     new_instruction = (
-        "extract_schedule_request는 호출 중에 get_current_date tool을 다시 호출할 수 없으므로, "
-        "상대 날짜(내일/모레/다음 주 등) 계산이 필요한 요청을 extract_schedule_request에 넘기기 전에 "
-        "먼저 get_current_date로 오늘 날짜를 확인하고, 그 날짜를 '[오늘 날짜: YYYY-MM-DD]' 형태로 "
-        "요청 문장 앞에 붙여서 넘긴다."
+        f"오늘 날짜는 {w3.current_app_date_iso()}이다. 상대 날짜(내일/모레/다음 주 등) 계산이 필요한 요청도 "
+        "이 날짜를 기준으로 스스로 판단하며, extract_schedule_request를 호출할 때는 사용자 원문을 "
+        "가공하거나 날짜를 앞에 붙이지 않고 그대로 넘긴다."
     )
 
     week02_prompt = w3.join_system_prompt(w3.week02_prompt_parts())
@@ -301,6 +318,26 @@ def test_week03_prompt_instructs_get_current_date_before_extract_schedule_reques
     assert new_instruction not in week02_prompt
     # week03 prompt에는 이 문장이 정확히 그대로 들어있어야 한다.
     assert new_instruction in week03_prompt
+
+
+def test_save_input_from_text_preserves_original_text_end_to_end(monkeypatch):
+    """_save_input_from_text에 자연어를 넣었을 때, stub된 extract_structured_request가
+    실제로 받은 인자가 원문과 정확히 같아야 합니다(날짜 접두사 등으로 오염되지 않아야 함).
+    """
+
+    received: list[str] = []
+    original_text = "내일 오후 3시에 팀 회의 잡아줘"
+
+    def fake_extract(text: str) -> StructuredRequest:
+        received.append(text)
+        return StructuredRequest(kind="personal_schedule", title="팀 회의", original_text=text)
+
+    monkeypatch.setattr(w3, "extract_structured_request", fake_extract)
+
+    parsed = w3._save_input_from_text(original_text)
+
+    assert received == [original_text]
+    assert parsed.original_text == original_text
 
 
 def test_get_current_date_tool_is_actually_bound_for_week03_agent():
