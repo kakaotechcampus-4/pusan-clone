@@ -457,9 +457,11 @@ def save_structured_request(
         key: value for key, value in locals().items() if key != "self" and value is not None
     }
     store = _store()
-    store.save_structured_request(save_dict)
+    # request_id가 포함된 저장 결과를 받음
+    # saved_rows도 포함되어 있으므로 필요에 따라 활용 가능
+    saved = store.save_structured_request(save_dict)
     # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
-    return json_payload(tool_result("save_structured_request", ok=True, saved_request=save_dict))
+    return json_payload(tool_result("save_structured_request", ok=True, **saved))
 
 
 @tool(args_schema=SavedRequestListInput)
