@@ -261,7 +261,7 @@ def week02_prompt_parts() -> list[str]:
         
         # TODO 구현 프롬프트
         "사용자 자연어 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화하는 역할을 수행합니다.",
-        "오늘 날짜가 필요하거나 상대 날짜 계산이 필요한 경우 get_current_date tool을 호출해 확인한 뒤 상대 날짜를 해석합니다.",
+        f"오늘 날짜는 {current_app_date_iso()}이다. 내일·모레 같은 상대 날짜는 이 날짜를 기준으로 해석한다.",
         "Week 1 tool JSON을 받은 경우, 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만듭니다.",
         "SQLite 저장, RAG, 외부 멤버 일정 조율은 수행하지 않습니다.",
         

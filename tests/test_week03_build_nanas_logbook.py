@@ -279,45 +279,31 @@ def test_save_input_from_text_passes_original_text_unmodified(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_week03_prompt_cancels_week02_get_current_date_instruction():
-    """week02_prompt_parts()의 'get_current_date tool을 호출해 확인한다'는 지침은
-    extract_schedule_request 내부의 구조화 LLM 호출(extract_structured_request, tool 호출 불가)이
-    애초에 따를 수 없으므로, week03부터는 이를 무효화하는 지침이 프롬프트에 들어있어야 한다.
+def test_week02_prompt_parts_states_today_date_directly():
+    """extract_structured_request(구조화 LLM, tool 호출 불가)는 get_current_date tool을
+    호출할 수 없으므로, week02_prompt_parts()에 오늘 날짜가 문자열로 직접 명시되어 있어야
+    상대 날짜(내일/모레 등)를 해석할 수 있습니다.
     """
 
-    cancel_instruction = (
-        "2주차의 '오늘 날짜가 필요하거나 상대 날짜 계산이 필요한 경우 get_current_date tool을 호출해 "
-        "확인한 뒤 상대 날짜를 해석한다'는 지침은 3주차부터는 적용하지 않는다. extract_schedule_request가 "
-        "내부적으로 쓰는 구조화 LLM 호출(extract_structured_request)은 tool을 호출할 수 없는 별도 호출이라 "
-        "그 지침을 따를 수 없기 때문이다."
-    )
+    week02_prompt_parts = w3.week02_prompt_parts()
+    joined = w3.join_system_prompt(week02_prompt_parts)
 
-    week02_prompt = w3.join_system_prompt(w3.week02_prompt_parts())
-    week03_prompt = w3.week03_system_prompt()
-
-    assert cancel_instruction not in week02_prompt
-    assert cancel_instruction in week03_prompt
+    assert "오늘 날짜는" in joined
+    assert w3.current_app_date_iso() in joined
 
 
-def test_week03_prompt_instructs_passing_original_text_unmodified():
-    """week03 agent는 오늘 날짜를 프롬프트로 직접 알고 있으므로, extract_schedule_request를
-    호출할 때 사용자 원문을 가공하거나 날짜를 붙이지 않고 그대로 넘겨야 한다는 지시가
-    프롬프트에 실제로 들어있는지 확인한다.
+def test_extract_structured_request_system_prompt_includes_today_date():
+    """extract_structured_request(week02, 199~210줄)가 실제로 LLM에 넘기는 system prompt
+    (join_system_prompt(week02_prompt_parts()))에 오늘 날짜가 포함되어 있는지 확인합니다.
+    week03_system_prompt()만 검증해서는 extract_structured_request 내부 호출이 실제로 쓰는
+    프롬프트를 검증하지 못하므로, extract_structured_request가 만드는 것과 동일한 프롬프트를
+    직접 재구성해 확인합니다.
     """
 
-    new_instruction = (
-        f"오늘 날짜는 {w3.current_app_date_iso()}이다. 상대 날짜(내일/모레/다음 주 등) 계산이 필요한 요청도 "
-        "이 날짜를 기준으로 스스로 판단하며, extract_schedule_request를 호출할 때는 사용자 원문을 "
-        "가공하거나 날짜를 앞에 붙이지 않고 그대로 넘긴다."
-    )
+    actual_system_prompt = w3.join_system_prompt(w3.week02_prompt_parts())
 
-    week02_prompt = w3.join_system_prompt(w3.week02_prompt_parts())
-    week03_prompt = w3.week03_system_prompt()
-
-    # week02 prompt에는 이 문장이 없어야 한다(week03에서만 새로 추가된 문장이라는 전제 확인).
-    assert new_instruction not in week02_prompt
-    # week03 prompt에는 이 문장이 정확히 그대로 들어있어야 한다.
-    assert new_instruction in week03_prompt
+    assert "오늘 날짜는" in actual_system_prompt
+    assert w3.current_app_date_iso() in actual_system_prompt
 
 
 def test_save_input_from_text_preserves_original_text_end_to_end(monkeypatch):

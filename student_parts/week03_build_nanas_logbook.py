@@ -668,17 +668,6 @@ def week03_prompt_parts() -> list[str]:
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
-        # week02_prompt_parts()의 'get_current_date tool을 호출해 확인한다'는 지침은
-        # extract_schedule_request가 내부에서 쓰는 구조화 LLM 호출(extract_structured_request)이
-        # tool을 호출할 수 없는 별도 호출이라 애초에 따를 수 없다. 그래서 3주차부터는 이 지침을
-        # 무효화하고, 원문을 가공(날짜 접두사 등)하지 않고 그대로 넘기도록 새 지침으로 대체한다.
-        "2주차의 '오늘 날짜가 필요하거나 상대 날짜 계산이 필요한 경우 get_current_date tool을 호출해 "
-        "확인한 뒤 상대 날짜를 해석한다'는 지침은 3주차부터는 적용하지 않는다. extract_schedule_request가 "
-        "내부적으로 쓰는 구조화 LLM 호출(extract_structured_request)은 tool을 호출할 수 없는 별도 호출이라 "
-        "그 지침을 따를 수 없기 때문이다.",
-        f"오늘 날짜는 {current_app_date_iso()}이다. 상대 날짜(내일/모레/다음 주 등) 계산이 필요한 요청도 "
-        "이 날짜를 기준으로 스스로 판단하며, extract_schedule_request를 호출할 때는 사용자 원문을 "
-        "가공하거나 날짜를 앞에 붙이지 않고 그대로 넘긴다.",
         "저장/조회/수정/삭제 중 어떤 tool을 호출할지는 사용자의 가장 최근 메시지 의도로 판단하고, "
         "불필요하게 여러 tool을 동시에 호출하지 않습니다.",
         "이번 주차의 범위는 SQLite 기반 개인 일정/할 일/알림의 저장, 조회, 수정, 삭제까지이며, "
