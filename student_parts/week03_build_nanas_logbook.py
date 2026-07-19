@@ -28,10 +28,24 @@ from student_parts.week02_structure_natural_language_requests import (
 _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = ""
+SQLITE_MEMORY_PROMPT = (
+    "새 대화를 열거나 앱을 재시작해도 유지되는 저장소는 SQLite뿐이다. "
+    "저장된 일정을 조회할 때는 personal_list_schedules가 아니라 personal_list_saved_schedules를 사용하고, "
+    "수정할 때는 personal_update_saved_schedule을, 삭제할 때는 personal_delete_schedule이 아니라 "
+    "personal_delete_saved_schedules를 사용하세요. "
+    "personal_list_schedules와 personal_delete_schedule은 Week 1 호환용으로만 남아 있는 현재 대화 전용 "
+    "임시 메모리 tool이라 새 대화에는 아무것도 남지 않으므로, 일반적인 조회/삭제 요청에는 사용하지 않는다."
+)
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+WEEK03_TOOL_CALL_PROMPT = (
+    "일정/할 일/리마인더를 새로 저장해달라는 자연어 요청이면 먼저 extract_schedule_request(query=사용자 원문)를 "
+    "호출해 구조화한 뒤, 그 결과의 kind/title/date/start_time/end_time/members/priority/reason/original_text를 "
+    "save_structured_request 인자로 그대로 전달해 저장하세요. "
+    "personal_create_schedule은 Week 1 호환용 별도 tool이니 이런 저장 요청에는 호출하지 마세요. "
+    "get_saved_request 결과에서 found가 false이거나 row가 null이면 해당 요청을 찾을 수 없다고 답하세요. "
+    "ok=True는 조회 성공을 뜻할 뿐 데이터가 있다는 뜻이 아니므로, found/row가 비어 있을 때 대화 맥락이나 추측으로 내용을 지어내지 마세요."
+)
 
 
 # [3주차 수강생 구현 가이드]
@@ -377,10 +391,10 @@ def list_saved_requests(
 
 @tool(args_schema=SavedRequestGetInput)
 def get_saved_request(request_id: str) -> str:
-    """request_id로 구조화 요청 행 하나를 조회합니다."""
+    """request_id로 구조화 요청 행 하나를 조회합니다. found로 실제 데이터 존재 여부를 구분합니다."""
     store = _store()
     row = store.get_saved_request(request_id=request_id)
-    return json_payload(tool_result("get_saved_request", ok=True, row=row))
+    return json_payload(tool_result("get_saved_request", ok=True, found=row is not None, row=row))
 
 
 @tool(args_schema=SavedScheduleListInput)
@@ -390,11 +404,10 @@ def personal_list_saved_schedules(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
-    personal_kind = kind or "personal_schedule"
+    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. kind를 생략하면 모든 종류를 조회합니다."""
     store = _store()
-    schedules = store.list_schedules(kind=personal_kind, date_from=date_from, date_to=date_to, limit=limit)
-    return json_payload(tool_result("personal_list_saved_schedules", ok=True, filters={"kind": personal_kind, "date_from": date_from, "date_to": date_to}, schedules=schedules))
+    schedules = store.list_schedules(kind=kind, date_from=date_from, date_to=date_to, limit=limit)
+    return json_payload(tool_result("personal_list_saved_schedules", ok=True, filters={"kind": kind, "date_from": date_from, "date_to": date_to}, schedules=schedules))
 
 
 
@@ -473,10 +486,9 @@ def week03_prompt_parts() -> list[str]:
 
     return [
         *week02_prompt_parts(),
-        # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
-        # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+        "Week 2와 달리 이번 주차부터는 구조화 결과를 SQLite에 저장합니다. RAG와 외부 멤버 일정 조율은 여전히 다루지 않습니다."
     ]
 
 
