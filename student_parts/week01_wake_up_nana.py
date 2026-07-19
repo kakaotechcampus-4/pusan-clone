@@ -168,6 +168,37 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
 
+def _create_personal_schedule_dict(
+    title: str,
+    date: str,
+    start_time: str,
+    end_time: str = "미정",
+    attendees: list[str] | None = None,
+    *,
+    schedule_id: str | None = None,
+) -> tuple[Schedule, bool]:
+    """임시 일정 dict를 만들고, 지정 ID가 이미 있으면 기존 일정을 반환합니다."""
+
+    session_id = current_session_scope()
+    if schedule_id is not None:
+        for schedule in PERSONAL_SCHEDULES:
+            if schedule["id"] == schedule_id and _schedule_scope(schedule) == session_id:
+                return schedule, False
+
+    schedule: Schedule = {
+        "id" : schedule_id or _new_personal_id(),
+        "session_id" : session_id,
+        "title" : title,
+        "date" : date,
+        "start_time" : start_time,
+        "end_time" : end_time,
+        "created_at" : _now_iso(),
+        "attendees" : attendees or [],
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return schedule, True
+
+
 
 
 @tool(
@@ -184,18 +215,13 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    schedule: Schedule = {
-        "id" : _new_personal_id(),
-        "session_id" : current_session_scope(),
-        "title" : title,
-        "date" : date,
-        "start_time" : start_time,
-        "end_time" : end_time,
-        "created_at" : _now_iso(),
-        "attendees" : attendees or [],
-    }
-    
-    PERSONAL_SCHEDULES.append(schedule)
+    schedule, _ = _create_personal_schedule_dict(
+        title=title,
+        date=date,
+        start_time=start_time,
+        end_time=end_time,
+        attendees=attendees,
+    )
 
     return _json({
       "ok" : True,
