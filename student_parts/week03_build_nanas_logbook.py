@@ -12,6 +12,7 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
+    PERSONAL_SCHEDULES,
     join_system_prompt,
     personal_create_schedule as week01_personal_create_schedule,
     week01_tools,
@@ -385,6 +386,26 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
     )
 
 
+def _rollback_week01_schedule(schedule_id: str | None) -> bool:
+    """SQLite 저장 실패 시 Week 1 임시 메모리에 남은 일정을 되돌립니다(보상 트랜잭션).
+
+    Week 1 임시 메모리와 SQLite는 서로 다른 저장소라 하나의 트랜잭션으로 묶을 수 없습니다
+    (dual-write 문제). 그래서 뒷단(SQLite)이 실패하면 앞서 성공한 앞단(Week 1 메모리)을
+    거꾸로 제거해 두 저장소의 상태를 다시 맞춥니다. 이런 되돌리기를 보상 트랜잭션
+    (SAGA compensating transaction)이라고 부릅니다.
+
+    리스트 객체 자체는 그대로 두고 `PERSONAL_SCHEDULES[:]`에 새 목록을 대입해,
+    week01 쪽에서 import한 같은 리스트를 in-place로 갱신합니다.
+    되돌린 일정이 있으면 True를 반환합니다.
+    """
+
+    if not schedule_id:
+        return False
+    before = len(PERSONAL_SCHEDULES)
+    PERSONAL_SCHEDULES[:] = [s for s in PERSONAL_SCHEDULES if s.get("id") != schedule_id]
+    return len(PERSONAL_SCHEDULES) < before
+
+
 @tool("personal_create_schedule")
 def personal_create_schedule(
     title: str,
@@ -393,8 +414,18 @@ def personal_create_schedule(
     end_time: str = "미정",
     attendees: list[str] | None = None,
 ) -> str:
-    """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
+    """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다.
 
+    이 도구는 두 저장소에 순서대로 기록합니다.
+    1. Week 1 임시 메모리(PERSONAL_SCHEDULES)에 먼저 일정을 만들고
+    2. 그 결과를 SQLite DB에 저장합니다.
+
+    두 저장소는 한 트랜잭션으로 묶을 수 없으므로(dual-write), 2단계 SQLite 저장이
+    실패하면 이미 성공한 1단계 메모리 저장을 되돌리는 보상 트랜잭션을 수행합니다.
+    이렇게 해야 "메모리에는 있는데 DB에는 없는" 부분 성공 상태가 남지 않습니다.
+    """
+
+    # 1단계: Week 1 임시 메모리에 먼저 일정을 만든다.
     week01_result = json.loads(
         week01_personal_create_schedule.invoke({
             "title": title,
@@ -406,8 +437,22 @@ def personal_create_schedule(
     )
     created_schedule = week01_result.get("created_schedule", {})
     save_input = structured_request_from_week01_schedule(created_schedule)
-    sqlite_save = _store().save_structured_request(save_input.model_dump())
-    
+
+    # 2단계: SQLite에 저장한다. 실패하면 1단계를 되돌린다(보상 트랜잭션).
+    try:
+        sqlite_save = _store().save_structured_request(save_input.model_dump())
+    except Exception as exc:
+        rolled_back = _rollback_week01_schedule(created_schedule.get("id"))
+        return json_payload(tool_result(
+            "personal_create_schedule",
+            ok=False,
+            created_schedule=created_schedule,
+            structured_request=save_input.model_dump(),
+            sqlite_save=None,
+            rolled_back=rolled_back,
+            error=str(exc),
+        ))
+
     return json_payload(tool_result(
         "personal_create_schedule",
         created_schedule=created_schedule,
