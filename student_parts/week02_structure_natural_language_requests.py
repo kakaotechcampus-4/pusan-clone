@@ -166,19 +166,52 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    """JSON payload 또는 자연어를 단건 StructuredRequest로 변환합니다."""
 
-    return _coerce_structured_request(text)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        if not text.strip():
+            return StructuredRequest(kind="unknown", original_text=text)
+
+        structured_model = chat_model().with_structured_output(StructuredRequest)
+        result = structured_model.invoke(
+            [
+                (
+                    "system",
+                    f"""너는 일정 앱의 단건 요청 구조화 도우미다.
+기준 날짜는 {current_app_date_iso()}이다. 오늘, 내일, 다음 주 같은 상대 날짜를 이 날짜 기준으로 계산한다.
+사용자 요청을 StructuredRequest 필드에 맞춰 구조화한다.
+다른 참석자가 있는 일정은 group_schedule, 혼자 하는 일정은 personal_schedule로 분류한다.
+할 일은 todo, 특정 시각에 알림을 요청하면 reminder로 분류한다.
+확실하지 않은 값은 추측하지 말고 None 또는 빈 목록으로 두며, original_text에는 사용자 원문을 그대로 담는다.""",
+                ),
+                ("user", text),
+            ]
+        )
+        structured_request = _coerce_structured_request(result)
+        return structured_request.model_copy(update={"original_text": text})
+
+    return _coerce_structured_request(value)
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """자연어 요청을 구조화해 이후 회차의 저장 흐름에 전달합니다."""
 
-    structured_request = extract_structured_request(query)
+    try:
+        structured_request = extract_structured_request(query)
+        ok = structured_request.kind != "unknown"
+    except Exception as exc:
+        structured_request = StructuredRequest(
+            kind="unknown",
+            reason=f"요청 구조화 실패: {type(exc).__name__}",
+            original_text=query,
+        )
+        ok = False
     return json.dumps(
         {
-            "ok": True,
+            "ok": ok,
             "tool_name": "extract_schedule_request",
             "base_date": current_app_date_iso(),
             "structured_request": structured_request.model_dump(),
