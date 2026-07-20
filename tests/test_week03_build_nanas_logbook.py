@@ -1115,8 +1115,25 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         )
         self.assertEqual(payload["deleted_count"], 1)
 
-    def test_delete_filters_use_sqlite_and_semantics_for_personal_and_group(self) -> None:
-        # 제목 부분 일치와 날짜·시간 조건은 AND로 결합하며 개인·그룹 일정 모두 같은 삭제 대상입니다.
+    def test_single_filter_match_deletes_only_that_schedule(self) -> None:
+        # 정책 2: 필터에 정확히 한 건만 매칭되면 그 일정만 삭제합니다.
+        target = self.save_store_request(title="유일한 회의", date="2026-07-20", start_time="10:00")
+        other = self.save_store_request(title="다른 회의", date="2026-07-20", start_time="11:00")
+
+        payload = week03.delete_saved_schedules_dict(
+            title="유일한",
+            app_store=self.store,
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["deleted_count"], 1)
+        self.assertEqual(payload["deleted"][0]["title"], "유일한 회의")
+        self.assertIsNone(self.store.get_saved_request(target["request_id"]))
+        self.assertIsNotNone(self.store.get_saved_request(other["request_id"]))
+
+    def test_multiple_filter_matches_return_candidates_without_deleting(self) -> None:
+        # 정책 3: 필터에 여러 건이 매칭되면 삭제하지 않고 후보만 반환합니다.
+        # 제목 부분 일치와 날짜·시간 조건은 AND로 결합하며 개인·그룹 일정 모두 후보에 포함됩니다.
         personal = self.save_store_request(
             kind="personal_schedule",
             title="프로젝트 회의",
@@ -1149,26 +1166,60 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
             app_store=self.store,
         )
 
-        self.assertEqual(payload["deleted_count"], 2)
+        # 후보가 여러 건이므로 삭제하지 않고 ok=False와 candidates를 돌려줍니다.
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["needs_confirmation"])
+        self.assertEqual(payload["deleted_count"], 0)
+        self.assertEqual(payload["deleted"], [])
+        self.assertEqual(len(payload["candidates"]), 2)
+        # 개인·그룹 일정 모두 후보에 포함되고, AND 조건에 맞지 않은 일정은 후보에서 제외됩니다.
+        candidate_ids = {row["schedule_id"] for row in payload["candidates"]}
         self.assertEqual(
-            {row["request_kind"] for row in payload["deleted"]},
-            {"personal_schedule", "group_schedule"},
+            candidate_ids,
+            {self.schedule_id_from(personal), self.schedule_id_from(group)},
         )
-        self.assertIsNone(self.store.get_saved_request(personal["request_id"]))
-        self.assertIsNone(self.store.get_saved_request(group["request_id"]))
-        self.assertIsNotNone(self.store.get_saved_request(different_time["request_id"]))
-        self.assertIsNotNone(self.store.get_saved_request(different_title["request_id"]))
+        self.assertNotIn(self.schedule_id_from(different_time), candidate_ids)
+        self.assertNotIn(self.schedule_id_from(different_title), candidate_ids)
+        # 후보만 반환했을 뿐 실제 데이터는 한 건도 삭제되지 않았습니다.
+        for saved in (personal, group, different_time, different_title):
+            self.assertIsNotNone(self.store.get_saved_request(saved["request_id"]))
+
+    def test_confirmed_schedule_ids_delete_the_candidates(self) -> None:
+        # 정책 4: 후보 확인 후 사용자가 고른 schedule_ids로 다시 요청하면 정상 삭제합니다.
+        first = self.save_store_request(title="반복 회의", date="2026-07-20", start_time="10:00")
+        second = self.save_store_request(title="반복 회의", date="2026-07-21", start_time="10:00")
+
+        blocked = week03.delete_saved_schedules_dict(title="반복 회의", app_store=self.store)
+        self.assertFalse(blocked["ok"])
+
+        confirmed_ids = [self.schedule_id_from(first), self.schedule_id_from(second)]
+        payload = week03.delete_saved_schedules_dict(schedule_ids=confirmed_ids, app_store=self.store)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["deleted_count"], 2)
+        self.assertIsNone(self.store.get_saved_request(first["request_id"]))
+        self.assertIsNone(self.store.get_saved_request(second["request_id"]))
 
     def test_time_unspecified_matches_none_empty_and_korean_marker(self) -> None:
-        # 시간 미정 필터는 NULL, 빈 문자열, "미정"을 모두 찾고 실제 시간이 있는 일정은 보존해야 합니다.
-        for index, start_time in enumerate((None, "", "미정")):
+        # 시간 미정 필터는 NULL, 빈 문자열, "미정"을 모두 찾고 실제 시간이 있는 일정은 후보에서 제외해야 합니다.
+        # 여러 건이 매칭되므로 삭제하지 않고 후보만 돌려줍니다.
+        unspecified = [
             self.save_store_request(title=f"시간 미정 {index}", start_time=start_time)
+            for index, start_time in enumerate((None, "", "미정"))
+        ]
         concrete = self.save_store_request(title="시간 확정", start_time="10:00")
 
         payload = week03.delete_saved_schedules_dict(time_unspecified=True, app_store=self.store)
 
-        self.assertEqual(payload["deleted_count"], 3)
-        self.assertIsNotNone(self.store.get_saved_request(concrete["request_id"]))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["deleted_count"], 0)
+        self.assertEqual(len(payload["candidates"]), 3)
+        concrete_id = self.schedule_id_from(concrete)
+        candidate_ids = {row["schedule_id"] for row in payload["candidates"]}
+        self.assertNotIn(concrete_id, candidate_ids)
+        # 후보만 반환했을 뿐 실제 데이터는 그대로 남아 있어야 합니다.
+        for saved in (*unspecified, concrete):
+            self.assertIsNotNone(self.store.get_saved_request(saved["request_id"]))
 
     def test_delete_all_has_priority_and_preserves_todo_and_reminder(self) -> None:
         # delete_all은 다른 필터보다 우선하지만 일정이 아닌 todo와 reminder는 건드리지 않아야 합니다.
@@ -1206,15 +1257,21 @@ class Week03ScheduleMutationTest(_Week03StoreTestCase):
         fake_store.delete_all_schedules.assert_called_once_with()
         fake_store.delete_schedules_by_filter.assert_not_called()
 
-    def test_filter_delete_keeps_store_default_limit_one_hundred(self) -> None:
-        # Week 3 helper에 limit 인자가 없으므로 Store의 현재 100개 상한을 바꾸지 않아야 합니다.
+    def test_bulk_filter_match_never_deletes_data(self) -> None:
+        # 정책 5: 101건 이상이 매칭되더라도 필터만으로는 한 건도 삭제하지 않고 후보만 돌려줍니다.
         for index in range(101):
             self.save_store_request(title=f"대량 삭제 대상 {index}", date="2026-08-01")
 
         payload = week03.delete_saved_schedules_dict(title="대량 삭제 대상", app_store=self.store)
 
-        self.assertEqual(payload["deleted_count"], 100)
-        self.assertEqual(self.table_count("schedules"), 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["deleted_count"], 0)
+        self.assertEqual(payload["deleted"], [])
+        # 후보 목록은 100건으로 제한하되, 잘렸다는 사실을 candidates_truncated로 알립니다.
+        self.assertEqual(len(payload["candidates"]), 100)
+        self.assertTrue(payload["candidates_truncated"])
+        # 실제 데이터는 101건 모두 그대로 남습니다.
+        self.assertEqual(self.table_count("schedules"), 101)
 
     def test_delete_tool_serializes_helper_result(self) -> None:
         # Agent용 삭제 tool이 공통 helper의 결과를 같은 응답 계약의 JSON으로 직렬화해야 합니다.
