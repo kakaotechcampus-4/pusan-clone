@@ -395,7 +395,7 @@ def personal_create_schedule(
             "personal_create_schedule",
             created_schedule=created["created_schedule"],
             structured_request=request.model_dump(),
-            sqlite_save=saved,
+            sqlite_save=tool_result("save_structured_request", **saved),
         )
     )
 
