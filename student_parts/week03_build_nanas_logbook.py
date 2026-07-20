@@ -387,17 +387,14 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
     # DONE: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
-    members = schedule.get("attendees")
     return SaveStructuredRequestInput(
-        kind=schedule.get("kind"),
+        kind="personal_schedule",
         title=schedule.get("title"),
         date=schedule.get("date"),
         start_time=schedule.get("start_time"),
         end_time=schedule.get("end_time"),
-        members=members,
-        priority=schedule.get("priority"),
-        reason=schedule.get("reason"),
-        original_text=schedule.get("original_text"),
+        members=schedule.get("attendees") or [],
+        original_text=schedule.get("title") or "",
         source_schedule_id=schedule.get("id"),
     )
 
