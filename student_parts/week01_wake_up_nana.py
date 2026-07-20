@@ -105,9 +105,9 @@ def personal_list_schedules(date_from: str | None = None, date_to: str| None = N
     
     schedules = _current_session_schedules()
     if date_from:
-        schedules = [s from s in schedules if s["date"] >= date_from]
+        schedules = [s for s in schedules if s["date"] >= date_from]
     if date_to:
-        schedules = [s from s in schedules if s["date"] <= date_to]
+        schedules = [s for s in schedules if s["date"] <= date_to]
 
     return json.dumps({"ok": True, "tool_name": "personal_list_schedules", "schedules": schedules}, ensure_ascii=False)
 
