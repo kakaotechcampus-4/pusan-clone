@@ -171,7 +171,7 @@ class StructuredRequest(BaseModel):
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
     members: list[str] = Field(default_factory=list, description="참석자 목록")
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    priority: str | None = Field(default=None, description="일정 우선순위")
+    priority: str | None = Field(default=None, description="일정 우선순위: HIGH/MEDIUM/LOW")
     reason: str | None = Field(default=None, description="요청 종류나 필드 값을 판단한 근거")
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     original_text: str = Field(default="", description="구조화 이전 사용자 원문을 그대로 보존")
