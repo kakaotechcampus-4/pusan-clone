@@ -11,7 +11,6 @@ from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_parts, week01_tools
-from pydantic import PositiveInt
 
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
 _WEEK02_AGENT: Any | None = None
@@ -172,7 +171,7 @@ class StructuredRequest(BaseModel):
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
     members: list[str] = Field(default_factory=list, description="참석자 목록")
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    priority: PositiveInt | None = Field(default=None, description="일정 우선순위")
+    priority: str | None = Field(default=None, description="일정 우선순위")
     reason: str | None = Field(default=None, description="요청 종류나 필드 값을 판단한 근거")
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     original_text: str = Field(default="", description="구조화 이전 사용자 원문을 그대로 보존")

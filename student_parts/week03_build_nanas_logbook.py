@@ -5,7 +5,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field, PositiveInt, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -443,7 +443,7 @@ def save_structured_request(
     start_time: str | None = None,
     end_time: str | None = None,
     members: list[str] | None = None,
-    priority: PositiveInt | None = None,
+    priority: str | None = None,
     reason: str | None = None,
     original_text: str = "",
     source_schedule_id: str | None = None,
