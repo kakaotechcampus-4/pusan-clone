@@ -274,7 +274,10 @@ def extract_schedule_request(query: str) -> str:
     """사용자의 자연어 요청을 StructuredRequest로 구조화하여 JSON 문자열로 반환합니다."""
 
     result = extract_structured_request(query)
-    return json.dumps(result.model_dump(exclude_none=True), ensure_ascii=False)
+    payload = result.model_dump(exclude_none=True)
+    payload["base_date"] = current_app_date_iso()
+    payload["tool_name"] = "extract_schedule_request"
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def week02_tools() -> list[Any]:
