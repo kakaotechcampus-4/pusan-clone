@@ -241,13 +241,23 @@ class SaveStructuredRequestInput(StructuredRequest):
     @model_validator(mode="before")
     @classmethod
     def unwrap_legacy_payload(cls, value: Any) -> Any:
-        """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
+        """StructuredRequest 인스턴스/JSON 문자열을 dict로 정규화하고,
+        예전 trace의 payload/structured_request wrapper는 바깥 필드(source_schedule_id 등)를
+        보존하며 병합합니다. 그 외 실제 필드 검증은 스키마에 맡깁니다."""
+
+        if isinstance(value, StructuredRequest):
+            value = value.model_dump()
+        elif isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return value  # 자연어 등 구조적으로 못 푸는 문자열은 그대로 넘겨서 필드 스키마가 실패하게 둔다
 
         if isinstance(value, dict):
             for key in ("payload", "structured_request"):
                 inner = value.get(key)
                 if isinstance(inner, dict):
-                    return inner
+                    return {**value, **inner}  # 바깥 필드(source_schedule_id 등) 보존
         return value
 
 
@@ -351,7 +361,14 @@ def _delete_saved_schedules(
         "delete_all": delete_all,
     }
 
-    has_condition = bool(schedule_ids) or bool(date) or bool(title) or bool(start_time) or time_unspecified or delete_all
+    has_condition = (
+        schedule_ids is not None
+        or bool(date)
+        or bool(title)
+        or bool(start_time)
+        or time_unspecified
+        or delete_all
+    )
     if not has_condition:
         return tool_result(
             "personal_delete_saved_schedules",
@@ -371,6 +388,16 @@ def _delete_saved_schedules(
             title=title,
             start_time=start_time,
             time_unspecified=time_unspecified,
+        )
+
+    if not deleted:
+        return tool_result(
+            "personal_delete_saved_schedules",
+            ok=False,
+            error="조건에 맞는 저장된 일정을 찾지 못해 삭제된 항목이 없습니다.",
+            deleted_count=0,
+            filters=filters,
+            deleted=[],
         )
 
     return tool_result(
@@ -423,12 +450,11 @@ def personal_create_schedule(
     sqlite_save = save_structured_request_payload(save_input)
 
     return json_payload(
-        tool_result(
-            "personal_create_schedule",
-            created_schedule=created_schedule,
-            structured_request=save_input.model_dump(),
-            sqlite_save=sqlite_save,
-        )
+        {
+            **week01_result,
+            "structured_request": save_input.model_dump(),
+            "sqlite_save": sqlite_save,
+        }
     )
 
 
@@ -547,12 +573,16 @@ def personal_update_saved_schedule(
                 "personal_update_saved_schedule",
                 ok=False,
                 error=f"schedule_id={schedule_id}에 해당하는 저장 일정을 찾을 수 없습니다.",
+                schedule_id=schedule_id,
+                updated_schedule=None,
+                shared_sync=None,
             )
         )
 
     return json_payload(
         tool_result(
             "personal_update_saved_schedule",
+            schedule_id=schedule_id,
             updated_schedule=result["schedule"],
             shared_sync=result["shared_sync"],
         )
