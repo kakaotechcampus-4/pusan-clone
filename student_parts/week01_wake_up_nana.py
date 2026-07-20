@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
+import logging
 
-from chromadb import logger
 from langchain.agents import create_agent
 from langchain.tools import tool
 
@@ -22,9 +22,6 @@ from fixed.langchain_trace import (
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
-
-from typing import Literal
-RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
 
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
@@ -208,7 +205,7 @@ def personal_create_schedule(
         )
 
     except Exception as e:
-        logger.exception("시스템 오류")
+        logging.exception("시스템 오류")
         raise
 
 
@@ -244,7 +241,7 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
             }
         )
     except Exception:
-        logger.exception("시스템 오류")
+        logging.exception("시스템 오류")
         raise
 
 
@@ -280,7 +277,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
             }
         )
     except Exception:
-        logger.exception("시스템 오류")
+        logging.exception("시스템 오류")
         raise
 
 
