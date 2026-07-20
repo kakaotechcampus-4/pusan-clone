@@ -367,6 +367,7 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
 
     # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
     return SaveStructuredRequestInput(
+        kind= "personal_schedule",
         title= schedule["title"],
         date= schedule["date"],
         start_time=schedule["start_time"],
@@ -400,7 +401,7 @@ def personal_create_schedule(
     sqlite_save = save_structured_request_payload(structured_request)
 
     return json_payload({
-        "created" : created,
+        **created,
         "structured_request" : structured_request.model_dump(),
         "sqlite_save": sqlite_save,
     })
