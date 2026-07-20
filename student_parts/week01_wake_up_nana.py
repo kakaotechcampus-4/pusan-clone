@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
+import logging
 
-from chromadb import logger
 from langchain.agents import create_agent
 from langchain.tools import tool
 
@@ -22,9 +22,6 @@ from fixed.langchain_trace import (
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
-
-from typing import Literal
-RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
 
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
@@ -170,10 +167,6 @@ def personal_create_schedule(
     start_time: str,
     end_time: str = "미정",
     attendees: list[str] | None = None,
-    kind: RequestKind = "personal_schedule",
-    priority: int | None = None,
-    reason: str | None = None,
-    original_text: str = "",
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
@@ -190,11 +183,7 @@ def personal_create_schedule(
             "date": date,
             "start_time": start_time,
             "end_time": end_time,
-            "members": attendees if attendees is not None else [],
-            "kind": kind,
-            "priority": priority,
-            "reason": reason,
-            "original_text": original_text,
+            "attendees": attendees if attendees is not None else [],
             "session_id": current_session_scope(),
             "created_at": _now_iso(),
         }
@@ -216,7 +205,7 @@ def personal_create_schedule(
         )
 
     except Exception as e:
-        logger.exception("시스템 오류")
+        logging.exception("시스템 오류")
         raise
 
 
@@ -252,7 +241,7 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
             }
         )
     except Exception:
-        logger.exception("시스템 오류")
+        logging.exception("시스템 오류")
         raise
 
 
@@ -288,7 +277,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
             }
         )
     except Exception:
-        logger.exception("시스템 오류")
+        logging.exception("시스템 오류")
         raise
 
 
