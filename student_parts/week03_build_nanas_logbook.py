@@ -38,9 +38,10 @@ WEEK03_TOOL_CALL_PROMPT = (
     "[저장] 1. extract_schedule_request(query=사용자 원문)를 호출하여 StructuredRequest로 구조화 "
     "[저장] 2. 그 결과의 kind/title/date/start_time/end_time/members/priority/reason/original_text 필드를 save_structured_request의 인자로 전달해 저장한다. "
     "[저장] *주의사항: 자연어 문장이나 ok/tool_name/base_date 등의 wrapper는 저장 인자로 넘기지 않는다. "
-    "[조회] week1의 personal_list_schedules는 임시 일정만 조회하므로 절대 사용하지 않고, 반드시 personal_list_saved_schedules를 사용한다. "
+    "[조회] 일정 조회 시, week1의 personal_list_schedules는 임시 일정만 조회하므로 절대 사용하지 않고, 반드시 personal_list_saved_schedules를 사용한다. "
+    "[조회] 할 일/리마인더 조회 시, list_saved_requests를 사용하되 반드시 kind='todo' 또는 kind='reminder'로 종류를 지정한다. "
     "[조회] 날짜가 명시될경우 date_from/date_to로 범위를 좁혀 조회하되, 날짜가 명시돼있지 않으면 임의로 좁히지 말고 모든 날짜에 대해 조회한다. "
-    "[조회] 일정/할 일/리마인더 중 사용자가 요청한 것을 조회한다. 무엇을 조회해야할 지 모호할 경우, 일정/할 일/리마인더를 모두 조회한다. "
+    "[조회] 일정/할 일/리마인더 중 사용자가 요청한 것을 조회한다. "
     "[수정] personal_list_saved_schedules로 대상 schedule_id를 확인하고, personal_update_saved_schedule을 호출한다. "
     "[삭제] personal_list_saved_schedules로 대상 schedule_id를 확인하고, personal_delete_saved_schedules을 호출한다. "
 )
