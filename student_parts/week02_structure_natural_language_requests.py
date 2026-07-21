@@ -161,7 +161,7 @@ class StructuredRequest(BaseModel):
     end_time: str | None = Field(default=None, description="HH:MM, 24시간 형식. 사용자가 지정하지 않았을 경우 임의로 문자열 넣지 말고 null.")
     members: list[str] = Field(default_factory=list, description="참석자 목록. 이름에서 랑/이랑/와/하고 등의 조사는 제거하고 저장할 것. 예시: 수호랑 -> 수호")
     priority: Literal["low", "medium", "high"] | None = Field(default=None, description="할 일 우선순위. low/medium/high 중 하나. 명시하지 않았으면 null.")
-    reason: list[str] = Field(default_factory=list, description="각 필드에 대한 판단 근거")
+    reason: str = Field(default="", description="kind 필드에 대한 판단 근거")
     original_text: str = Field(default="", description="원문 보존용 필드")
 
 
@@ -175,29 +175,37 @@ class StructuredRequestBatch(BaseModel):
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """LangChain structured output 결과를 StructuredRequest로 정규화합니다."""
 
-    # TODO: value가 이미 StructuredRequest이면 그대로 반환하세요.
-    # TODO: value가 dict이면 StructuredRequest.model_validate(...)로 검증해 반환하세요.
-    # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+    elif isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    else:
+        raise RuntimeError("StructuredRequest로 반환할 수 없습니다.")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
     """Week 3 이상에서 agent를 새로 띄우지 않고 자연어를 StructuredRequest로 바꿉니다."""
 
-    # TODO: chat_model().with_structured_output(StructuredRequest, method="function_calling")로 structured LLM을 만드세요.
-    # TODO: system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고, user 메시지에는 text를 넣어 invoke하세요.
-    # TODO: LLM 결과를 _coerce_structured_request(...)로 정규화해 StructuredRequest 하나로 반환하세요.
-    ...
+    structured_llm = chat_model().with_structured_output(StructuredRequest, method="function_calling")
+    res = structured_llm.invoke([
+        {"role": "system", "content": join_system_prompt(week02_prompt_parts())},
+        {"role": "user", "content": text},
+    ])
+    return _coerce_structured_request(res)
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
     """Week 3 이상 agent가 저장/조율 전에 호출하는 구조화 bridge tool입니다."""
 
-    # TODO: extract_structured_request(query)를 호출해 자연어 또는 Week 1 JSON payload를 구조화하세요.
-    # TODO: ok/tool_name/base_date/structured_request 키를 가진 dict를 만들고 structured_request에는 model_dump() 결과를 넣으세요.
-    # TODO: json.dumps(..., ensure_ascii=False)로 JSON 문자열을 반환하세요.
-    ...
+    structured = extract_structured_request(query)
+    payload = {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": current_app_date_iso(),
+        "structured_request": structured.model_dump(),
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def week02_tools() -> list[Any]:
@@ -230,7 +238,7 @@ def week02_prompt_parts() -> list[str]:
         "week1 tool JSON을 받은 경우, 다시 tool을 호출하지 말고 payload를 읽어 structured_response로 만들어.",
         "week2에서는 sqlite저장, RAG, 외부 멤버 일정 조율을 하지 않을거야.",
         "최종 답변은 StructuredRequestBatch JSON 객체를 정확히 하나만 출력해. 같은 JSON을 반복하거나 JSON 앞뒤에 다른 텍스트, 줄바꿈 후 추가 출력을 덧붙이지 마.",
-        "reason필드를 빈 리스트로 두지 말고 kind, proirity 필드에 대한 판단 근거를 작성해. 각 필드에 대한 근거를 하나의 원소로 분리해서 저장해.(예: kind: 다시 리마인드 해줘야하므로 remind로 판단)"
+        "reason필드를 빈 문자열로 두지 말고 kind 필드에 대한 판단 근거를 작성해. (예: 다시 리마인드 해줘야하므로 reminder로 판단)"
     ]
 
 
