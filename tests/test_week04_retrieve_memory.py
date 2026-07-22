@@ -412,11 +412,17 @@ class TestPromptToolsAndAgent:
         assert "search_personal_references" in prompt
         assert "search_saved_requests" in prompt
         assert "search_conversation_messages" in prompt
+        assert "가장 식별력 높은 한 단어 또는 짧은 연속 구" in prompt
+        assert "저장된 기록 자체를 찾는 질문" in prompt
+        assert "일정 생성의 누락 정보를 보완하는 검색" in prompt
         assert "핵심 대상과 보완하려는 필드" in prompt
         assert "적용 대상과 조건이 현재 요청에 부합" in prompt
         assert "근거가 있는 필드만 채우고" in prompt
         assert "start_time에 '미정'을 넣어" in prompt
         assert "범위의 시작 시각을 start_time으로" in prompt
+        assert prompt.count(
+            "SQLite에 저장된 일정, 할 일, 알림의 원문이나 근거를 핵심어로 찾는 질문"
+        ) == 1
 
     def test_build_agent_requires_api_key(self, week04, monkeypatch):
         monkeypatch.setattr(week04, "CONFIG", SimpleNamespace(has_openai_key=False))
