@@ -311,7 +311,18 @@ def search_saved_request_rows(
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    ...
+    normalized_top_k = safe_limit(
+        top_k,
+        default=3,
+        maximum=50,
+    )
+
+    # 이 검색은 벡터 검색이 아님
+    # ChromaDB embedding 검색 X, SQLite 문자열,키워드 검색 O
+    return sqlite_store.search_saved_requests(
+        query=query,
+        limit=normalized_top_k,
+    )
 
 
 def search_conversation_messages_dict(
@@ -385,7 +396,19 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
-    ...
+    normalized_top_k = safe_limit(
+        top_k,
+        default=3,
+        maximum=50,
+    )
+
+    rows = search_saved_request_rows(
+        SQLITE_STORE,
+        query=query,
+        top_k=normalized_top_k,
+    )
+    # 개인 참고자료는 hits, SQLite 데이터는 rows를 사용
+    return json_payload({"rows": rows})
 
 
 @tool(args_schema=SearchConversationMessagesInput)
