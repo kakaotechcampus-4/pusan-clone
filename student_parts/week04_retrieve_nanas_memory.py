@@ -372,8 +372,25 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
-    # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    safe_top_k = safe_limit(limit, default=5, maximum=20)
+
+    hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=safe_top_k)
+    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=safe_top_k)
+
+    lines = []
+    for hit in hits:
+        lines.append(f"[참고자료] {hit.get('content', '')}")
+    for row in rows:
+        lines.append(f"[일정] {row.get('title', '')} - {row.get('date', '')}")
+    context = "\n".join(lines) if lines else "검색 결과가 없습니다."
+
+    return json_payload({
+        "reference_backend": REFERENCE_STORE.backend_info(),
+        "hits": hits,
+        "rows": rows,
+        "context": context,
+    })
+
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
@@ -384,6 +401,7 @@ def week04_tools() -> list[Any]:
         search_personal_references,
         search_saved_requests,
         search_conversation_messages,
+        search_nana_memory,
     ]
 
 
@@ -401,11 +419,15 @@ def week04_prompt_parts() -> list[str]:
         "[Week 4 도구 안내] 아래 도구가 새로 추가되었습니다. 기존 week03 도구와 함께 질문 성격에 따라 적절한 도구를 선택하세요. ",
         "add_personal_reference: 사용자가 참고자료/선호/정책을 기억해달라고 하면 사용, ",
         "search_personal_references: 사용자의 선호/정책/참고자료에 관련된 질문에 사용 (ChromaDB 벡터 검색) ",
-        "search_saved_requests: 저장된 일정/할일/알림을 키워드로 검색할 때 사용 (SQLite 텍스트 검색)",
+        "search_saved_requests: 저장된 일정/할일/알림을 키워드로 검색할 때 사용 (SQLite 텍스트 검색), ",
+        "search_conversation_messages: 이전 대화에서 나눈 내용을 검색할 때 사용 (SQLite → ChromaDB lazy sync 후 벡터 검색), ",
+        "search_nana_memory: 참고자료와 저장된 일정을 한 번에 통합 검색할 때 사용",
         "[도구 선택 기준] ",
         "일정을 키워드로 '찾아줘/검색해줘' → search_saved_requests ",
         "특정 날짜 범위의 일정 '목록 보여줘/알려줘' → personal_list_saved_schedules ",
-        "선호/정책/참고자료 질문 → search_personal_references ",
+        "선호/정책/참고자료 질문 → search_personal_references, ",
+        "'지난번에 뭐 얘기했지?', '예전에 뭐라고 했었지?' 같은 과거 대화 검색 → search_conversation_messages, ",
+        "참고자료와 일정을 동시에 검색하고 싶을 때 → search_nana_memory, ",
         "참고자료 관련 질문은 대화 기억에 의존하지 말고 반드시 search_personal_references를 호출해서 응답해"
     ]
 
