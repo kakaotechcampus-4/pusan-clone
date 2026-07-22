@@ -243,11 +243,22 @@ def search_personal_reference_hits(
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
     # from fixed.reference_store import PersonalReferenceStore  참고
-    result = refernece_store.search_personal_references(
-        query= query,
-        limit= safe_limit(top_k)
-    )
+    hits: list[dict[str, Any]] = []
+    result = reference_store.collection.query(query_texts=[query], n_results=safe_limit(top_k))
+    for idx, document in enumerate(result.get("documents", [[]])[0]):
+        metadata = result.get("metadatas", [[]])[0][idx] or {}
+        distance = result.get("distances", [[]])[0][idx]
+        hits.append(
+            {
+                "id": result.get("ids", [[]])[0][idx],
+                "title": metadata.get("title", ""),
+                "content": document,
+                "tags": metadata.get("tags", ""),
+                "distance": distance,
+            }
+        )
 
+    return hits
 
 def search_saved_request_rows(
     sqlite_store: AppSQLiteStore,
@@ -318,7 +329,10 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
-    rows = SQLITE_STORE.search_saved_requests(query, safe_limit(tok_k)) or []
+    rows = SQLITE_STORE.search_saved_requests(
+        query=query,
+        limit= safe_limit(top_k)
+    ) or []
     return json_payload({"rows": rows})
 
 
