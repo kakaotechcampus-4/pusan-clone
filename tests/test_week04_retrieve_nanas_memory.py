@@ -449,6 +449,11 @@ class ToolRegistryAndSchemaContractTest(unittest.TestCase):
         self.assertIn("date_to", prompt)
         self.assertIn('search_saved_requests(query="팀 회의", date_from=', prompt)
 
+    def test_week04_prompt_includes_expansion_guidance(self) -> None:
+        prompt = week04.week04_system_prompt()
+        # 표현이 달라 빈 결과일 때 동의어로 재검색하도록 안내해야 한다.
+        self.assertIn("재검색", prompt)
+
     def test_week04_prompt_includes_rag_guidance(self) -> None:
         prompt = week04.week04_system_prompt()
         self.assertIn("search_personal_references", prompt)
@@ -600,6 +605,13 @@ class Week04LiveLLMTest(unittest.TestCase):
         self.assertTrue(any(a.get("date_from") or a.get("date_to") for a in saved_args))
         # 8월 회의만 근거가 되므로 답에 전사 회의가 드러나야 한다.
         self.assertTrue(any(token in answer for token in ("전사", "8월", "12")))
+
+    def test_expression_mismatch_recovers_via_retry(self) -> None:
+        calls, answer = self._run_calls("저장된 리포트 마감 관련 일정 있어?")
+        saved_queries = [args.get("query", "") for name, args in calls if name == "search_saved_requests"]
+        self.assertTrue(saved_queries, "저장 일정 질문에는 search_saved_requests를 불러야 한다")
+        # 저장 제목은 '분기 보고서 제출'이라 '리포트 마감' 통짜로는 안 걸리므로 동의어로 재검색해 찾아내야 한다.
+        self.assertTrue(any(token in answer for token in ("보고서", "분기")))
 
     def test_greeting_does_not_trigger_search(self) -> None:
         # 검색이 필요 없는 인사/감사에는 어떤 검색 tool도 부르지 않아야 한다(과잉 호출 방지).
