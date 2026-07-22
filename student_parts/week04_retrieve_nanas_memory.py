@@ -382,7 +382,15 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        "[Week 4 도구 안내] 아래 도구가 새로 추가되었습니다. 기존 week03 도구와 함께 질문 성격에 따라 적절한 도구를 선택하세요. ",
+        "add_personal_reference: 사용자가 참고자료/선호/정책을 기억해달라고 하면 사용, ",
+        "search_personal_references: 사용자의 선호/정책/참고자료에 관련된 질문에 사용 (ChromaDB 벡터 검색) ",
+        "search_saved_requests: 저장된 일정/할일/알림을 키워드로 검색할 때 사용 (SQLite 텍스트 검색)",
+        "[도구 선택 기준] ",
+        "일정을 키워드로 '찾아줘/검색해줘' → search_saved_requests ",
+        "특정 날짜 범위의 일정 '목록 보여줘/알려줘' → personal_list_saved_schedules ",
+        "선호/정책/참고자료 질문 → search_personal_references ",
+        "참고자료 관련 질문은 대화 기억에 의존하지 말고 반드시 search_personal_references를 호출해서 응답해"
     ]
 
 
