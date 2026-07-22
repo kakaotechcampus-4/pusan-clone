@@ -282,7 +282,22 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    ...
+    sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
+    # conversation_id를 명시하지 않으면 현재 대화(방금 한 말)는 검색에서 제외한다.
+    exclude_conversation_id = None if conversation_id else current_session_scope()
+    hits = conversation_rag_store.search(
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+        exclude_conversation_id=exclude_conversation_id,
+    )
+    return {
+        "hits": hits,
+        "rows": hits,
+        "context": conversation_rag_store.context_from_hits(hits),
+        "rag_backend": conversation_rag_store.backend_info(),
+        "sync": sync,
+    }
 
 
 def search_conversation_message_rows(
@@ -295,7 +310,14 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    ...
+    result = search_conversation_messages_dict(
+        sqlite_store,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )
+    return result["hits"]
 
 
 @tool(args_schema=AddPersonalReferenceInput)
@@ -347,7 +369,18 @@ def search_conversation_messages(
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
     # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    ...
+    top_k = safe_limit(top_k, default=5, maximum=50)
+    try:
+        result = search_conversation_messages_dict(
+            SQLITE_STORE,
+            CONVERSATION_RAG_STORE,
+            query=query,
+            top_k=top_k,
+            conversation_id=conversation_id,
+        )
+    except Exception as error:
+        return json_payload({"hits": [], "rows": [], "error": f"대화 검색에 실패했습니다: {error}"})
+    return json_payload(result)
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -361,7 +394,29 @@ def search_nana_memory(
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    limit = safe_limit(limit, default=5, maximum=20)
+    try:
+        reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=limit)
+        schedule_rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=limit)
+    except Exception as error:
+        return json_payload({"hits": [], "schedules": [], "context": "", "error": f"통합 검색에 실패했습니다: {error}"})
+
+    context_lines = ["[통합 검색 결과]"]
+    for hit in reference_hits:
+        context_lines.append(f"- (참고자료) {hit.get('metadata', {}).get('title', '')}: {hit.get('content', '')}")
+    for row in schedule_rows:
+        date = row.get("date") or "날짜 미정"
+        start_time = row.get("start_time") or ""
+        context_lines.append(f"- (일정) {row.get('title', '')} {date} {start_time}".rstrip())
+
+    return json_payload(
+        {
+            "reference_backend": REFERENCE_STORE.backend_info(),
+            "hits": reference_hits,
+            "schedules": schedule_rows,
+            "context": "\n".join(context_lines),
+        }
+    )
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
