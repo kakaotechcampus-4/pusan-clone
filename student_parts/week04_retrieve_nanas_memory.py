@@ -15,7 +15,12 @@ from fixed.app_store import AppSQLiteStore
 from fixed.reference_store import PersonalReferenceStore
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import join_system_prompt
-from student_parts.week03_build_nanas_logbook import week03_prompt_parts, week03_tools
+from student_parts.week03_build_nanas_logbook import (
+    week03_prompt_parts,
+    week03_tools,
+    tool_result,
+    _tool_name
+)
 
 
 REFERENCE_STORE = PersonalReferenceStore(CONFIG.chroma_dir)
@@ -225,8 +230,13 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
-    # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
+    metadata = reference_store.add_personal_reference(
+        title=title,
+        content=content,
+        tags=tags or []
+    )
+    return metadata["backend"]
+
 
 
 def search_personal_reference_hits(
@@ -285,7 +295,22 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    reference = {
+        "title" : title,
+        "content" : content,
+        "tags" : tags or []
+    }
+    backend_info = add_personal_reference_dict(
+        reference_store=REFERENCE_STORE,
+        **reference
+    )
+
+    return json_payload(tool_result(
+        tool_name=_tool_name(add_personal_reference),
+        reference_backend=backend_info,
+        reference=reference
+    ))
+
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
