@@ -498,7 +498,128 @@ def search_nana_memory(
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+
+    # 1. 검색 개수를 1~20 범위로 안전하게 보정합니다.
+    normalized_limit = safe_limit(
+        limit,
+        default=5,
+        maximum=20,
+    )
+
+    # 2. query와 의미가 가까운 개인 참고자료를 검색합니다.
+    reference_hits = search_personal_reference_hits(
+        REFERENCE_STORE,
+        query=query,
+        top_k=normalized_limit,
+    )
+
+    # 3. 날짜 조건에 맞는 SQLite 일정 후보를 조회합니다.
+    # 참석자 필터 적용 후에도 충분한 결과가 남도록 조금 넉넉하게 가져옵니다.
+    candidate_rows = SQLITE_STORE.list_schedules(
+        limit=normalized_limit * 5,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+    attendee_query = str(attendee or "").strip().casefold()
+    schedule_rows: list[dict[str, Any]] = []
+
+    # 4. 일정 row의 참석자를 정리하고 attendee 조건을 적용합니다.
+    for candidate in candidate_rows:
+        row = dict(candidate)
+
+        attendees = row.get("attendees")
+
+        # store 결과에 attendees list가 없다면 attendees_json을 직접 해석합니다.
+        if not isinstance(attendees, list):
+            attendees = _decode_attendees(row.get("attendees_json"))
+
+        row["attendees"] = attendees
+
+        # 참석자 조건이 있는 경우 해당 참석자가 포함된 일정만 남깁니다.
+        if attendee_query:
+            normalized_attendees = [str(name).strip().casefold() for name in attendees]
+
+            if not any(attendee_query in name for name in normalized_attendees):
+                continue
+
+        schedule_rows.append(row)
+
+        if len(schedule_rows) >= normalized_limit:
+            break
+
+    # 5. SQLite 일정 row를 LLM이 읽기 쉬운 문자열 chunk로 변환합니다.
+    schedule_chunks: list[dict[str, Any]] = []
+
+    for row in schedule_rows:
+        title = str(row.get("title") or "제목 없음")
+        date = str(row.get("date") or "날짜 미정")
+        start_time = str(row.get("start_time") or "시간 미정")
+        end_time = str(row.get("end_time") or "종료 미정")
+        attendees = row.get("attendees") or []
+
+        attendee_text = (
+            ", ".join(str(name) for name in attendees) if attendees else "참석자 없음"
+        )
+
+        content = (
+            f"{title} | 날짜={date} | "
+            f"시간={start_time}~{end_time} | "
+            f"참석자={attendee_text}"
+        )
+
+        schedule_chunks.append(
+            {
+                "id": (row.get("schedule_id") or row.get("request_id")),
+                "content": content,
+                "metadata": {
+                    "title": title,
+                    "date": row.get("date"),
+                    "start_time": row.get("start_time"),
+                    "end_time": row.get("end_time"),
+                    "attendees": attendees,
+                    "source": row.get("source", "sqlite"),
+                },
+            }
+        )
+
+    # 6. 참고자료와 일정 결과를 하나의 context 문자열로 조합합니다.
+    context_lines = ["[개인 참고자료 검색 결과]"]
+
+    if reference_hits:
+        for index, hit in enumerate(reference_hits, start=1):
+            metadata = hit.get("metadata") or {}
+            title = metadata.get("title") or "제목 없음"
+            content = str(hit.get("content") or "").strip()
+
+            context_lines.append(f"{index}. {title}: {content}")
+    else:
+        context_lines.append("- 검색된 개인 참고자료가 없습니다.")
+
+    context_lines.extend(
+        [
+            "",
+            "[SQLite 저장 일정 검색 결과]",
+        ]
+    )
+
+    if schedule_chunks:
+        for index, chunk in enumerate(schedule_chunks, start=1):
+            context_lines.append(f"{index}. {chunk['content']}")
+    else:
+        context_lines.append("- 조건에 맞는 저장 일정이 없습니다.")
+
+    # 7. compatibility helper가 사용할 통합 JSON을 반환합니다.
+    return json_payload(
+        {
+            "query": query,
+            "reference_backend": REFERENCE_STORE.backend_info(),
+            "hits": reference_hits,
+            "rows": schedule_rows,
+            "schedule_chunks": schedule_chunks,
+            "context": "\n".join(context_lines),
+        }
+    )
 
 
 def week04_tools() -> list[Any]:
