@@ -294,7 +294,21 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    
+    sync = conversation_rag_store.sync_from_sqlite(sqlite_store=sqlite_store)
+    hits = conversation_rag_store.search(
+        query=query, 
+        top_k=safe_limit(top_k), 
+        conversation_id=conversation_id,
+        exclude_conversation_id=current_session_scope()
+    )
+
+    return {
+        "hits" : hits,
+        "rows" : hits,
+        "sync" : sync,
+        "rag_backend" : conversation_rag_store.backend_info(),
+        "context" : conversation_rag_store.context_from_hits(hits)
+    }
 
 
 def search_conversation_message_rows(
@@ -307,7 +321,14 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    ...
+    res = search_conversation_messages_dict(
+        sqlite_store=sqlite_store,
+        conversation_rag_store=CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id
+    )
+    return res["hits"]
 
 
 @tool(args_schema=AddPersonalReferenceInput)
@@ -375,8 +396,19 @@ def search_conversation_messages(
 ) -> str:
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
+    res = search_conversation_messages_dict(
+        sqlite_store=SQLITE_STORE,
+        conversation_rag_store=CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id
+    )
+
     # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    ...
+    return json_payload(tool_result(
+        tool_name=_tool_name(search_conversation_messages),
+        **res
+    ))
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -390,7 +422,7 @@ def search_nana_memory(
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
