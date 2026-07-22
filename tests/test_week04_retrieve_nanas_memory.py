@@ -203,6 +203,93 @@ class SearchSavedRequestRowsContractTest(unittest.TestCase):
         self.assertEqual(store.queries, ["병원 일정"])
 
 
+class WithinDateRangeTest(unittest.TestCase):
+    def test_no_bounds_always_true(self) -> None:
+        self.assertTrue(week04._within_date_range("2026-05-01", None, None))
+
+    def test_from_bound_is_inclusive(self) -> None:
+        self.assertTrue(week04._within_date_range("2026-05-01", "2026-05-01", None))
+        self.assertFalse(week04._within_date_range("2026-04-30", "2026-05-01", None))
+
+    def test_to_bound_is_inclusive(self) -> None:
+        self.assertTrue(week04._within_date_range("2026-05-31", None, "2026-05-31"))
+        self.assertFalse(week04._within_date_range("2026-06-01", None, "2026-05-31"))
+
+    def test_missing_date_is_excluded_when_bounded(self) -> None:
+        # 날짜가 없는 row는 범위 조건이 있으면 걸러져야 잘못된 시간 답을 막는다.
+        self.assertFalse(week04._within_date_range("", "2026-05-01", None))
+        self.assertFalse(week04._within_date_range(None, None, "2026-05-31"))
+
+
+class SearchSavedRequestRowsDateFilterTest(unittest.TestCase):
+    def _rows(self) -> list[dict[str, Any]]:
+        return [
+            {"request_id": "r1", "title": "이번 주 회의", "date": "2026-07-24", "members_json": "[]"},
+            {"request_id": "r2", "title": "다음 달 회의", "date": "2026-08-12", "members_json": "[]"},
+            {"request_id": "r3", "title": "두 달 뒤 회의", "date": "2026-09-30", "members_json": "[]"},
+        ]
+
+    def test_out_of_range_rows_are_excluded(self) -> None:
+        store = FakeSQLiteStore(rows=self._rows())
+        rows = week04.search_saved_request_rows(
+            store, query="회의", top_k=5, date_from="2026-08-01", date_to="2026-08-31"
+        )
+        # 8월 범위만 남고 7월/9월 회의는 후처리로 제외돼야 한다.
+        self.assertEqual([row["title"] for row in rows], ["다음 달 회의"])
+
+    def test_date_filter_widens_candidate_limit(self) -> None:
+        store = FakeSQLiteStore(rows=[{"request_id": "r1", "title": "회의", "date": "2026-08-01", "members_json": "[]"}])
+        week04.search_saved_request_rows(
+            store, query="회의", top_k=3, date_from="2026-08-01", date_to="2026-08-31"
+        )
+        # 날짜로 거를 땐 상위 몇 건이 아니라 후보를 넉넉히(>=50) 받아야 범위 안 일정을 놓치지 않는다.
+        self.assertGreaterEqual(store.calls[-1]["limit"], 50)
+
+    def test_no_date_filter_keeps_top_k_as_limit(self) -> None:
+        store = FakeSQLiteStore(rows=[])
+        week04.search_saved_request_rows(store, query="회의", top_k=7)
+        # 날짜 조건이 없으면 기존처럼 top_k가 그대로 limit로 전달된다.
+        self.assertEqual(store.calls[-1]["limit"], 7)
+
+    def test_result_is_capped_to_top_k_after_filter(self) -> None:
+        rows_in = [
+            {"request_id": f"r{i}", "title": "회의", "date": f"2026-08-1{i}", "members_json": "[]"}
+            for i in range(5)
+        ]
+        store = FakeSQLiteStore(rows=rows_in)
+        rows = week04.search_saved_request_rows(
+            store, query="회의", top_k=2, date_from="2026-08-01", date_to="2026-08-31"
+        )
+        # 넓게 받아 날짜로 좁힌 뒤에도 요청한 개수만큼만 돌려준다.
+        self.assertEqual(len(rows), 2)
+
+
+class SearchSavedRequestsToolDateFilterTest(unittest.TestCase):
+    def test_tool_passes_dates_and_echoes_filters(self) -> None:
+        store = FakeSQLiteStore(
+            rows=[
+                {"request_id": "r1", "title": "이번 주 회의", "date": "2026-07-24", "members_json": "[]"},
+                {"request_id": "r2", "title": "다음 달 회의", "date": "2026-08-12", "members_json": "[]"},
+            ]
+        )
+        with patch.object(week04, "SQLITE_STORE", store):
+            payload = invoke_json(
+                week04.search_saved_requests,
+                {"query": "회의", "top_k": 5, "date_from": "2026-08-01", "date_to": "2026-08-31"},
+            )
+        self.assertEqual([row["title"] for row in payload["rows"]], ["다음 달 회의"])
+        # trace에서 어떤 날짜로 걸렀는지 보이도록 적용한 필터를 echo해야 한다.
+        self.assertEqual(payload["filters"], {"date_from": "2026-08-01", "date_to": "2026-08-31"})
+
+    def test_tool_without_dates_keeps_rows_contract(self) -> None:
+        store = FakeSQLiteStore(rows=[])
+        with patch.object(week04, "SQLITE_STORE", store):
+            payload = invoke_json(week04.search_saved_requests, {"query": "회의", "top_k": 3})
+        # top-level rows 계약은 그대로 유지된다.
+        self.assertEqual(payload["rows"], [])
+        self.assertEqual(payload["filters"], {"date_from": None, "date_to": None})
+
+
 class SearchConversationMessagesDictContractTest(unittest.TestCase):
     def test_sync_runs_before_search_and_returns_all_keys(self) -> None:
         sqlite_store = FakeSQLiteStore()
@@ -350,6 +437,18 @@ class ToolRegistryAndSchemaContractTest(unittest.TestCase):
         fields = set(week04.SearchPersonalReferencesInput.model_fields.keys())
         self.assertEqual(fields, {"query", "top_k"})
 
+    def test_search_saved_requests_schema_exposes_date_filters(self) -> None:
+        fields = set(week04.SearchSavedRequestsInput.model_fields.keys())
+        # 시간 조건을 retrieval에서 강제하려고 date_from/date_to를 tool 인자로 노출한다.
+        self.assertEqual(fields, {"query", "top_k", "date_from", "date_to"})
+
+    def test_week04_prompt_includes_date_guidance(self) -> None:
+        prompt = week04.week04_system_prompt()
+        # 시간 조건 질문에 날짜 인자를 함께 넘기도록 안내해야 한다.
+        self.assertIn("date_from", prompt)
+        self.assertIn("date_to", prompt)
+        self.assertIn('search_saved_requests(query="팀 회의", date_from=', prompt)
+
     def test_week04_prompt_includes_rag_guidance(self) -> None:
         prompt = week04.week04_system_prompt()
         self.assertIn("search_personal_references", prompt)
@@ -433,6 +532,16 @@ class Week04LiveLLMTest(unittest.TestCase):
                 "members": ["민수", "지아"],
             }
         )
+        # 기준일(2026-07-22)의 "다음 달"에 걸리는 회의를 심어, 날짜 필터가 5월 팀 회의를 제외하는지 본다.
+        sql.save_structured_request(
+            {
+                "kind": "group_schedule",
+                "title": "전사 회의",
+                "date": "2026-08-12",
+                "start_time": "10:00",
+                "members": ["민수"],
+            }
+        )
         conversation = sql.create_conversation("여행 계획 논의")
         conversation_id = conversation["conversation_id"]
         sql.append_message(conversation_id, "user", "다음 달에 부산으로 여행 갈까 하는데 숙소 추천해줘.")
@@ -444,6 +553,17 @@ class Week04LiveLLMTest(unittest.TestCase):
         events = extract_agent_events(result)
         tools = [event["tool_name"] for event in events if event["event"] == "tool_call"]
         return tools, extract_final_text(result)
+
+    def _run_calls(self, question: str) -> tuple[list[tuple[str, dict[str, Any]]], str]:
+        agent = week04.build_week04_agent()
+        result = agent.invoke({"messages": [{"role": "user", "content": question}]})
+        events = extract_agent_events(result)
+        calls = [
+            (event["tool_name"], event.get("arguments") or {})
+            for event in events
+            if event["event"] == "tool_call"
+        ]
+        return calls, extract_final_text(result)
 
     def test_reference_question_selects_reference_tool(self) -> None:
         tools, answer = self._run("내가 어떤 원두 좋아한다고 적어놨지?")
@@ -471,6 +591,15 @@ class Week04LiveLLMTest(unittest.TestCase):
         tools, _ = self._run("예전에 얘기한 여행 관련해서, 저장된 여행 일정도 같이 확인해줘.")
         self.assertIn("search_conversation_messages", tools)
         self.assertIn("search_saved_requests", tools)
+
+    def test_next_month_question_passes_date_range(self) -> None:
+        calls, answer = self._run_calls("다음 달에 저장된 회의 있어?")
+        saved_args = [args for name, args in calls if name == "search_saved_requests"]
+        self.assertTrue(saved_args, "저장 일정 질문에는 search_saved_requests를 불러야 한다")
+        # 시간 조건이 있으면 날짜 범위를 인자로 넘겨 retrieval에서 걸러야 한다(수정 전엔 날짜가 무시됐다).
+        self.assertTrue(any(a.get("date_from") or a.get("date_to") for a in saved_args))
+        # 8월 회의만 근거가 되므로 답에 전사 회의가 드러나야 한다.
+        self.assertTrue(any(token in answer for token in ("전사", "8월", "12")))
 
     def test_greeting_does_not_trigger_search(self) -> None:
         # 검색이 필요 없는 인사/감사에는 어떤 검색 tool도 부르지 않아야 한다(과잉 호출 방지).

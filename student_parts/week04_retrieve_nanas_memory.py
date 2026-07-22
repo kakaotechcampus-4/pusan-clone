@@ -45,6 +45,10 @@ Nana의 기억은 성격이 다른 세 저장소로 나뉘어 있고, 각 저장
   kind(personal_schedule, group_schedule, todo, reminder).
 - `query`: 이 검색은 저장된 제목·내용에 문자열이 그대로 들어 있는지 보는 키워드 검색이다.
   "일정/예약/약속" 같은 범주어는 빼고, 찾고 싶은 대상의 핵심 명사 위주로 짧게 넣는다(예: "회의", "보고서").
+- 질문에 시간 표현("이번 주", "다음 달", "오늘", "8월", 특정 날짜)이 **명시된 경우에만** 현재 앱 기준일로
+  `date_from`/`date_to`(YYYY-MM-DD)를 계산해 함께 넘긴다. 이 tool은 키워드만으로는 날짜를 못 거른다.
+- 시간 표현이 없으면("~ 언제야?", "~ 있어?", "~ 알려줘") `date_from`/`date_to`를 넣지 말고 전체에서 찾는다.
+  날짜를 임의로 오늘로 채우면 있는 일정을 놓친다. 날짜가 불확실하면 추측하지 않는다.
 - 목록 조회와 구분: "저장된 할 일 다 보여줘", "내 일정 뭐 있어"처럼 특정 키워드 없이 전체 목록을 원하면
   `search_saved_requests`(키워드 검색)가 아니라 Week 3의 `list_saved_requests`(kind로 필터) 또는
   `personal_list_saved_schedules`로 조회한다. `search_saved_requests`는 특정 대상을 키워드로 찾을 때만 쓴다.
@@ -62,13 +66,16 @@ Nana의 기억은 성격이 다른 세 저장소로 나뉘어 있고, 각 저장
 1. 질문이 어느 저장소(참고자료 / 저장된 일정·할 일 / 지난 대화)에 관한 것인지 먼저 분류한다.
 2. 해당 저장소의 전용 도구를 호출한다. 저장소가 둘 이상 걸치면 각 도구를 모두 호출한다.
 3. 도구의 `query`에는 사용자 문장 전체가 아니라 검색에 필요한 짧은 핵심어만 넣는다.
+   질문에 시간 표현이 명시됐을 때만 `search_saved_requests`에 `date_from`/`date_to`를 계산해 넣고, 없으면 넣지 않는다.
 4. 반환된 `hits`/`rows`/`context`만을 근거로 답한다.
 5. 결과가 비어 있으면 "저장된/기록된 내용이 없다"고 사실대로 말한다. 결과에 없는 내용은 만들지 않는다.
 
 # 예시
 - "내가 좋아하는 원두 뭐라고 적어놨지?" → `search_personal_references(query="원두 커피 취향")`
 - "저장된 할 일 알려줘" → `list_saved_requests(kind="todo")`
-- "이번 주 팀 회의 일정 있어?" → `search_saved_requests(query="팀 회의")`
+- "저장된 팀 회의 언제야?" → `search_saved_requests(query="팀 회의")`  (시간 표현 없음 → 날짜 인자 없이 전체에서 찾음)
+- "이번 주 팀 회의 일정 있어?" → `search_saved_requests(query="팀 회의", date_from=<이번 주 시작 YYYY-MM-DD>, date_to=<이번 주 끝 YYYY-MM-DD>)`
+- "다음 달 회의 있어?" → `search_saved_requests(query="회의", date_from=<다음 달 1일>, date_to=<다음 달 말일>)`
 - "저번에 여행 얘기할 때 내가 뭐라고 했지?" → `search_conversation_messages(query="여행")`
 - "예전에 얘기한 여행이랑 저장된 여행 일정 둘 다 확인해줘"
   → `search_conversation_messages(query="여행")` 와 `search_saved_requests(query="여행")` 를 모두 호출
@@ -76,6 +83,7 @@ Nana의 기억은 성격이 다른 세 저장소로 나뉘어 있고, 각 저장
 # 최종 지침 (우선순위)
 - 확실하지 않으면 추측하지 말고 먼저 알맞은 검색 도구를 호출한다. 근거 없이 답하지 않는다.
 - 검색 결과에 있는 사실만 답변에 사용하고, 결과에 없으면 없다고 답한다.
+- 시간 표현이 명시된 저장 일정 질문에만 `search_saved_requests`에 `date_from`/`date_to`를 넘겨 날짜로 거르고, 시간 표현이 없으면 날짜 인자를 비운다.
 - 지난 대화 내용 질문은 `search_conversation_messages`, 개인 메모·참고자료 질문은 `search_personal_references`를 쓴다.
 - 저장된 일정·할 일·알림은, 특정 대상을 키워드로 찾을 땐 `search_saved_requests`,
   조건 없는 전체 목록 조회는 `list_saved_requests`(필요하면 kind 필터)로 구분해 쓴다.
@@ -250,6 +258,18 @@ def _decode_attendees(raw_attendees: str | None) -> list[str]:
     return decoded if isinstance(decoded, list) else []
 
 
+def _within_date_range(row_date: str | None, date_from: str | None, date_to: str | None) -> bool:
+    """저장 row의 date가 date_from~date_to 범위 안에 드는지 판단합니다."""
+
+    # 날짜는 YYYY-MM-DD라 문자열 비교가 곧 날짜 비교이므로 별도 파싱 없이 경계만 확인한다.
+    value = str(row_date or "")
+    if date_from and (not value or value < date_from):
+        return False
+    if date_to and (not value or value > date_to):
+        return False
+    return True
+
+
 def json_payload(payload: dict[str, Any]) -> str:
     """도구 반환용 dict를 한글이 깨지지 않는 JSON 문자열로 변환합니다."""
     return json.dumps(payload, ensure_ascii=False)
@@ -283,6 +303,8 @@ class SearchSavedRequestsInput(BaseModel):
 
     query: str
     top_k: int = Field(default=3, ge=1, le=50)
+    date_from: str | None = None
+    date_to: str | None = None
 
 
 class SearchConversationMessagesInput(BaseModel):
@@ -361,11 +383,17 @@ def search_saved_request_rows(
     *,
     query: str,
     top_k: int = 3,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> list[dict[str, Any]]:
-    """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
+    """SQLite 저장 요청을 키워드로 검색하고 날짜 범위로 좁혀 반환합니다."""
+
+    has_date_filter = bool(date_from or date_to)
+    # 날짜로 거를 때 상위 몇 건만 받으면 범위 안 일정을 놓치므로 후보를 넉넉히 받아 뒤에서 좁힌다.
+    candidate_limit = max(top_k, 50) if has_date_filter else top_k
 
     # top_k를 positional로 주면 kind 자리로 들어가 필터가 깨지므로 limit= 키워드로 넘긴다.
-    rows = sqlite_store.search_saved_requests(query, limit=top_k)
+    rows = sqlite_store.search_saved_requests(query, limit=candidate_limit)
 
     normalized: list[dict[str, Any]] = []
     for row in rows:
@@ -373,9 +401,12 @@ def search_saved_request_rows(
         if "members_json" in row:
             # 원본 문자열은 남기고 LLM이 바로 읽도록 참석자를 list(members)로도 풀어 준다.
             row["members"] = _decode_attendees(row.get("members_json"))
+        if has_date_filter and not _within_date_range(row.get("date"), date_from, date_to):
+            continue
         normalized.append(row)
 
-    return normalized
+    # 날짜로 좁힌 뒤 원래 요청한 개수만큼만 돌려준다.
+    return normalized[:top_k]
 
 
 def search_conversation_messages_dict(
@@ -459,15 +490,23 @@ def search_personal_references(query: str, top_k: int = 5) -> str:
 
 
 @tool(args_schema=SearchSavedRequestsInput)
-def search_saved_requests(query: str, top_k: int = 3) -> str:
-    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
+def search_saved_requests(
+    query: str,
+    top_k: int = 3,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> str:
+    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. 시간 조건이 있으면 date_from/date_to(YYYY-MM-DD)도 함께 넘깁니다."""
 
     # top_k는 args_schema 범위(default=3, le=50)에 맞춰 보정한 뒤 helper에 넘긴다.
     limit = safe_limit(top_k, default=3, maximum=50)
-    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=limit)
+    rows = search_saved_request_rows(
+        SQLITE_STORE, query=query, top_k=limit, date_from=date_from, date_to=date_to
+    )
 
-    # top-level 키는 rows이고, 어떤 검색어였는지 trace에서 확인하려고 query를 함께 남긴다.
-    return json_payload({"query": query, "rows": rows})
+    # 어떤 날짜로 걸렀는지 trace에서 확인하도록 적용한 필터를 함께 남긴다. top-level rows 계약은 그대로 둔다.
+    filters = {"date_from": date_from, "date_to": date_to}
+    return json_payload({"query": query, "filters": filters, "rows": rows})
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -516,10 +555,8 @@ def search_nana_memory(
     )
 
     def matches_legacy_filters(row: dict[str, Any]) -> bool:
-        row_date = str(row.get("date") or "")
-        if date_from_value and (not row_date or row_date < date_from_value):
-            return False
-        if date_to_value and (not row_date or row_date > date_to_value):
+        # 날짜 범위 판정은 search_saved_requests와 같은 규칙을 쓰도록 공유 헬퍼로 통일한다.
+        if not _within_date_range(row.get("date"), date_from_value, date_to_value):
             return False
         members = row.get("members") if isinstance(row.get("members"), list) else []
         if attendee_value and not any(attendee_value == str(member).strip() for member in members):
