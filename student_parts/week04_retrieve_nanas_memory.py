@@ -386,6 +386,9 @@ def week04_prompt_parts() -> list[str]:
         "1. 사용자가 미리 적어 둔 선호/원칙/참고 정보(예: '나는 오전 회의를 선호해', '점심시간은 비워둬')는 "
         "search_personal_references로 찾아. 이 Tool은 ChromaDB + OpenAI embedding 기반 의미 검색이고 결과는 hits로 와. "
         "2. 저장된 일정/할 일/알림 같은 구조화 기록은 search_saved_requests로 찾아. 이 Tool은 SQLite 기록 검색이고 결과는 rows로 와. "
+        "단, 같은 SQLite 일정을 다루는 3주차 personal_list_saved_schedules와 헷갈리지 마. "
+        "personal_list_saved_schedules는 '이번 주 일정 뭐 있어?'처럼 기간/종류로 물어보는 목록 조회용이고, "
+        "search_saved_requests는 '스프린트 들어간 기록 찾아줘'처럼 특정 핵심어로 검색할 때 쓰는 tool이야. "
         "질문 성격에 따라 tool을 하나만 쓸 수도, 여러 개를 함께 쓸 수도 있어. "
         "예를 들어 '내 선호에 맞춰 다음 주 회의 잡아줘'는 참고자료 검색과 저장 일정 검색을 같이 봐야 해. "
         "결과가 비어 있으면 없는 사실을 지어내지 말고, 찾지 못했다고 솔직히 말해.",
