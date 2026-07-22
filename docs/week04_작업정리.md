@@ -106,3 +106,66 @@ Week 3까지 Nana는 일정/할 일/알림을 SQLite에 **저장·조회·수정
   top-level `hits` 확인. 저장 일정/할 일 핵심어 질문 → `search_saved_requests` 호출과 top-level `rows` 확인.
 - **추가 과제**: 일반 채팅 발화 질문 → `search_conversation_messages` 호출, `sync` 통계와
   **현재 대화가 hits에서 제외**되는지 확인.
+
+---
+
+## 라우팅 버그 — "참고자료(원칙·메모)"가 "일정"으로 저장됨
+
+> 코드 버그가 아니라 **프롬프트 라우팅 문제**다. 저장·검색 tool 자체는 정상 동작한다.
+
+### 증상
+
+"기억해줘 / 메모해둬"처럼 **날짜·시각이 없는 취향·습관·원칙**을 저장 요청했는데,
+Week 4의 `add_personal_reference`(ChromaDB 참고자료)가 아니라 Week 3의
+`save_structured_request`로 흘러가 **`kind="personal_schedule"` 로 SQLite에 저장**됐다.
+`list_saved_requests` trace(conversation_id=`conv_ad749d4f83`)에서 확인된 실제 오분류 row:
+
+| request_id | title | original_text | 저장된 kind |
+| --- | --- | --- | --- |
+| `req_53599ed57c` | 점심시간 회의 금지 | "점심시간 12시~1시는 회의 안 잡는 걸로 **메모해둬**" | `personal_schedule` |
+| `req_91f0840368` | 워크숍 | "다음 워크숍은 부산에서 하기로 **기억해줘**" | `personal_schedule` |
+
+### 원인
+
+- Week 3 프롬프트(`WEEK03_TOOL_CALL_PROMPT`, `[Week 2 → Week 3 연결]`)가 **"저장 요청은 구조화 후 `save_structured_request`"** 로 강하게 라우팅한다.
+- `week04_prompt_parts()`에는 **검색 라우팅**(`search_personal_references` 등)만 넣었고,
+  **"원칙·취향·메모 저장은 `add_personal_reference`로 보내라"는 저장 라우팅 규칙이 없다.**
+- 그 결과 "메모해둬/기억해줘" 입력이 참고자료(ChromaDB)가 아닌 일정(SQLite)으로 빨려 들어간다.
+
+### 영향
+
+1. `search_personal_references`로 해당 원칙을 **검색해도 못 찾는다**(ChromaDB에 없음).
+2. 일정 목록에 원칙이 **가짜 일정으로 섞여** 실제 일정과 구분이 안 된다.
+3. 메인과제 검증(참고자료 추가→검색)이 사실상 통과되지 않는다.
+
+### 대응 (적용 완료)
+
+**1) 프롬프트 저장 라우팅 규칙 추가** — `week04_prompt_parts()`의 `[Week 4 역할 확장]`과
+`[Week 4 RAG tool 선택 기준]` 사이에 `[Week 4 저장 라우팅]` 조각을 넣었다.
+
+> `[Week 4 저장 라우팅]` "기억해줘 / 메모해둬 / ~하는 걸로 해둬"처럼 **특정 날짜·시각이 없는
+> 취향·습관·원칙·메모**는 일정이 아니다. `extract_schedule_request`·`save_structured_request`로
+> 저장하지 말고 **`add_personal_reference(title, content, tags)`로 저장**한다. "내일 2시 코칭",
+> "3시에 약 먹으라고 알려줘"처럼 **날짜·시각이 있는 실제 일정/알림/할일**만 Week 3 저장 경로를 쓴다.
+> "점심시간엔 회의 안 잡는다" 같은 규칙을 start_time/end_time만 있는 일정으로 저장하지 않는다.
+
+**2) 오분류 2건 정리** — 두 건 모두 `structured_requests` + `schedules` 양쪽에 있어 두 테이블에서 삭제했다
+(DB는 사전 백업). 이후 `add_personal_reference`로 ChromaDB 참고자료에 재등록.
+
+| 삭제한 request_id / schedule_id | 재등록 reference_id | title |
+| --- | --- | --- |
+| `req_53599ed57c` / `sch_84ed977333` | `ref_cbbdf24ef0` | 점심시간 회의 금지 |
+| `req_91f0840368` / `sch_7a4c1167aa` | `ref_d4537084e0` | 다음 워크숍 장소 |
+
+### 검증 (완료)
+
+```python
+from student_parts.week04_retrieve_nanas_memory import search_personal_references
+print(search_personal_references.invoke({"query": "점심시간 회의", "top_k": 3}))
+```
+
+- 재등록 후 `search_personal_references("점심시간 회의")` → `hits`에 `ref_cbbdf24ef0`("점심시간 회의 금지") 등장.
+- `search_personal_references("워크숍 장소")` → `hits`에 `ref_d4537084e0`("다음 워크숍 장소") 등장.
+- `structured_requests`/`schedules`에서 두 request_id 조회 시 0건 → 일정 목록 오염 제거 확인.
+- 프롬프트 적용 후 앱에서 "점심시간 회의 안 잡는 걸로 메모해둬" → trace에 `add_personal_reference`가
+  호출되고, "저장된 일정 보여줘"에 이 원칙이 더 이상 섞이지 않는지 최종 확인한다.

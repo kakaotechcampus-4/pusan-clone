@@ -461,6 +461,14 @@ def week04_prompt_parts() -> list[str]:
             "출처를 확인하지 않고 현재 대화 기억이나 추측만으로 사실을 확정하지 않는다."
         ),
         (
+            "[Week 4 저장 라우팅] '기억해줘 / 메모해둬 / ~하는 걸로 해둬'처럼 특정 날짜·시각이 없는 "
+            "취향·습관·원칙·메모는 일정이 아니다. 이런 요청은 extract_schedule_request·save_structured_request로 "
+            "저장하지 말고 add_personal_reference(title, content, tags)로 ChromaDB 참고자료에 저장한다. "
+            "반대로 '내일 오후 2시 코칭', '3시에 약 먹으라고 알려줘'처럼 날짜·시각이 있는 실제 일정/알림/할일만 "
+            "Week 3 저장 경로(extract_schedule_request → save_structured_request)를 쓴다. "
+            "'점심시간엔 회의 안 잡는다' 같은 규칙을 start_time/end_time만 있는 일정으로 저장하지 않는다."
+        ),
+        (
             "[Week 4 RAG tool 선택 기준] 출처마다 tool이 다르다. "
             "1) 사용자의 취향·습관·선호·메모처럼 '내가 적어 둔 참고자료'를 묻는 질문은 "
             "search_personal_references(query, top_k)를 호출한다(ChromaDB + OpenAI embedding 검색, 결과는 top-level hits). "
