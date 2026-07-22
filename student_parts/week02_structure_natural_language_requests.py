@@ -126,20 +126,28 @@ class StructuredRequestBatch(BaseModel):
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
 
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+    return StructuredRequest(**value)
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
     """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
-
-    ...
+    model = chat_model().with_structured_output(StructuredRequest)
+    result = model.invoke([
+        ("system", f"오늘은 {current_app_date_iso()}입니다. 사용자가 '내일', '모레', '다음 주 화요일' 같은 상대 날짜를 쓰면 오늘 기준으로 해석하세요."),
+        ("human", text),
+    ])
+    structured = _coerce_structured_request(result)
+    structured.original_text = text 
+    return structured
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
     """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
-
-    ...
+    structured = extract_structured_request(query)
+    return json.dumps(structured.model_dump(), ensure_ascii=False)
 
 
 def week02_tools() -> list[Any]:
