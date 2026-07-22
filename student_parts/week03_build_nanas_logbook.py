@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from fixed.session_scope import current_session_scope
 from student_parts.week01_wake_up_nana import (
@@ -797,20 +796,9 @@ def week03_prompt_parts() -> list[str]:
 
     return [
         *week02_prompt_parts(),
-        # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
-        "구조화된 요청 결과(StructuredRequest)는 save_structured_request 도구를 사용하여 저장하여라.",
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
-        # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
-        f"오늘 날짜는 {current_app_date_iso()}이다. 만약 '내일', '다음 주'와 같은 상대적인 날짜가 입력되었다면 오늘 날짜를 참고하여라.",
-        "아래에서는 현재 주로 사용할 툴에 대해 요약 설명힌다.: ",
-        "save_structured_request를 사용하면 데이터베이스에 원본 요청 row와 목적별 정규화 row가 저장된다.",
-        "저장 결과는 list_saved_requests, personal_list_saved_schedules 도구들을 이용해 조회할 수 있다.",
-        "사용자가 일정 등의 저장을 요청하는 경우 save_structured_request를 사용하여 저장하여라",
-        "사용자가 일정 조회를 요청하는 경우 personal_list_saved_schedules를 사용하여라",
-        "사용자가 일정 수정을 요청하는 경우 personal_update_saved_schedule를 사용하여라",
-        "사용자가 일정 삭제를 요청하는 경우 personal_delete_saved_schedules를 사용하여라",
-        "위 도구 외의 나머지 도구는 우선적으로 고려하지 말아야 한다."
+        "Week 3의 일정 저장, 조회, 수정, 삭제 요청에서는 위 안내에 명시된 SQLite 도구를 우선적으로 고려하여라."
     ]   
 
 
