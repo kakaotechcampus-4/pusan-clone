@@ -262,7 +262,7 @@ def search_saved_request_rows(
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    ...
+    return sqlite_store.search_saved_requests(query, limit=top_k)
 
 
 def search_conversation_messages_dict(
@@ -318,7 +318,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
     top_k = safe_limit(top_k, default=3, maximum=50)
-    rows = SQLITE_STORE.search_saved_requests(query, limit=top_k)
+    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
     return json_payload({"rows": rows})
 
 
