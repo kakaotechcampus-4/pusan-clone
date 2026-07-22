@@ -225,6 +225,7 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
+    # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
     saved = reference_store.add_personal_reference(title, content, tags or [])
     backend = saved.pop("backend")
     return {"reference_backend": backend, "reference": saved}
@@ -239,7 +240,17 @@ def search_personal_reference_hits(
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-    ...
+    hits: list[dict[str, Any]] = []
+    for row in reference_store.search_personal_references(query, top_k):
+        hits.append(
+            {
+                "id": row["id"],
+                "content": row["content"],
+                "distance": row["distance"],
+                "metadata": {"title": row["title"], "tags": row["tags"]},
+            }
+        )
+    return hits
 
 
 def search_saved_request_rows(
@@ -285,6 +296,7 @@ def search_conversation_message_rows(
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
+    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
     return json_payload(
         add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags)
     )
@@ -296,14 +308,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
 
     # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
     top_k = safe_limit(top_k, default=2, maximum=20)
-    hits = []
-    for row in REFERENCE_STORE.search_personal_references(query, top_k):
-        hits.append({
-            "id": row["id"],
-            "content": row["content"],
-            "distance": row["distance"],
-            "metadata": {"title": row["title"], "tags": row["tags"]},
-        })
+    hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
     return json_payload({"hits": hits})
 
 
