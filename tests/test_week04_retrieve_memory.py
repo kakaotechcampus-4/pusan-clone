@@ -412,7 +412,9 @@ class TestPromptToolsAndAgent:
         assert "search_personal_references" in prompt
         assert "search_saved_requests" in prompt
         assert "search_conversation_messages" in prompt
-        assert "내일 회의 하나 잡아줘" in prompt
+        assert "핵심 대상과 보완하려는 필드" in prompt
+        assert "적용 대상과 조건이 현재 요청에 부합" in prompt
+        assert "근거가 있는 필드만 채우고" in prompt
         assert "start_time에 '미정'을 넣어" in prompt
         assert "범위의 시작 시각을 start_time으로" in prompt
 
