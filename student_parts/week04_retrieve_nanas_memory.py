@@ -442,7 +442,7 @@ def search_nana_memory(
     ]
 
     context = f"""
-        [personal_preferences]
+        [personal_references]
         {hits}
 
         [saved_requests]
@@ -483,6 +483,18 @@ def week04_prompt_parts() -> list[str]:
     return [
         *week03_prompt_parts(),
         # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        "Week 4에서는 질문의 대상이 어느 저장 출처에 있는지 구분하여 적절한 도구를 사용하여라.",
+        "사용자가 선호, 규칙, 정책 또는 참고자료를 기억해 달라고 요청하면 add_personal_reference를 사용하여라.",
+        "개인 참고자료에 저장된 선호, 규칙, 정책을 묻는 질문에는 search_personal_references를 사용하여라.",
+        "SQLite에 저장된 일정, 할 일, 알림을 핵심어로 찾는 질문에는 search_saved_requests를 사용하여라.",
+        "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 제목, 참석자 등 짧은 핵심 명사나 구를 전달하여라.",
+        "앱에 저장된 이전 일반 채팅 발화를 찾는 질문에는 search_conversation_messages를 사용하여라.",
+        "특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라.",
+        "날짜 범위의 저장 일정 목록을 조회하는 요청에는 기존 personal_list_saved_schedules를 사용하여라.",
+        "저장된 일정, 할 일, 알림의 원문이나 근거를 핵심어로 검색할 때 search_saved_requests를 사용하여라.",
+        "질문이 여러 출처에 걸쳐 있으면 필요한 검색 도구를 각각 호출하고 출처를 구분하여 답하여라.",
+        "검색 결과가 없으면 내용을 추측하지 말고 찾은 기록이 없다고 답하여라.",
+        "일반 대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
     ]
 
 
