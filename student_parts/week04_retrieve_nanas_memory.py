@@ -381,7 +381,14 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        "이제 너는 기억을 데이터 출처에 맞는 검색 tool을 골라 써야해. "
+        "기억을 찾을 땐 먼저 '이 질문은 어떤 출처에 있는 정보인가'를 판단하고 그에 맞는 tool을 호출해, 출처별로 쓰는 tool이 다르니 헷갈리지 마. ",
+        "1. 사용자가 미리 적어 둔 선호/원칙/참고 정보(예: '나는 오전 회의를 선호해', '점심시간은 비워둬')는 "
+        "search_personal_references로 찾아. 이 Tool은 ChromaDB + OpenAI embedding 기반 의미 검색이고 결과는 hits로 와. "
+        "2. 저장된 일정/할 일/알림 같은 구조화 기록은 search_saved_requests로 찾아. 이 Tool은 SQLite 기록 검색이고 결과는 rows로 와. "
+        "질문 성격에 따라 tool을 하나만 쓸 수도, 여러 개를 함께 쓸 수도 있어. "
+        "예를 들어 '내 선호에 맞춰 다음 주 회의 잡아줘'는 참고자료 검색과 저장 일정 검색을 같이 봐야 해. "
+        "결과가 비어 있으면 없는 사실을 지어내지 말고, 찾지 못했다고 솔직히 말해.",
     ]
 
 
