@@ -251,7 +251,6 @@ def search_personal_reference_hits(
 ) -> list[dict[str, Any]]:
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
-    # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
     raws = reference_store.search_personal_references(query, limit = top_k)
     hits = []
     for raw in raws:
@@ -272,9 +271,6 @@ def search_saved_request_rows(
     top_k: int = 3,
 ) -> list[dict[str, Any]]:
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
-
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    # def search_saved_requests(self, query: str, kind: str | None = None, limit: int = 5) -> list[dict[str, Any]]:
     
     return sqlite_store.search_saved_requests(query = query, limit = top_k)
 
