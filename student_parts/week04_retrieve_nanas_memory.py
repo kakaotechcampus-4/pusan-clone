@@ -379,7 +379,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     rows = search_saved_request_rows(
         sqlite_store=SQLITE_STORE, 
         query=query, 
-        top_k=safe_limit(top_k, default=3, maximum=20)
+        top_k=safe_limit(top_k, default=3, maximum=50)
     )
 
     return json_payload(tool_result(
@@ -435,12 +435,11 @@ def search_nana_memory(
             limit=checked_limit
         )
         if (
-            (date_from is None or i["date"] >= date_from) and
-            (date_to is None or i["date"] <= date_to) and
+            (date_from is None or i["date"] is not None and i["date"] >= date_from) and
+            (date_to is None or i["date"] is not None and i["date"] <= date_to) and
             (attendee is None or attendee in _decode_attendees(i["members_json"]))
         )
     ]
-    rows = rows[:min(len(rows), checked_limit)]
 
     context = f"""
         [personal_preferences]
