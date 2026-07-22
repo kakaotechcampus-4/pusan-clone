@@ -363,6 +363,12 @@ def week04_prompt_parts() -> list[str]:
     return [
         *week03_prompt_parts(),
         # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        "사용자가 일정/할 일/알림이 아닌 정보(메모·비밀번호·연락처·팁 등 자유 텍스트)를 "
+        "'기억해줘/메모해줘' 하면 add_personal_reference로 개인 참고자료에 저장한다.",
+        "저장한 정보를 다시 물으면 검색 tool을 쓴다. 메모/참고자료 질문은 search_personal_references, "
+        "저장된 일정/할 일/알림 질문은 search_saved_requests를 사용한다.",
+        "검색 결과가 비어 있으면 정보를 지어내지 말고 저장된 내용이 없다고 답한다. "
+        "답변은 검색된 메모에 실제로 적힌 내용만 근거로 삼고, 저장되지 않은 사실을 임의로 단정하지 않는다.",
     ]
 
 
