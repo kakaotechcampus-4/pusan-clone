@@ -17,10 +17,15 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week03_build_nanas_logbook import week03_prompt_parts, week03_tools
 
-
-REFERENCE_STORE = PersonalReferenceStore(CONFIG.chroma_dir)
-SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
-CONVERSATION_RAG_STORE = ConversationRAGStore(CONFIG.chroma_dir)
+REFERENCE_STORE = PersonalReferenceStore(
+    CONFIG.chroma_dir
+)  # 개인 참고자료를 저장하고 검색
+SQLITE_STORE = AppSQLiteStore(
+    CONFIG.app_db_path
+)  # Week 3에서 만든 일정·할 일·알림과 앱 대화를 관리
+CONVERSATION_RAG_STORE = ConversationRAGStore(
+    CONFIG.chroma_dir
+)  # SQLite에 저장된 일반 채팅 대화를 ChromaDB 대화 청크로 동기화하고 검색
 _WEEK04_AGENT: Any | None = None
 
 
@@ -152,7 +157,11 @@ _WEEK04_AGENT: Any | None = None
 #     Week 1~4 tool을 가진 agent를 만들고 재사용합니다.
 
 
-def _decode_attendees(raw_attendees: str | None) -> list[str]:
+def _decode_attendees(
+    raw_attendees: str | None,
+) -> list[
+    str
+]:  # SQLite에서 참석자가 JSON 문자열로 저장될 수 있는데 이를 파이썬 리스트로 변경하는 함수
     try:
         decoded = json.loads(raw_attendees or "[]")
     except Exception:
@@ -160,13 +169,17 @@ def _decode_attendees(raw_attendees: str | None) -> list[str]:
     return decoded if isinstance(decoded, list) else []
 
 
-def json_payload(payload: dict[str, Any]) -> str:
+def json_payload(
+    payload: dict[str, Any],
+) -> str:  # LangChain tool은 결과를 문자열로 전달하므로 dict를 JSON 문자열로 변환
     """도구 반환용 dict를 한글이 깨지지 않는 JSON 문자열로 변환합니다."""
 
     return json.dumps(payload, ensure_ascii=False)
 
 
-def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
+def safe_limit(
+    limit: int, default: int = 5, maximum: int = 50
+) -> int:  # LLM이 이상한 검색 개수를 전달해도 안전하게 제한
     """사용자/LLM이 넘긴 limit 값을 안전한 양의 정수 범위로 보정합니다."""
 
     try:
@@ -226,7 +239,18 @@ def add_personal_reference_dict(
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
+    normalized_tags = list(tags or [])  # 태그 정규화 tags가 None일 경우 -> []
+
+    reference = reference_store.add_personal_reference(  # 실제 저장소 호출 -> 이 함수가 실제 ChromaDB에 자료를 추가
+        title=title,
+        content=content,
+        tags=normalized_tags,
+    )
+
+    return {
+        "reference_backend": reference_store.backend_info(),
+        "reference": reference,
+    }
 
 
 def search_personal_reference_hits(
@@ -281,7 +305,9 @@ def search_conversation_message_rows(
 
 
 @tool(args_schema=AddPersonalReferenceInput)
-def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
+def add_personal_reference(
+    title: str, content: str, tags: list[str] | None = None
+) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
@@ -328,6 +354,7 @@ def search_nana_memory(
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
     ...
+
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
