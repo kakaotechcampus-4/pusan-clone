@@ -250,7 +250,7 @@ def search_personal_reference_hits(
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
     res = reference_store.search_personal_references(
         query=query,
-        limit=safe_limit(top_k)
+        limit=top_k
     )
 
     return [
@@ -278,7 +278,7 @@ def search_saved_request_rows(
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
     return sqlite_store.search_saved_requests(
         query=query, 
-        limit=safe_limit(top_k)
+        limit=top_k
     )
 
 
@@ -297,7 +297,7 @@ def search_conversation_messages_dict(
     sync = conversation_rag_store.sync_from_sqlite(sqlite_store=sqlite_store)
     hits = conversation_rag_store.search(
         query=query, 
-        top_k=safe_limit(top_k), 
+        top_k=top_k, 
         conversation_id=conversation_id,
         exclude_conversation_id=current_session_scope()
     )
@@ -362,7 +362,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     references = search_personal_reference_hits(
         reference_store=REFERENCE_STORE,
         query=query,
-        top_k=top_k
+        top_k=safe_limit(top_k, default=2, maximum=20)
     )
 
     return json_payload(tool_result(
@@ -379,7 +379,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     rows = search_saved_request_rows(
         sqlite_store=SQLITE_STORE, 
         query=query, 
-        top_k=top_k
+        top_k=safe_limit(top_k, default=3, maximum=20)
     )
 
     return json_payload(tool_result(
@@ -400,7 +400,7 @@ def search_conversation_messages(
         sqlite_store=SQLITE_STORE,
         conversation_rag_store=CONVERSATION_RAG_STORE,
         query=query,
-        top_k=top_k,
+        top_k=safe_limit(top_k, default=5, maximum=50),
         conversation_id=conversation_id
     )
 
@@ -422,6 +422,42 @@ def search_nana_memory(
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
+    checked_limit = safe_limit(limit, default=5, maximum=20)
+    hits = search_personal_reference_hits(
+        reference_store=REFERENCE_STORE,
+        query=query,
+        top_k=checked_limit
+    )
+    rows = [
+        i 
+        for i in SQLITE_STORE.search_saved_requests(
+            query=query,
+            limit=checked_limit
+        )
+        if (
+            (date_from is None or i["date"] >= date_from) and
+            (date_to is None or i["date"] <= date_to) and
+            (attendee is None or attendee in _decode_attendees(i["members_json"]))
+        )
+    ]
+    rows = rows[:min(len(rows), checked_limit)]
+
+    context = f"""
+        [personal_preferences]
+        {hits}
+
+        [saved_requests]
+        {rows}  
+    """.strip()
+
+    return json_payload(tool_result(
+        tool_name=_tool_name(search_nana_memory),
+        hits=hits,
+        rows=rows,
+        context=context,
+        reference_backend=REFERENCE_STORE.backend_info()
+    ))
+
     
 
 def week04_tools() -> list[Any]:
