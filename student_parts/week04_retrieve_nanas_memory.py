@@ -226,7 +226,11 @@ def add_personal_reference_dict(
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
+    return reference_store.add_personal_reference(
+        title,
+        content,
+        tags
+    )
 
 
 def search_personal_reference_hits(
@@ -238,7 +242,11 @@ def search_personal_reference_hits(
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-    ...
+    # from fixed.reference_store import PersonalReferenceStore  참고
+    result = refernece_store.search_personal_references(
+        query= query,
+        limit= safe_limit(top_k)
+    )
 
 
 def search_saved_request_rows(
@@ -250,7 +258,10 @@ def search_saved_request_rows(
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    ...
+    return sqlite_store.search_saved_requests(
+        query= query,
+        limit= safe_limit(top_k)
+    )
 
 
 def search_conversation_messages_dict(
@@ -284,8 +295,10 @@ def search_conversation_message_rows(
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
-    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요
+    # from fixed.reference_store import PersonalReferenceStore
+    tags = tags or []
+    return json_payload(REFERENCE_STORE.add_personal_reference(title, content, tags))
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
@@ -293,7 +306,11 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
 
     # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
-    ...
+    hits = REFERENCE_STORE.search_personal_references(
+        query,
+        safe_limit(top_k)
+    )
+    return json_payload({"hits": hits})
 
 
 @tool(args_schema=SearchSavedRequestsInput)
@@ -301,7 +318,9 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
-    ...
+    rows = SQLITE_STORE.search_saved_requests(query, safe_limit(tok_k)) or []
+    return json_payload({"rows": rows})
+
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -353,6 +372,15 @@ def week04_prompt_parts() -> list[str]:
     return [
         *week03_prompt_parts(),
         # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        """
+        - 사용자의 질문을 보고 질문의 종류에 맞게 필요한 검색 tool 하나를 호출한다.
+        - 개인 참고자료 저장소는 fixed/reference_store.py의 PersonalReferenceStore이며, 이 파일 상단의 REFERENCE_STORE가 CONFIG.chroma_dir 기준 인스턴스이다.
+        - SQLite 저장 요청 검색은 fixed/app_store.py의 AppSQLiteStore를 사용하고, 이 파일 상단의 SQLITE_STORE가 CONFIG.app_db_path 기준 인스턴스이다.
+        - 일반 채팅 발화 검색은 fixed/conversation_rag_store.py의 ConversationRAGStore를 사용하고, 이 파일 상단의CONVERSATION_RAG_STORE가 CONFIG.chroma_dir 기준 인스턴스이다.
+        - 저장된 일정/할 일 관련 질문에서는 search_saved_requests가 호출되며 질문 성격에 따라 top-level이 hits 혹은 rows로 결정한다.
+        - tool의 query에는 사용자의 질문 혹은 검색에 필요한 핵심 문구를 넣는다.
+        - tool_result의 hits 또는 rows를 근거로 대답한다.
+        """
     ]
 
 
