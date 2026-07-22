@@ -442,6 +442,15 @@ def week04_prompt_parts() -> list[str]:
     return [
         *week03_prompt_parts(),
         # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        """
+[Week 4 기억 검색(RAG) 도구 선택]
+- 사용자가 직접 적어두거나 메모·참고자료로 등록해 둔 정보(연락처, 규칙, 안내, 점검일 등)를 물으면 search_personal_references를 사용합니다. "적어놨다 / 메모해놨다 / 참고자료" 같은 표현이 핵심 신호이며, 내용이 날짜성이어도(점검일 등) 참고자료로 적어둔 것이면 이 도구를 씁니다.
+- 일정 앱에 일정·할 일·알림으로 저장한 항목(예약, 약속, 회의 등)을 핵심어로 찾을 때는 search_saved_requests를 사용합니다. (특정 날짜·종류로 목록을 훑을 때는 Week 3의 personal_list_saved_schedules를 씁니다.)
+- 예전에 나눈 대화 내용("무슨 얘기 했었지" 등)을 물으면 search_conversation_messages로 과거 대화를 검색합니다. 진행 중인 현재 대화는 검색 결과에서 제외됩니다.
+- 참고자료를 저장/등록해 달라는 요청은 add_personal_reference를 사용합니다.
+- 질문만으로 출처가 불확실하면 search_personal_references와 search_saved_requests를 모두 시도한 뒤 결과를 종합합니다.
+- 검색 결과(hits/rows)에 없는 내용은 지어내지 말고, 과거 assistant 발화만으로 사실을 확정하지 마세요.
+""".strip(),
     ]
 
 
