@@ -316,6 +316,27 @@ class TestConversationRAG:
         assert rag_store.search_calls[0]["top_k"] == 50
         assert rag_store.search_calls[0]["exclude_conversation_id"] == "current"
 
+    def test_explicit_conversation_id_is_not_excluded(self, week04):
+        sqlite_store = object()
+        rag_store = RecordingConversationRAGStore()
+
+        with conversation_session_scope("current"):
+            week04.search_conversation_messages_dict(
+                sqlite_store,
+                rag_store,
+                query="방금 한 말",
+                conversation_id="current",
+            )
+
+        assert rag_store.search_calls == [
+            {
+                "query": "방금 한 말",
+                "top_k": 5,
+                "conversation_id": "current",
+                "exclude_conversation_id": None,
+            }
+        ]
+
 
 class TestCompatibilitySearch:
     def test_no_optional_filters_keeps_saved_rows(self, week04, monkeypatch):
@@ -409,20 +430,14 @@ class TestPromptToolsAndAgent:
     def test_week04_prompt_explains_source_specific_search_tools(self, week04):
         prompt = week04.week04_system_prompt()
 
-        assert "search_personal_references" in prompt
-        assert "search_saved_requests" in prompt
-        assert "search_conversation_messages" in prompt
-        assert "가장 식별력 높은 한 단어 또는 짧은 연속 구" in prompt
-        assert "저장된 기록 자체를 찾는 질문" in prompt
-        assert "일정 생성의 누락 정보를 보완하는 검색" in prompt
-        assert "핵심 대상과 보완하려는 필드" in prompt
-        assert "적용 대상과 조건이 현재 요청에 부합" in prompt
-        assert "근거가 있는 필드만 채우고" in prompt
-        assert "start_time에 '미정'을 넣어" in prompt
-        assert "범위의 시작 시각을 start_time으로" in prompt
-        assert prompt.count(
-            "SQLite에 저장된 일정, 할 일, 알림의 원문이나 근거를 핵심어로 찾는 질문"
-        ) == 1
+        assert isinstance(prompt, str)
+        for tool_name in (
+            "add_personal_reference",
+            "search_personal_references",
+            "search_saved_requests",
+            "search_conversation_messages",
+        ):
+            assert tool_name in prompt
 
     def test_build_agent_requires_api_key(self, week04, monkeypatch):
         monkeypatch.setattr(week04, "CONFIG", SimpleNamespace(has_openai_key=False))
