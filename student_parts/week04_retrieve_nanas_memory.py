@@ -190,6 +190,19 @@ def _decode_attendees(raw_attendees: str | None) -> list[str]:
     return decoded if isinstance(decoded, list) else []
 
 
+def _decode_raw_request(raw_json: str | None) -> dict[str, Any]:
+    """structured_requests.raw_json(저장 원문 payload 문자열)을 dict로 복원합니다.
+
+    깨진 JSON이나 dict가 아닌 값은 빈 dict로 처리합니다.
+    """
+
+    try:
+        decoded = json.loads(raw_json or "{}")
+    except Exception:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
 def json_payload(payload: dict[str, Any]) -> str:
     """도구 반환용 dict를 한글이 깨지지 않는 JSON 문자열로 변환합니다."""
 
@@ -255,8 +268,28 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
-    # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
+    saved = reference_store.add_personal_reference(title, content, tags or [])
+    return {
+        "reference_backend": saved["backend"],
+        "reference": {
+            "reference_id": saved["reference_id"],
+            "title": saved["title"],
+            "content": saved["content"],
+            "tags": saved["tags"],
+        },
+    }
+
+
+def _split_tags(raw_tags: str | None) -> list[str]:
+    """store가 콤마로 join해 둔 tags 문자열을 list로 복원합니다. 빈 값은 빈 list.
+
+    ChromaDB metadata는 스칼라만 허용해 store가 저장 시 ",".join(tags)로 인코딩합니다.
+    이는 저장소 사정이므로, tool 계약에서는 add tool 반환과 대칭이 되도록 list로 복원합니다.
+    """
+
+    if not raw_tags:
+        return []
+    return [tag for tag in raw_tags.split(",") if tag]
 
 
 def search_personal_reference_hits(
@@ -267,8 +300,22 @@ def search_personal_reference_hits(
 ) -> list[dict[str, Any]]:
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
-    # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-    ...
+    limit = safe_limit(top_k, default=2, maximum=20)
+    results = reference_store.search_personal_references(query, limit)
+    hits: list[dict[str, Any]] = []
+    for row in results:
+        hits.append(
+            {
+                "id": row.get("id"),
+                "content": row.get("content", ""),
+                "distance": row.get("distance"),
+                "metadata": {
+                    "title": row.get("title", ""),
+                    "tags": _split_tags(row.get("tags")),
+                },
+            }
+        )
+    return hits
 
 
 def search_saved_request_rows(
@@ -279,8 +326,17 @@ def search_saved_request_rows(
 ) -> list[dict[str, Any]]:
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    ...
+    limit = safe_limit(top_k, default=3, maximum=50)
+    rows = sqlite_store.search_saved_requests(query, limit=limit)
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        # store는 members/raw payload를 JSON 문자열로 저장한다. 이스케이프된 JSON을
+        # 그대로 노출하지 않고 디코딩해 LLM이 바로 읽을 수 있는 형태로 정규화한다.
+        item["members"] = _decode_attendees(item.pop("members_json", None))
+        item["raw_request"] = _decode_raw_request(item.pop("raw_json", None))
+        normalized.append(item)
+    return normalized
 
 
 def search_conversation_messages_dict(
@@ -293,8 +349,24 @@ def search_conversation_messages_dict(
 ) -> dict[str, Any]:
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
-    # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    ...
+    limit = safe_limit(top_k, default=5, maximum=50)
+    sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
+    # conversation_id를 명시하지 않으면 현재 대화 범위를 결과에서 제외한다.
+    # "방금 이 대화에서 한 말"이 과거 검색 결과처럼 섞이지 않도록 코드 계층에서 강제한다.
+    exclude_conversation_id = None if conversation_id else current_session_scope()
+    hits = conversation_rag_store.search(
+        query=query,
+        top_k=limit,
+        exclude_conversation_id=exclude_conversation_id,
+        conversation_id=conversation_id,
+    )
+    return {
+        "hits": hits,
+        "rows": hits,
+        "context": conversation_rag_store.context_from_hits(hits),
+        "rag_backend": conversation_rag_store.backend_info(),
+        "sync": sync,
+    }
 
 
 def search_conversation_message_rows(
@@ -306,32 +378,40 @@ def search_conversation_message_rows(
 ) -> list[dict[str, Any]]:
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
-    # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    ...
+    result = search_conversation_messages_dict(
+        sqlite_store,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )
+    return result["hits"]
 
 
 @tool(args_schema=AddPersonalReferenceInput)
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
-    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    payload = add_personal_reference_dict(
+        REFERENCE_STORE, title=title, content=content, tags=tags
+    )
+    return json_payload(payload)
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
 
-    # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
-    ...
+    hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
+    return json_payload({"query": query, "hits": hits})
 
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
-    ...
+    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
+    return json_payload({"query": query, "rows": rows})
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -342,8 +422,14 @@ def search_conversation_messages(
 ) -> str:
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
-    # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    ...
+    result = search_conversation_messages_dict(
+        SQLITE_STORE,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )
+    return json_payload(result)
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -356,8 +442,19 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
-    # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    # NOTE: 이 통합 검색 tool은 의도적으로 미구현(stub) 상태로 남긴다.
+    #   - 4주차의 핵심은 "RAG를 만능 함수 하나로 보지 말고 출처별 tool로 분리"하는 것이다.
+    #     search_nana_memory는 그 반대인 '출처를 뭉친 단일 검색'이라, 이번 주가 벗어나려는 대상이다.
+    #   - 4주차·5주차 강의 교안 어디에도 이 tool은 없다(교안은 출처별 분리 tool만 다룬다).
+    #     원본 TODO도 "compatibility 통합 검색이 '필요하면'"이라는 조건부였다.
+    #   - week04_tools()에 등록하지 않아 agent(LLM)에 노출되지 않는다 → 실사용 경로에 영향 없음.
+    #   따라서 출처별 tool(search_personal_references / search_saved_requests /
+    #   search_conversation_messages)로 검색 책임을 나누고, 이 레거시 호환 tool은 비워 둔다.
+    #   구현이 필요해지면 파일 컨벤션대로 hits/rows/context 키로 두 출처를 묶으면 된다.
+    raise NotImplementedError(
+        "search_nana_memory는 출처별 검색 tool로 대체되어 미사용입니다. "
+        "필요 시 search_personal_references / search_saved_requests를 조합하세요."
+    )
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
@@ -377,12 +474,24 @@ def week04_system_prompt() -> str:
     return join_system_prompt(week04_prompt_parts())
 
 
+WEEK04_MEMORY_PROMPT = (
+    "[4주차 기억 검색]\n"
+    "사용자가 저장된 정보나 지난 기억을 물으면 답을 지어내지 말고, 질문 성격에 맞는 검색 tool을 먼저 호출한다.\n"
+    "- 개인 메모·선호·참고자료처럼 자연어로 저장한 내용: search_personal_references 를 쓴다(ChromaDB 의미 검색, 결과는 hits).\n"
+    "- 저장된 구조화 일정/할 일/알림 기록: search_saved_requests 를 쓴다(SQLite 검색, 결과는 rows).\n"
+    "- 앱에 저장된 지난 대화에서 오갔던 말: search_conversation_messages 를 쓴다(대화 RAG, 결과는 hits/rows/context).\n"
+    "각 tool의 query에는 사용자 문장 전체가 아니라 검색에 필요한 핵심 명사나 짧은 구를 넣는다.\n"
+    "검색 결과의 hits/rows/context를 근거로만 답하고, 근거가 없으면 모른다고 말한다.\n"
+    "assistant가 예전에 한 말 자체는 확정된 사실이 아니므로, 사실 확인이 필요하면 저장된 기록(rows)을 우선 근거로 삼는다."
+)
+
+
 def week04_prompt_parts() -> list[str]:
     """1~4주차 system prompt 조각을 누적합니다."""
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        WEEK04_MEMORY_PROMPT,
     ]
 
 
