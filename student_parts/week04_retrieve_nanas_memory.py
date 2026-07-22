@@ -403,11 +403,44 @@ def search_nana_memory(
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
     limit = safe_limit(limit, default=5, maximum=20)
+    source_errors: dict[str, str] = {}
+
     try:
         reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=limit)
-        schedule_rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=limit)
-    except Exception as error:
-        return json_payload({"hits": [], "schedules": [], "context": "", "error": f"통합 검색에 실패했습니다: {error}"})
+    except Exception:
+        reference_hits = []
+        source_errors["references"] = "개인 참고자료 검색에 실패했습니다."
+
+    try:
+        schedule_candidates = search_saved_request_rows(
+            SQLITE_STORE,
+            query=query,
+            top_k=safe_limit(limit * 5, default=limit, maximum=50),
+        )
+    except Exception:
+        schedule_candidates = []
+        source_errors["schedules"] = "저장 일정 검색에 실패했습니다."
+
+    schedule_rows: list[dict[str, Any]] = []
+    attendee_text = str(attendee or "").strip().casefold()
+    for row in schedule_candidates:
+        row_date = str(row.get("date") or "")
+        if date_from and (not row_date or row_date < date_from):
+            continue
+        if date_to and (not row_date or row_date > date_to):
+            continue
+
+        attendees = _decode_attendees(
+            row.get("members_json") or row.get("attendees_json")
+        )
+        if attendee_text and not any(
+            attendee_text in str(item).casefold() for item in attendees
+        ):
+            continue
+
+        schedule_rows.append(row)
+        if len(schedule_rows) >= limit:
+            break
 
     context_lines = ["[통합 검색 결과]"]
     for hit in reference_hits:
@@ -417,14 +450,15 @@ def search_nana_memory(
         start_time = row.get("start_time") or ""
         context_lines.append(f"- (일정) {row.get('title', '')} {date} {start_time}".rstrip())
 
-    return json_payload(
-        {
-            "reference_backend": REFERENCE_STORE.backend_info(),
-            "hits": reference_hits,
-            "schedules": schedule_rows,
-            "context": "\n".join(context_lines),
-        }
-    )
+    payload = {
+        "reference_backend": REFERENCE_STORE.backend_info(),
+        "hits": reference_hits,
+        "schedules": schedule_rows,
+        "context": "\n".join(context_lines),
+    }
+    if source_errors:
+        payload["source_errors"] = source_errors
+    return json_payload(payload)
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
