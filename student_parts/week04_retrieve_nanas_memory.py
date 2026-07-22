@@ -425,7 +425,7 @@ def search_nana_memory(
         for schedule in schedules:
             attendees = ", ".join(schedule.get("attendees") or []) or "없음"
             context_lines.append(
-                f"- {schedule.get('title', '')} | {schedule.get('data', '미정')} {schedule.get('start_time', '')} | 참석자: {attendees}"
+                f"- {schedule.get('title', '')} | {schedule.get('date', '미정')} {schedule.get('start_time', '')} | 참석자: {attendees}"
             )
     else:
         context_lines.append("- (검색 결과 없음)")
@@ -433,6 +433,7 @@ def search_nana_memory(
         {
             "ok": True,
             "tool_name": "search_nana_memory",
+            "reference_backend": REFERENCE_STORE.backend_info(),
             "reference_hits": reference_hits,
             "schedules": schedules,
             "context": "\n".join(context_lines),
