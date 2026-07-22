@@ -261,6 +261,10 @@ class SaveStructuredRequestInput(StructuredRequest):
                 if isinstance(inner, dict):
                     return cls.unwrap_legacy_payload(inner)
 
+            created = value.get("created_schedule")
+            if isinstance(created, dict):
+                return structured_request_from_week01_schedule(created).model_dump()
+
         return value
 
 
@@ -449,10 +453,14 @@ def personal_create_schedule(
     structured_request = structured_request_from_week01_schedule(created_schedule)
     sqlite_save = _store().save_structured_request(structured_request.model_dump())
 
-    created["structured_request"] = structured_request.model_dump()
-    created["sqlite_save"] = sqlite_save
-
-    return json_payload(created)
+    return json_payload(
+        tool_result(
+            "personal_create_schedule",
+            created_schedule=created_schedule,
+            structured_request=structured_request.model_dump(),
+            sqlite_save=sqlite_save,
+        )
+    )
 
 
 @tool(args_schema=SaveStructuredRequestInput)
