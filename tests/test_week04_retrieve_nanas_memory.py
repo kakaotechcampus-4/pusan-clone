@@ -19,12 +19,14 @@ import unittest
 from pathlib import Path
 
 from fixed.app_store import AppSQLiteStore
+from fixed.session_scope import DEFAULT_SESSION_SCOPE, conversation_session_scope
 
 import student_parts.week04_retrieve_nanas_memory as week04
 from student_parts.week04_retrieve_nanas_memory import (
     _decode_raw_request,
     _split_tags,
     safe_limit,
+    search_conversation_messages_dict,
     search_personal_reference_hits,
     search_saved_request_rows,
 )
@@ -165,6 +167,71 @@ class SearchSavedRequestRowsTest(unittest.TestCase):
         self.assertEqual(rows, [])
 
 
+class _FakeConversationRAGStore:
+    """sync/search/context/backend만 흉내내는 가짜 대화 RAG store(주입용, mock 라이브러리 아님)."""
+
+    def __init__(self, hits: list[dict] | None = None):
+        self._hits = hits or []
+        self.search_kwargs: dict | None = None
+        self.synced = False
+
+    def sync_from_sqlite(self, sqlite_store) -> dict:
+        self.synced = True
+        return {"upserted": 0, "skipped": 0, "deleted": 0, "total": 0}
+
+    def search(self, *, query, top_k=5, exclude_conversation_id=None, conversation_id=None) -> list[dict]:
+        self.search_kwargs = {
+            "query": query,
+            "top_k": top_k,
+            "exclude_conversation_id": exclude_conversation_id,
+            "conversation_id": conversation_id,
+        }
+        return self._hits
+
+    def context_from_hits(self, hits) -> str:
+        return "[대화 RAG context]"
+
+    def backend_info(self) -> dict:
+        return {"vector_store": "fake"}
+
+
+class SearchConversationMessagesDictTest(unittest.TestCase):
+    """현재 대화 제외를 코드 계층에서 강제하는지, payload 계약을 지키는지 검증한다."""
+
+    def test_conversation_id_미지정시_현재대화를_exclude로_넘긴다(self):
+        fake = _FakeConversationRAGStore()
+        with conversation_session_scope("conv_current"):
+            search_conversation_messages_dict(None, fake, query="회의", top_k=5)
+        self.assertEqual(fake.search_kwargs["exclude_conversation_id"], "conv_current")
+        self.assertIsNone(fake.search_kwargs["conversation_id"])
+
+    def test_scope가_없으면_기본범위를_exclude로_넘긴다(self):
+        fake = _FakeConversationRAGStore()
+        search_conversation_messages_dict(None, fake, query="회의")
+        self.assertEqual(fake.search_kwargs["exclude_conversation_id"], DEFAULT_SESSION_SCOPE)
+
+    def test_conversation_id_지정시_exclude없이_그_대화만_검색한다(self):
+        fake = _FakeConversationRAGStore()
+        with conversation_session_scope("conv_current"):
+            search_conversation_messages_dict(None, fake, query="회의", conversation_id="conv_target")
+        self.assertIsNone(fake.search_kwargs["exclude_conversation_id"])
+        self.assertEqual(fake.search_kwargs["conversation_id"], "conv_target")
+
+    def test_top_k가_safe_limit로_보정되어_전달된다(self):
+        fake = _FakeConversationRAGStore()
+        search_conversation_messages_dict(None, fake, query="회의", top_k=999)
+        self.assertEqual(fake.search_kwargs["top_k"], 50)
+
+    def test_payload에_hits_rows_context_rag_backend_sync가_있다(self):
+        hits = [{"conversation_id": "conv_a", "content": "지난 회의 메모"}]
+        fake = _FakeConversationRAGStore(hits)
+        result = search_conversation_messages_dict(None, fake, query="회의")
+        self.assertEqual(set(result), {"hits", "rows", "context", "rag_backend", "sync"})
+        self.assertEqual(result["hits"], hits)
+        self.assertEqual(result["rows"], hits)  # hits와 rows는 같은 결과
+        self.assertTrue(fake.synced)  # lazy sync가 수행됐다
+
+
 class ToolContractTest(unittest.TestCase):
     """tool은 top-level hits / rows 계약과 한글 보존을 지킨다."""
 
@@ -174,6 +241,7 @@ class ToolContractTest(unittest.TestCase):
         )
         payload = json.loads(week04.search_personal_references.invoke({"query": "회의", "top_k": 2}))
         self.assertIn("hits", payload)
+        self.assertEqual(payload["query"], "회의")  # query 에코(교안 정합)
         self.assertEqual(payload["hits"][0]["content"], "오전 선호")
 
     def test_search_saved_requests는_top_level_rows를_반환하고_한글을_보존한다(self):
@@ -185,7 +253,25 @@ class ToolContractTest(unittest.TestCase):
         self.assertIn("장보기", raw)  # ensure_ascii=False 로 한글이 그대로 보존
         payload = json.loads(raw)
         self.assertIn("rows", payload)
+        self.assertEqual(payload["query"], "장보기")  # query 에코(교안 정합)
         self.assertEqual(payload["rows"][0]["title"], "장보기")
+
+
+class Week04PromptPartsTest(unittest.TestCase):
+    """프롬프트가 week3까지 누적하고, 세 출처 tool 선택 유도를 담는지 검증한다."""
+
+    def test_week03_조각을_누적한다(self):
+        from student_parts.week04_retrieve_nanas_memory import week03_prompt_parts
+
+        parts = week04.week04_prompt_parts()
+        for base in week03_prompt_parts():
+            self.assertIn(base, parts)
+
+    def test_세_출처_tool_선택_유도를_담는다(self):
+        text = "\n".join(week04.week04_prompt_parts())
+        self.assertIn("search_personal_references", text)
+        self.assertIn("search_saved_requests", text)
+        self.assertIn("search_conversation_messages", text)
 
 
 if __name__ == "__main__":
