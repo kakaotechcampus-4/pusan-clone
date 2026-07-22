@@ -283,9 +283,26 @@ def search_conversation_message_rows(
 @tool(args_schema=AddPersonalReferenceInput)
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
-
-    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    
+    tags = tags or [] # None 값일 때 처리 
+    result = REFERENCE_STORE.add_personal_reference(title, content, tags)
+    
+    # reference = 실제로 저장한 값
+    # reference_backend = 어디에 저장했는지, 임베딩 모델, 제공자 등의 info
+    reference_backend = result["backend"]
+    reference = {                                                                                                 
+        "reference_id": result["reference_id"],                                                                   
+        "title": result["title"],                                                                                 
+        "content": result["content"],                                                                             
+        "tags": result["tags"],
+    }
+    
+    return json_payload(
+        {
+        "reference_backend" : reference_backend , 
+        "reference" : reference
+        }
+    )
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
