@@ -342,7 +342,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
 
     return json_payload(tool_result(
         tool_name=_tool_name(search_personal_references),
-        references=references
+        hits=references
     ))
 
 
