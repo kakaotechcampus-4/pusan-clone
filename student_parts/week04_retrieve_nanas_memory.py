@@ -32,7 +32,13 @@ WEEK04_MEMORY_PROMPT = (
     "저장된 일정/할 일을 찾을 때, 사용자가 kind나 날짜 범위 같은 조건을 명확히 말하지 않고 "
     "'저번에 ~ 관련해서 뭐 저장했었나?'처럼 애매한 키워드로만 물어보면, list_saved_requests에 kind/date를 "
     "임의로 추측해서 넣지 말고 반드시 search_saved_requests를 사용한다. list_saved_requests는 사용자가 "
-    "종류나 날짜 범위를 명확히 특정했을 때만 사용한다."
+    "종류나 날짜 범위를 명확히 특정했을 때만 사용한다. "
+    "사용자가 '예전에/저번에 내가 뭐라고 했었지?'처럼 지나간 일반 대화 내용을 물어보는데, 그 내용이 지금 "
+    "이 대화에서 나온 적이 없다면(=현재 대화 히스토리를 봐도 답을 알 수 없다면) search_conversation_messages를 "
+    "호출해 과거 다른 대화 기록에서 찾는다. 반대로 사용자가 묻는 내용이 이미 지금 이 대화 안에서 오간 "
+    "내용이라면, 그건 이미 대화 맥락에 있으므로 search_conversation_messages를 호출하지 않고 그대로 답한다. "
+    "사용자가 특정 과거 대화를 conversation_id로 콕 집어 말하지 않는 한 conversation_id는 비워 두고, 그때는 "
+    "현재 대화는 검색 대상에서 자동으로 제외된다."
 )
 
 
@@ -281,8 +287,21 @@ def search_conversation_messages_dict(
 ) -> dict[str, Any]:
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
-    # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    ...
+    sync_stats = conversation_rag_store.sync_from_sqlite(sqlite_store)
+    exclude_conversation_id = None if conversation_id else current_session_scope()
+    hits = conversation_rag_store.search(
+        query=query,
+        top_k=top_k,
+        exclude_conversation_id=exclude_conversation_id,
+        conversation_id=conversation_id,
+    )
+    return {
+        "hits": hits,
+        "rows": hits,
+        "context": conversation_rag_store.context_from_hits(hits),
+        "rag_backend": conversation_rag_store.backend_info(),
+        "sync": sync_stats,
+    }
 
 
 def search_conversation_message_rows(
@@ -294,8 +313,14 @@ def search_conversation_message_rows(
 ) -> list[dict[str, Any]]:
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
-    # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    ...
+    result = search_conversation_messages_dict(
+        sqlite_store,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )
+    return result["hits"]
 
 
 @tool(args_schema=AddPersonalReferenceInput)
@@ -332,8 +357,15 @@ def search_conversation_messages(
 ) -> str:
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
-    # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    ...
+    limit = safe_limit(top_k, default=5, maximum=50)
+    result = search_conversation_messages_dict(
+        SQLITE_STORE,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=limit,
+        conversation_id=conversation_id,
+    )
+    return json_payload(result)
 
 
 @tool(args_schema=SearchNanaMemoryInput)
