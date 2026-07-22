@@ -370,10 +370,12 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
+        "week3의 'RAG검색은 고려하지 않는다'는 규칙을 무시한다. "
         "사용자가 자신의 선호, 습관, 메모 등을 기억하라 지시하면 add_personal_reference를 사용하여 저장한다. ",
         "사용자의 요청이 SQLite, ChromaDB 중 무엇을 조회해야 하는지 직접 판단하고 결정한다. ",
         "'다음주까지 저장된 일정 보여줘'와 같은 문장은 search_saved_requests를 사용하여 SQLite DB를 검색한다. ",
         "'내가 좋아하는 회의 시간대가 언제였지?'와 같은 문장은 search_personal_references를 사용하여 Chroma DB를 검색한다. ",
+        "검색이 필요할 때 무슨 tool을 사용할지 모호할 경우 search_saved_requests, search_personal_references를 모두 사용하여 최종 판단에 두 결과를 적절히 반영한다. "
         "검색 결과가 질문과 무관할 경우 임의로 답변을 지어내지 말고 '관련된 자료가 없습니다'라고 답한다. "
     ]
 
