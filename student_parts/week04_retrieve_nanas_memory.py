@@ -335,10 +335,13 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
+    if search_personal_reference_hits(REFERENCE_STORE, query=content, top_k=1):
+        return json_payload({"error": "이미 존재하는 참고자료입니다."})
+    
+    result = AddPersonalReferenceInput(title=title, content=content, tags=tags).model_dump_json(ensure_ascii=False)
+    
     REFERENCE_STORE.add_personal_reference(title=title, content=content, tags=tags or [])
-    return json_payload(
-        AddPersonalReferenceInput(title=title, content=content, tags=tags)
-    )
+    return result 
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
@@ -437,6 +440,7 @@ def week04_prompt_parts() -> list[str]:
         "일정/할 일/알림과 관련한 요청에 응답을 할 경우에는 search_saved_requests tool을 사용하여 검색하도록 합니다.",
         "개인 참고자료와 SQLite 저장 일정 chunk를 한 번에 검색하고자 할 경우에는 search_nana_memory tool을 사용하도록 합니다.",
         "일정/할 일 시간을 추천할 때에는 search_nana_memory tool을 사용해 개인 참고자료와 SQLite 저장 일정 chunk를 함께 고려하도록 합니다. 근거는 반드시 개인 참고자료와 SQLite 저장 일정 chunk를 함께 제시하도록 합니다. 그것이 없다면 절대 억지로 지어내지 마세요.",
+        "추가적인 참고 사항을 작성하여야 한다면 add_personal_reference tool을 사용하여 개인 참고자료를 추가하도록 합니다."
     ]
 
 
