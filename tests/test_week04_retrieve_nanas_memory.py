@@ -190,6 +190,17 @@ class Week04MemoryTests(unittest.TestCase):
         self.assertIn("검색 결과가 비어 있으면", prompt)
         self.assertEqual(week_agent_registry.normalize_active_week(4), 4)
 
+    def test_source_routing_uses_information_shape_instead_of_topic_words(self) -> None:
+        prompt = week04.week04_system_prompt()
+
+        self.assertIn("주제 단어가 아니라 사용자가 찾으려는 정보의 형태", prompt)
+        self.assertIn("검색 query를 사용자에게 다시 묻지 말고", prompt)
+        self.assertIn("검색 후에도 답변에 필요한 정보가 부족한 경우에만", prompt)
+        self.assertIn("자신의 성향을 묻는다면 반드시 search_personal_references", prompt)
+        self.assertIn("구체적인 일정 row를 찾는 용도로 사용하지 않습니다", week04.search_personal_references.description)
+        self.assertIn("일반적인 선호·습관·제약을 찾는 용도로 사용하지 않습니다", week04.search_saved_requests.description)
+        self.assertIn("개인 선호나 구조화 요청을 찾는 용도로 사용하지 않습니다", week04.search_conversation_messages.description)
+
 
 if __name__ == "__main__":
     unittest.main()

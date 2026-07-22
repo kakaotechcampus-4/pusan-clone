@@ -24,11 +24,16 @@ CONVERSATION_RAG_STORE = ConversationRAGStore(CONFIG.chroma_dir)
 _WEEK04_AGENT: Any | None = None
 
 
-WEEK04_MEMORY_PROMPT = """Week 4에서는 질문의 데이터 출처를 먼저 구분해 검색한다.
-사용자가 직접 저장한 선호·참고자료·자연어 메모는 search_personal_references를 사용한다.
-SQLite에 구조화해 저장한 일정·할 일·알림은 search_saved_requests를 사용한다.
-이전 일반 채팅에서 사용자가 말한 내용은 search_conversation_messages를 사용한다.
-검색 query에는 질문 전체보다 핵심 명사나 짧은 구를 우선 전달한다."""
+WEEK04_MEMORY_PROMPT = """Week 4에서는 주제 단어가 아니라 사용자가 찾으려는 정보의 형태를 기준으로 출처를 선택한다.
+사용자의 선호·습관·제약이나 자유 형식으로 저장한 개인 사실은 search_personal_references를 사용한다.
+사용자가 평소 행동, 좋아하는 것, 선호, 습관, 불편함 또는 피하고 싶은 제약처럼 자신의 성향을 묻는다면 반드시 search_personal_references를 먼저 사용한다.
+개인 성향을 묻는 문장에 일정·시간 같은 구조화 기록의 주제 단어가 포함되어도 search_saved_requests로 대신하지 않는다.
+날짜·시간·제목·kind·ID가 있는 구조화 일정·할 일·알림 기록을 자연어 핵심어로 찾을 때는 search_saved_requests를 사용한다.
+정확한 날짜 범위의 일정 목록이나 수정·삭제 후보가 필요하면 Week 3의 personal_list_saved_schedules를 사용한다.
+이전 일반 채팅에서 사용자가 실제로 말한 내용을 회상할 때는 search_conversation_messages를 사용한다.
+개인화된 추천이나 판단에 저장된 선호·습관·제약이 영향을 줄 수 있으면 답변이나 추가 질문 전에 관련 개인 참고자료를 먼저 검색한다.
+검색 query를 사용자에게 다시 묻지 말고 질문에서 대상·의도·핵심 조건을 추출해 짧은 검색어로 만든다.
+검색 후에도 답변에 필요한 정보가 부족한 경우에만 사용자에게 추가 질문을 한다."""
 
 WEEK04_GROUNDING_PROMPT = """기억에 관한 답변은 반드시 tool_result의 hits 또는 rows를 근거로 작성한다.
 검색 결과가 비어 있으면 기억한다고 추측하지 말고 찾지 못했다고 답한다.
@@ -361,7 +366,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
-    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
+    """평소 행동·좋아함·선호·습관·제약 같은 개인 성향과 자유 형식 참고자료를 검색합니다. 구체적인 일정 row를 찾는 용도로 사용하지 않습니다."""
 
     normalized_limit = safe_limit(top_k, default=2, maximum=20)
     hits = search_personal_reference_hits(
@@ -382,7 +387,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
-    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
+    """SQLite의 구조화 일정·할 일·알림 row를 자연어 핵심어로 검색합니다. 평소 행동이나 일반적인 선호·습관·제약을 찾는 용도로 사용하지 않습니다."""
 
     normalized_limit = safe_limit(top_k, default=3, maximum=50)
     rows = search_saved_request_rows(
@@ -406,7 +411,7 @@ def search_conversation_messages(
     top_k: int = 5,
     conversation_id: str | None = None,
 ) -> str:
-    """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    """이전에 나눈 일반 대화의 실제 발화를 대화 단위 RAG로 검색합니다. 개인 선호나 구조화 요청을 찾는 용도로 사용하지 않습니다."""
 
     result = search_conversation_messages_dict(
         SQLITE_STORE,
