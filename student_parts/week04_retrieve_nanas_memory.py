@@ -250,7 +250,7 @@ def search_personal_reference_hits(
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
     res = reference_store.search_personal_references(
         query=query,
-        limit=top_k
+        limit=safe_limit(top_k)
     )
 
     return [
@@ -278,7 +278,7 @@ def search_saved_request_rows(
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
     return sqlite_store.search_saved_requests(
         query=query, 
-        limit=top_k
+        limit=safe_limit(top_k)
     )
 
 
@@ -294,7 +294,7 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    ...
+    
 
 
 def search_conversation_message_rows(
@@ -360,7 +360,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
         query=query, 
         top_k=top_k
     )
-    
+
     return json_payload(tool_result(
         tool_name=_tool_name(search_saved_requests),
         rows=rows
