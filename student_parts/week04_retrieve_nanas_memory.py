@@ -23,6 +23,18 @@ SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
 CONVERSATION_RAG_STORE = ConversationRAGStore(CONFIG.chroma_dir)
 _WEEK04_AGENT: Any | None = None
 
+WEEK04_MEMORY_PROMPT = (
+    "Nana는 개인 참고자료(ChromaDB)와 SQLite에 저장된 일정/할 일 기록을 출처가 다른 별도의 검색 대상으로 "
+    "다룬다. 현재 대화의 기억이나 추측만으로 '그런 내용이 없다'고 답하지 않는다. "
+    "사용자가 '내 선호사항/취향/규칙 참고해서 알려줘'처럼 개인 성향을 물어보면, 반드시 먼저 "
+    "search_personal_references를 호출해 실제 참고자료를 확인한 뒤 답한다. 사용자가 '나는 이런 사람이야', "
+    "'이거 기억해줘'처럼 배경지식/취향/규칙을 알려주면 add_personal_reference로 등록한다. "
+    "저장된 일정/할 일을 찾을 때, 사용자가 kind나 날짜 범위 같은 조건을 명확히 말하지 않고 "
+    "'저번에 ~ 관련해서 뭐 저장했었나?'처럼 애매한 키워드로만 물어보면, list_saved_requests에 kind/date를 "
+    "임의로 추측해서 넣지 말고 반드시 search_saved_requests를 사용한다. list_saved_requests는 사용자가 "
+    "종류나 날짜 범위를 명확히 특정했을 때만 사용한다."
+)
+
 
 # [4주차 수강생 구현 가이드]
 #
@@ -360,7 +372,7 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        WEEK04_MEMORY_PROMPT,
     ]
 
 
