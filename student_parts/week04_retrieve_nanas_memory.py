@@ -262,7 +262,44 @@ def search_personal_reference_hits(
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-    ...
+    normalized_top_k = safe_limit(
+        top_k,
+        default=2,
+        maximum=20,
+    )
+
+    raw_hits = reference_store.search_personal_references(
+        query=query,
+        limit=normalized_top_k,
+    )
+
+    hits: list[dict[str, Any]] = []
+
+    for raw_hit in raw_hits:
+        raw_tags = raw_hit.get("tags") or []
+
+        if isinstance(raw_tags, str):
+            tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+        elif isinstance(raw_tags, list):
+            tags = [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+        else:
+            tags = []
+
+        hits.append(  # 결과 다시 가공(각 hit가 id, content, distance, metadata(title/tags)를 갖도록 요구)
+            {
+                "id": raw_hit.get("id"),
+                "content": raw_hit.get("content", ""),
+                "distance": raw_hit.get(
+                    "distance"
+                ),  # distance는 질문 벡터와 문서 벡터 사이 거리(distance가 작다 -> 질문과 문서가 비슷함, distance가 크다 -> 관련성이 낮음)
+                "metadata": {
+                    "title": raw_hit.get("title", ""),
+                    "tags": tags,
+                },
+            }
+        )
+
+    return hits
 
 
 def search_saved_request_rows(
@@ -311,7 +348,16 @@ def add_personal_reference(
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+
+    # LLM이 tool 호출 -> Pydantic AddPersonalReferenceInput 검증 -> add_personal_reference_dict 호출 -> REFERENCE_STORE에 저장 -> dict 결과를 JSON 문자열로 변환
+    payload = add_personal_reference_dict(
+        REFERENCE_STORE,
+        title=title,
+        content=content,
+        tags=tags or [],
+    )
+
+    return json_payload(payload)
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
@@ -319,7 +365,19 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
 
     # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
-    ...
+    normalized_top_k = safe_limit(
+        top_k,
+        default=2,
+        maximum=20,
+    )
+
+    hits = search_personal_reference_hits(
+        REFERENCE_STORE,
+        query=query,
+        top_k=normalized_top_k,
+    )
+
+    return json_payload({"hits": hits})
 
 
 @tool(args_schema=SearchSavedRequestsInput)
