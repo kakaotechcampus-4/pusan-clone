@@ -293,8 +293,13 @@ def add_personal_reference(
 ) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
-    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    payload = add_personal_reference_dict(
+        REFERENCE_STORE,
+        title=title,
+        content=content,
+        tags=tags or [],
+    )
+    return json_payload(payload)
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
