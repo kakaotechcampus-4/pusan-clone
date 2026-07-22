@@ -226,8 +226,20 @@ def add_personal_reference_dict(
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
-
+    saved = reference_store.add_personal_reference(
+        title=title,
+        content=content,
+        tags=tags
+    )
+    return {
+        "reference_backend": saved["backend"],
+        "reference": {
+            "reference_id": saved["reference_id"],
+            "title": saved["title"],
+            "content": saved["content"],
+            "tags": saved["tags"],
+        },
+    }
 
 def search_personal_reference_hits(
     reference_store: PersonalReferenceStore,
@@ -238,7 +250,19 @@ def search_personal_reference_hits(
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-    ...
+    found = reference_store.search_personal_references(query, limit=top_k)
+    hits = []
+    for item in found:
+        hits.append({
+                "id": item["id"],
+                "content": item["content"],
+                "distance": item["distance"],
+                "metadata": {
+                    "title": item["title"],
+                    "tags": item["tags"],
+                },
+        })
+    return hits
 
 
 def search_saved_request_rows(
@@ -250,8 +274,25 @@ def search_saved_request_rows(
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    ...
-
+    rows = sqlite_store.search_saved_requests(query=query,limit=top_k) # 매개변수로 kind를 받는데 왜 이 helper에선 사용하지 않는 이유는 뭘까?
+    if rows:
+        return rows
+    # 통짜 LIKE 매칭 실패 시 단어별로 쪼개 재시도
+    for token in str(query).split():
+        if len(token) < 2:  # 한 글자 토큰은 아무거나 걸려서 제외 트레이드오프 감수
+            continue
+        rows = sqlite_store.search_saved_requests(query=token, limit=top_k)
+        if rows:
+            return rows
+    
+    # 띄어쓰기 없는 검색어 대비: 공백 제거 후 2글자씩 밀며 재시도
+    compact = str(query).replace(" ", "")
+    for i in range(len(compact) - 1):
+        rows = sqlite_store.search_saved_requests(query=compact[i:i + 2], limit=top_k)
+        if rows:
+            return rows
+            
+    return []
 
 def search_conversation_messages_dict(
     sqlite_store: AppSQLiteStore,
@@ -285,7 +326,13 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    result = add_personal_reference_dict(
+        REFERENCE_STORE,
+        title=title,
+        content=content,
+        tags=tags or [], #store 내부에서도 처리하지만 llm 준값 입구에서 정리하는 일관된 규칙 위해서 작성
+    )
+    return json_payload(result)
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
@@ -293,7 +340,9 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
 
     # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
-    ...
+    top_k = safe_limit(top_k, default=2, maximum=20) # 스키마(SearchPersonalReferencesInput)의 default=2, ge=1, le=20와 같은 값으로 맞춤
+    hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
+    return json_payload({"hits": hits})
 
 
 @tool(args_schema=SearchSavedRequestsInput)
@@ -301,7 +350,9 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
-    ...
+    top_k = safe_limit(top_k, default=3, maximum=50) # 스키마(SearchSavedRequestsInput)의 default=3, le=50와 같은 값으로 맞춤
+    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
+    return json_payload({"rows": rows})
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -353,6 +404,29 @@ def week04_prompt_parts() -> list[str]:
     return [
         *week03_prompt_parts(),
         # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        """[Week 4: 나나의 기억 검색 규칙]
+        너는 사용자의 기억을 출처별로 서로 다른 tool로 검색한다. 질문의 성격을 보고 알맞은 tool을 골라라.
+        1. 사용자의 취향/선호/개인 메모/참고자료에 대한 질문이면 search_personal_references를 사용해라.
+        2. 추천이나 조언을 요청받으면(특히 '언제/어떻게 ~하는 게 좋을까?' 형태의 질문) 일반 상식으로 바로 답하지 마라. 반드시 search_personal_references를 먼저 호출해 관련 선호가 있는지 확인한 뒤, 있으면 그것을 우선 근거로 답해라.
+        3. 저장된 일정/할 일/알림 기록에 대한 질문이면, tool을 고르기 전에 먼저 스스로 판단해라: "이 질문에 특정 대상을 가리키는 키워드가 있는가?"
+           - 키워드가 있으면 search_saved_requests에 그 키워드를 query로 넣어 검색해라. '~저장돼 있어?', '~있었나?'처럼 특정 항목의 존재를 묻는 질문도 반드시 키워드 검색으로 확인해라. query에는 '일정', '약속', '기록' 같은 일반 명사를 빼고 대상을 가리키는 핵심어만 짧게 넣어라(예: '개인 코칭 일정 있어?' → query='개인 코칭').
+           - 키워드 검색 결과가 비어 있으면 같은 단어를 줄여서 반복하지 말고, 다른 표현(동의어)으로 딱 한 번만 다시 검색해 봐라. 그래도 없으면 없다고 답해라. (예: '회식'으로 못 찾았으면 '저녁 약속'으로)
+           - 목록 조회 tool의 결과는 일부만 잘려 나올 수 있다. 특정 항목이 목록에 안 보인다는 이유로 '저장돼 있지 않다'고 단정하지 말고, search_saved_requests로 한 번 더 확인한 뒤 답해라.
+           - 키워드 없이 전체나 기간을 훑는 질문이면 목록 조회 tool(list_saved_requests, personal_list_saved_schedules)을 사용해라.
+        4. 사용자가 '기억해둬', '적어둬'처럼 취향이나 참고 정보를 저장해 달라고 하면 add_personal_reference로 저장해라.
+
+        [tool 선택 예시]
+        - "저녁 약속 저장된 거 찾아줘" → search_saved_requests(query="저녁 약속")
+        - "치과 관련해서 저장된 일정 있어?" → search_saved_requests(query="치과")
+        - "저장된 일정 전부 보여줘" → list_saved_requests
+        - "이번 주 일정 뭐야?" → personal_list_saved_schedules
+        - "중요한 회의는 언제 잡는 게 좋을까?" → 먼저 search_personal_references(query="회의 시간 선호")
+
+        [답변 근거 규칙]
+        - 검색 결과(hits/rows)에 있는 내용만 근거로 답한다. 검색 결과에 없는 사실을 절대 지어내지 않는다.
+        - 검색 결과가 비어 있으면 관련 기억이 없다고 솔직하게 말해라.
+        - 질문이 여러 출처에 걸치면 필요한 tool을 각각 호출해 근거를 모은 뒤 답해라.
+        - 어느 출처인지 애매하면 단정하지 말고 더 가능성 높은 tool부터 검색해 봐라."""
     ]
 
 
