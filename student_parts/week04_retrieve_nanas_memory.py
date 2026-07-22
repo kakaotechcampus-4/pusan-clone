@@ -336,7 +336,47 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    ...
+    normalized_top_k = safe_limit(
+        top_k,
+        default=5,
+        maximum=50,
+    )
+
+    # Lazy sync
+    # 검색하기 직전 SQLite 대화를 ChromaDB와 동기화
+    sync_result = conversation_rag_store.sync_from_sqlite(sqlite_store)
+
+    # 특정 대화 ID 정리
+    # 빈 문자열 -> None으로 정리
+    requested_conversation_id = str(conversation_id or "").strip() or None
+
+    # 현재 대화 제외
+    current_scope = current_session_scope()
+    exclude_conversation_id: str | None = None
+
+    # 현재 Agent가 실행 중인 대화 ID를 확인
+    # 특정 대화를 명시하지 않은 일반 과거 검색일 때만 현재 대화를 제외
+    if requested_conversation_id is None and current_scope != DEFAULT_SESSION_SCOPE:
+        exclude_conversation_id = current_scope
+
+    # Chroma DB 검색
+    hits = conversation_rag_store.search(
+        query=query,
+        top_k=normalized_top_k,
+        exclude_conversation_id=exclude_conversation_id,
+        conversation_id=requested_conversation_id,
+    )
+
+    # 반환 payload
+    return {
+        "hits": hits,  # RAG 검색 결과
+        "rows": hits,  # 이전 코드나 테스트와 호환하기 위해 hits와 같은 값
+        "context": conversation_rag_store.context_from_hits(
+            hits
+        ),  # LLM이 바로 읽기 좋은 문자열 형태
+        "rag_backend": conversation_rag_store.backend_info(),  # 어떤 저장소와 embedding 모델을 사용했는지
+        "sync": sync_result,  # 검색 전에 어떤 대화를 동기화했는지
+    }
 
 
 def search_conversation_message_rows(
@@ -349,7 +389,17 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    ...
+
+    # 이 함수는 전체 payload가 필요하지 않고 검색 결과 배열만 필요한 내부 코드에서 사용
+    result = search_conversation_messages_dict(
+        sqlite_store,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )
+
+    return result["hits"]
 
 
 @tool(args_schema=AddPersonalReferenceInput)
@@ -420,7 +470,21 @@ def search_conversation_messages(
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
     # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    ...
+    normalized_top_k = safe_limit(
+        top_k,
+        default=5,
+        maximum=50,
+    )
+
+    payload = search_conversation_messages_dict(
+        SQLITE_STORE,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=normalized_top_k,
+        conversation_id=conversation_id,
+    )
+
+    return json_payload(payload)
 
 
 @tool(args_schema=SearchNanaMemoryInput)
