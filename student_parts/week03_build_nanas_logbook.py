@@ -810,7 +810,7 @@ def week03_prompt_parts() -> list[str]:
         "사용자가 일정 조회를 요청하는 경우 personal_list_saved_schedules를 사용하여라",
         "사용자가 일정 수정을 요청하는 경우 personal_update_saved_schedule를 사용하여라",
         "사용자가 일정 삭제를 요청하는 경우 personal_delete_saved_schedules를 사용하여라",
-        "위 도구 외의 나머지 도구는 우선적으로 고려하지 말아야 한다."
+        "Week 3의 일정 저장, 조회, 수정, 삭제 요청에서는 위 도구를 우선적으로 고려하여라."
     ]   
 
 
