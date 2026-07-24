@@ -429,7 +429,7 @@ def personal_create_schedule(
     if result.get("ok") and created_schedule:
         save_input = structured_request_from_week01_schedule(created_schedule)
         result["structured_request"] = save_input.model_dump()
-        result["sqlite_save"] = _store().save_structured_request(save_input.model_dump())
+        result["sqlite_save"] = save_structured_request_payload(save_input)
 
     return json_payload(result)
 
@@ -463,7 +463,7 @@ def save_structured_request(
         "source_schedule_id": source_schedule_id,
     }
     payload = {key: value for key, value in payload.items() if value is not None}
-    saved = _store().save_structured_request(payload)
+    saved = save_structured_request_payload(payload)
     # DONE: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
     return json_payload(tool_result("save_structured_request", **saved))
 
