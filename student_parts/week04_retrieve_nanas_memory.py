@@ -286,7 +286,7 @@ def search_conversation_messages_dict(
         query=query,
         top_k=top_k,
         exclude_conversation_id=exclude,
-        conversation_id=conversation_id
+        conversation_id=conversation_id,
     )
     
     return {
@@ -310,6 +310,13 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
+    return search_conversation_messages_dict(
+        sqlite_store,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )["hits"]
     ...
 
 
