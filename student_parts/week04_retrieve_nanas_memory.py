@@ -231,12 +231,12 @@ def add_personal_reference_dict(
         tags=tags or [],
     )
     return {
-        "reference_backend": stored.get("backend", reference_store.backend_info()),
+        "reference_backend": stored["backend"],
         "reference": {
-            "reference_id": stored.get("reference_id", ""),
-            "title": stored.get("title", title),
-            "content": stored.get("content", content),
-            "tags": stored.get("tags", tags or []),
+            "reference_id": stored["reference_id"],
+            "title": stored["title"],
+            "content": stored["content"],
+            "tags": stored["tags"],
         },
     }
 
@@ -255,13 +255,15 @@ def search_personal_reference_hits(
     )
     hits: list[dict[str, Any]] = []
     for raw in raw_hits:
+        raw_tags = raw.get("tags", "")
+        tags = [t for t in raw_tags.split(",") if t] if isinstance(raw_tags, str) else raw_tags
         hits.append({
             "id": raw.get("id", ""),
             "content": raw.get("content", ""),
             "distance": raw.get("distance", 0),
             "metadata": {
                 "title": raw.get("title", ""),
-                "tags": raw.get("tags", ""),
+                "tags": tags,
             }
         })
     return hits
@@ -305,6 +307,7 @@ def search_conversation_messages_dict(
         conversation_id=conversation_id,
     )
     return {
+        "ok": True,
         "hits": hits,
         "rows": hits,
         "context": conversation_rag_store.context_from_hits(hits),
@@ -340,7 +343,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
         REFERENCE_STORE,
         title=title,
         content=content,
-        tags=tags or [],
+        tags=tags,
     )
     return json_payload(payload)
 
