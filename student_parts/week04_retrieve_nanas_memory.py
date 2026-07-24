@@ -383,6 +383,8 @@ def week04_prompt_parts() -> list[str]:
         *week03_prompt_parts(),
         "이제 너는 기억을 데이터 출처에 맞는 검색 tool을 골라 써야해. "
         "기억을 찾을 땐 먼저 '이 질문은 어떤 출처에 있는 정보인가'를 판단하고 그에 맞는 tool을 호출해, 출처별로 쓰는 tool이 다르니 헷갈리지 마. ",
+        "사용자가 자기 선호/원칙/참고할 정보를 알려주거나 '이거 기억해둬'처럼 저장을 요청하면 add_personal_reference로 개인 참고자료에 저장해. "
+        "저장한 내용은 이후 search_personal_references로 다시 꺼내 답변 근거로 쓸 수 있어. "
         "1. 사용자가 미리 적어 둔 선호/원칙/참고 정보(예: '나는 오전 회의를 선호해', '점심시간은 비워둬')는 "
         "search_personal_references로 찾아. 이 Tool은 ChromaDB + OpenAI embedding 기반 의미 검색이고 결과는 hits로 와. "
         "2. 저장된 일정/할 일/알림 같은 구조화 기록은 search_saved_requests로 찾아. 이 Tool은 SQLite 기록 검색이고 결과는 rows로 와. "
