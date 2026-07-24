@@ -248,6 +248,7 @@ def search_personal_reference_hits(
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
+    top_k = safe_limit(top_k, default=2, maximum=20)
     res = reference_store.search_personal_references(
         query=query,
         limit=top_k
@@ -276,6 +277,7 @@ def search_saved_request_rows(
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
+    top_k = safe_limit(top_k, default=3, maximum=20)
     return sqlite_store.search_saved_requests(
         query=query, 
         limit=top_k
@@ -293,6 +295,7 @@ def search_conversation_messages_dict(
 ) -> dict[str, Any]:
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
+    top_k = safe_limit(top_k, default=5, maximum=50)
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
     sync = conversation_rag_store.sync_from_sqlite(sqlite_store=sqlite_store)
     hits = conversation_rag_store.search(
@@ -323,6 +326,7 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
+    top_k = safe_limit(top_k, default=5, maximum=20)
     res = search_conversation_messages_dict(
         sqlite_store=sqlite_store,
         conversation_rag_store=CONVERSATION_RAG_STORE,
@@ -364,7 +368,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     references = search_personal_reference_hits(
         reference_store=REFERENCE_STORE,
         query=query,
-        top_k=safe_limit(top_k, default=2, maximum=20)
+        top_k=top_k
     )
 
     return json_payload(tool_result(
@@ -381,7 +385,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     rows = search_saved_request_rows(
         sqlite_store=SQLITE_STORE, 
         query=query, 
-        top_k=safe_limit(top_k, default=3, maximum=50)
+        top_k=top_k
     )
 
     return json_payload(tool_result(
@@ -402,7 +406,7 @@ def search_conversation_messages(
         sqlite_store=SQLITE_STORE,
         conversation_rag_store=CONVERSATION_RAG_STORE,
         query=query,
-        top_k=safe_limit(top_k, default=5, maximum=50),
+        top_k=top_k,
         conversation_id=conversation_id
     )
 
@@ -424,17 +428,16 @@ def search_nana_memory(
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    checked_limit = safe_limit(limit, default=5, maximum=20)
     hits = search_personal_reference_hits(
         reference_store=REFERENCE_STORE,
         query=query,
-        top_k=checked_limit
+        top_k=limit
     )
     rows = [
         i 
         for i in SQLITE_STORE.search_saved_requests(
             query=query,
-            limit=checked_limit
+            limit=limit
         )
         if (
             (date_from is None or i["date"] is not None and i["date"] >= date_from) and
