@@ -259,7 +259,7 @@ def search_personal_reference_hits(
             "distance" : ref["distance"],
             "metadata" : {
                 "title" : ref["title"],
-                "tags" : ref["tags"]
+                "tags" : ref["tags"].split(",")
             }
         }
         for ref in res
