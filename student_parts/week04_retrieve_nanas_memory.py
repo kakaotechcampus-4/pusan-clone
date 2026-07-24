@@ -379,6 +379,10 @@ def week04_tools() -> list[Any]:
         search_saved_requests,
     ]
 
+def week04_system_prompt() -> str:
+    """4주차 단일 agent가 따르는 시스템 프롬프트입니다."""
+
+    return join_system_prompt(week04_prompt_parts())
 
 def week04_prompt_parts() -> list[str]:
     """1~4주차 system prompt 조각을 누적합니다."""
@@ -409,16 +413,6 @@ def week04_prompt_parts() -> list[str]:
         검색 결과가 없으면 관련 기록을 찾지 못했다고 솔직하게 안내한다.
         """,
     ]
-
-
-def week04_prompt_parts() -> list[str]:
-    """1~4주차 system prompt 조각을 누적합니다."""
-
-    return [
-        *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
-    ]
-
 
 def build_week04_agent() -> object:
     """Week 1-4 누적 tool 목록을 노출하는 단일 LangChain agent를 만듭니다."""
