@@ -225,7 +225,8 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
     reference = reference_store.add_personal_reference(title=title, content=content, tags=tags)
-    return {"reference_backend": reference["backend"], "reference": reference}
+    reference_backend = reference.pop("backend")
+    return {"reference_backend": reference_backend, "reference": reference}
 
 
 def search_personal_reference_hits(
@@ -238,13 +239,15 @@ def search_personal_reference_hits(
     hits = reference_store.search_personal_references(query=query, limit=top_k)
     hit_list = []
     for hit in hits:
+        raw_tags = hit.get("tags", "")
+        tags = raw_tags.split(",") if raw_tags else []
         hit_list.append({
             "id": hit.get("id", ""),
             "content": hit.get("content", ""),
             "distance": hit.get("distance", 0),
             "metadata": {
                 "title": hit.get("title", ""),
-                "tags": hit.get("tags", []),
+                "tags": tags,
             },
         })
     return hit_list
