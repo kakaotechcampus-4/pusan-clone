@@ -15,7 +15,11 @@ from fixed.app_store import AppSQLiteStore
 from fixed.reference_store import PersonalReferenceStore
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import join_system_prompt
-from student_parts.week03_build_nanas_logbook import week03_prompt_parts, week03_tools
+from student_parts.week03_build_nanas_logbook import (
+    week03_prompt_parts,
+    week03_tools,
+    tool_result,
+)
 
 REFERENCE_STORE = PersonalReferenceStore(
     CONFIG.chroma_dir
@@ -418,7 +422,12 @@ def add_personal_reference(
         tags=tags or [],
     )
 
-    return json_payload(payload)
+    return json_payload(
+        tool_result(
+            "add_personal_reference",
+            **payload,
+        )
+    )
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
@@ -438,7 +447,12 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
         top_k=normalized_top_k,
     )
 
-    return json_payload({"hits": hits})
+    return json_payload(
+        tool_result(
+            "search_personal_references",
+            hits=hits,
+        )
+    )
 
 
 @tool(args_schema=SearchSavedRequestsInput)
@@ -458,7 +472,12 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
         top_k=normalized_top_k,
     )
     # 개인 참고자료는 hits, SQLite 데이터는 rows를 사용
-    return json_payload({"rows": rows})
+    return json_payload(
+        tool_result(
+            "search_saved_requests",
+            rows=rows,
+        )
+    )
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -484,7 +503,12 @@ def search_conversation_messages(
         conversation_id=conversation_id,
     )
 
-    return json_payload(payload)
+    return json_payload(
+        tool_result(
+            "search_conversation_messages",
+            **payload,
+        )
+    )
 
 
 @tool(args_schema=SearchNanaMemoryInput)
