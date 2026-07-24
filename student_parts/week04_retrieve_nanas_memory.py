@@ -263,7 +263,7 @@ def search_personal_reference_hits(
             }
         }
         for ref in res
-        if round(ref["distance"], 1) < 1.6
+        if ref["distance"] < 1.6
     ]
 
 
