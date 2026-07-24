@@ -237,15 +237,19 @@ def search_personal_reference_hits(
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
     results = reference_store.search_personal_references(query, limit=top_k)
-    return [
-        {
-            "id": hit["id"],
-            "content": hit["content"],
-            "distance": hit["distance"],
-            "metadata": {"title": hit["title"], "tags": hit["tags"]},
-        }
-        for hit in results
-    ]
+    hits: list[dict[str, Any]] = []
+    for hit in results:
+        raw_tags = hit.get("tags", "") or ""
+        tags = [tag for tag in raw_tags.split(",") if tag]
+        hits.append(
+            {
+                "id": hit.get("id"),
+                "content": hit.get("content", ""),
+                "distance": hit.get("distance"),
+                "metadata": {"title": hit.get("title", ""), "tags": tags},
+            }
+        )
+    return hits
 
 
 def search_saved_request_rows(
@@ -270,11 +274,12 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     sync_stats = conversation_rag_store.sync_from_sqlite(sqlite_store)
+    exclude_conversation_id = None if conversation_id else current_session_scope()
     hits = conversation_rag_store.search(
         query=query,
         top_k=top_k,
         conversation_id=conversation_id,
-        exclude_conversation_id=current_session_scope(),
+        exclude_conversation_id=exclude_conversation_id,
     )
     return {
         "hits": hits,
