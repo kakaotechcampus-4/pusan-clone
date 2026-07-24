@@ -249,12 +249,12 @@ def search_personal_reference_hits(
     for result in results:
         hits.append(
             {
-                "id": result.get("id"),
-                "content": result.get("content", ""),
-                "distance": result.get("distance"),
+                "id": result["id"],
+                "content": result["content"],
+                "distance": result["distance"],
                 "metadata": {
-                    "title": result.get("title", ""),
-                    "tags": result.get("tags", ""),
+                    "title": result["title"],
+                    "tags": result["tags"],
                 },
             }
         )
