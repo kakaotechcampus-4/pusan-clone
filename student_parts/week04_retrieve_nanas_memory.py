@@ -426,6 +426,8 @@ def week04_prompt_parts() -> list[str]:
         "search_saved_requests(SQLite에 저장된 일정/할 일/알림 검색).",
         "'내가 적어둔', '선호', '메모', '참고자료' 같은 개인 지식/선호에 대한 질문이면 search_personal_references를 호출한다.",
         "'예전에 잡은 일정', '저장해둔 할 일', '전에 만든 알림'처럼 구조화 저장 기록에 대한 질문이면 search_saved_requests를 호출한다.",
+        "'한 번에', '통합해서', '이전 방식대로'처럼 참고자료와 일정을 동시에 찾아달라는 요청이면 "
+        "search_personal_references와 search_saved_requests를 따로 부르는 대신 search_nana_memory 하나로 조회한다.",
         "사용자가 새로운 개인 참고자료(선호, 메모, 규칙 등)를 알려주면 add_personal_reference로 저장한다. tags가 없으면 빈 list로 넘긴다.",
         "search_personal_references의 결과는 hits 키, search_saved_requests의 결과는 rows 키에 들어있다. "
         "두 검색 결과가 모두 비어 있으면 근거가 없다고 답하고, 대화 맥락이나 추측으로 내용을 지어내지 않는다.",
