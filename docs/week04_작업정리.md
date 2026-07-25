@@ -169,3 +169,50 @@ print(search_personal_references.invoke({"query": "점심시간 회의", "top_k"
 - `structured_requests`/`schedules`에서 두 request_id 조회 시 0건 → 일정 목록 오염 제거 확인.
 - 프롬프트 적용 후 앱에서 "점심시간 회의 안 잡는 걸로 메모해둬" → trace에 `add_personal_reference`가
   호출되고, "저장된 일정 보여줘"에 이 원칙이 더 이상 섞이지 않는지 최종 확인한다.
+
+---
+
+## 코드 리뷰 대응 — tool 응답 상태 계약(`ok`/`tool_name`) 통일
+
+> 멘토 코드 리뷰 코멘트: "`reference_backend`/`reference`만 리턴하고 `ok`/`tool_name` 같은
+> 상태 필드는 생략한 이유가 있나요? 함수 호출이 실패했다는 것을 어떻게 알 수 있나요?"
+
+### 증상
+
+Week 4의 tool 응답들이 데이터 키(`reference`/`hits`/`rows` 등)만 반환하고 **성공/실패를 나타내는
+상태 필드가 없었다.** Week 1(`personal_*`)·Week 3(`save_structured_request` 등)은 `ok`/`tool_name`을
+붙이는데 Week 4만 빠져 있어, tool 응답만 봐서는 호출이 성공했는지 판단할 근거가 없었다.
+
+### 원인
+
+- helper/store 결과를 `json_payload(...)`로 감싸 반환할 때 데이터 키만 담고 상태 필드를 생략했다.
+- 저장/검색 중 예외가 나면 그대로 위로 전파되므로, "성공 경로"에 성공을 표시하는 필드가 아예 없었다.
+
+### 대응 (적용 완료) — "최소안" 채택
+
+**넓은 `try/except`로 `ok: False`를 만들지 않고**, 성공 경로에만 상태 필드를 추가하는 최소안을 택했다.
+
+- **LangChain `@tool`/`create_agent`가 tool 예외를 이미 잡아 에이전트에게 에러로 전달**하므로,
+  실패는 프레임워크가 알려준다. 여기서 다시 `except Exception`으로 잡으면 **traceback을 삼켜**
+  (스택 정보가 사라져) 오타·계약 위반 같은 진짜 버그가 `ok: False` 문자열로 뭉개질 위험이 있다.
+- 그래서 멘토 질문의 핵심("성공했는지 어떻게 아나")은 **성공 시 항상 `ok: True`가 담기는 것**으로 해소하고,
+  실패는 예외 전파에 맡긴다.
+- **검색 tool은 0건도 정상**이므로 `ok: True`로 두고, 결과 유무는 `hits`/`rows` 길이로 판단한다.
+
+5개 tool 전부 동일 계약으로 통일:
+
+| tool | 반환에 추가된 필드 | 실패 처리 |
+| --- | --- | --- |
+| `add_personal_reference` | `ok: True`, `tool_name` (기존 `reference_backend`/`reference` 유지) | 예외 전파 |
+| `search_personal_references` | `ok: True`, `tool_name` (+ `hits`) | 예외 전파 |
+| `search_saved_requests` | `ok: True`, `tool_name` (+ `rows`) | 예외 전파 |
+| `search_conversation_messages` | `ok: True`, `tool_name` (기존 `hits`/`rows`/`context`/`rag_backend`/`sync` 유지) | 예외 전파 |
+| `search_nana_memory` | `ok: True`, `tool_name` (기존 키 유지) | 예외 전파 |
+
+> 참고: 리뷰 초기에는 `add_personal_reference_dict`/`search_conversation_messages_dict`에
+> `try/except` + `ok: False`를 넣었으나, 위 이유로 되돌리고 성공 경로 `ok: True`만 남겼다.
+
+### 검증
+
+- `python -m py_compile student_parts/week04_retrieve_nanas_memory.py` 통과.
+- 각 tool 응답 JSON top-level에 `ok`/`tool_name`이 포함되는지 확인.

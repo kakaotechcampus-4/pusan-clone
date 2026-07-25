@@ -227,10 +227,14 @@ def add_personal_reference_dict(
 
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
     # tags가 None이면 store가 빈 list로 처리하도록 [] 로 정규화한다.
+    # 저장 중 예외가 나면 @tool/agent가 에러로 잡아 알려주므로, 여기서는 성공 경로만 다룬다.
     reference = reference_store.add_personal_reference(title, content, tags or [])
     # store 결과(reference) 안에 backend가 들어 있지만, tool 응답 top-level에서
     # 출처를 바로 확인할 수 있게 reference_backend를 함께 노출한다.
+    # ok/tool_name은 다른 week의 tool 응답과 동일한 상태 계약을 맞춘다.
     return {
+        "ok": True,
+        "tool_name": "add_personal_reference",
         "reference_backend": reference_store.backend_info(),
         "reference": reference,
     }
@@ -290,13 +294,14 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    # 검색 직전에 SQLite → ChromaDB lazy sync를 수행해 새 대화/변경분을 반영한다.
-    sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
     limit = safe_limit(top_k, default=5, maximum=50)
     # conversation_id를 명시하면 그 대화 안에서만 찾고, 아니면 "방금 한 말"이 과거 검색처럼
     # 섞이지 않도록 현재 대화 범위를 제외한다. 직접 tool 호출 sentinel은 실제 대화 id와
     # 겹치지 않아 아무것도 제외하지 않는다.
     exclude_conversation_id = None if conversation_id else current_session_scope()
+    # sync/search 중 예외가 나면 @tool/agent가 에러로 잡아 알려주므로, 여기서는 성공 경로만 다룬다.
+    # 검색 직전에 SQLite → ChromaDB lazy sync를 수행해 새 대화/변경분을 반영한다.
+    sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
     hits = conversation_rag_store.search(
         query=query,
         top_k=limit,
@@ -304,6 +309,9 @@ def search_conversation_messages_dict(
         conversation_id=conversation_id,
     )
     return {
+        # ok/tool_name은 다른 week의 tool 응답과 동일한 상태 계약을 맞춘다.
+        "ok": True,
+        "tool_name": "search_conversation_messages",
         # hits/rows에 같은 결과를 넣어 hits 계약과 rows 계약 양쪽 호출부를 모두 만족시킨다.
         "hits": hits,
         "rows": hits,
@@ -348,8 +356,15 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
 
     # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
+    # 검색 0건은 실패가 아니므로 ok=True로 두고, 결과 유무는 hits 길이로 판단한다.
     hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
-    return json_payload({"hits": hits})
+    return json_payload(
+        {
+            "ok": True,
+            "tool_name": "search_personal_references",
+            "hits": hits,
+        }
+    )
 
 
 @tool(args_schema=SearchSavedRequestsInput)
@@ -357,8 +372,15 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
+    # 검색 0건은 실패가 아니므로 ok=True로 두고, 결과 유무는 rows 길이로 판단한다.
     rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
-    return json_payload({"rows": rows})
+    return json_payload(
+        {
+            "ok": True,
+            "tool_name": "search_saved_requests",
+            "rows": rows,
+        }
+    )
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -416,8 +438,11 @@ def search_nana_memory(
     else:
         context_lines.append("- 검색된 저장 기록이 없습니다.")
 
+    # 검색 0건은 실패가 아니므로 ok=True로 두고, 결과 유무는 hits/rows 길이로 판단한다.
     return json_payload(
         {
+            "ok": True,
+            "tool_name": "search_nana_memory",
             "hits": reference_hits,
             "rows": saved_rows,
             "context": "\n".join(context_lines),
