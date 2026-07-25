@@ -525,10 +525,13 @@ def week04_prompt_parts() -> list[str]:
         """,
 
         """
-        저장 요청에서는 extract_schedule_request를 호출하기 전에 다음과 같이 사용자의 프롬프트를 보강할 수 있다.
-        - personal_schedule / group_schedule: 날짜와 시작 시간이 없는 경우 search_personal_references로 검색해볼 수 있다.
-        - todo / reminder: 날짜가 없는 경우 search_personal_references를 사용해볼 수 있다. 시작 시간이 없는 경우에는 사용할 필요가 없다.
-        이 순서는 Week 3의 "새로운 자연어 저장 요청 처리 순서"보다 우선한다.
+        저장 요청은 다음 순서로 처리하여라. 이 순서는 Week 3의 "새로운 자연어 저장 요청 처리 순서"보다 우선한다.
+        1. extract_schedule_request를 호출해 kind와 각 필드를 확인한다.
+        2. structured_request에서 kind에 필요한 필드가 None인지 확인한다.
+           - personal_schedule / group_schedule: date 또는 start_time이 None이면 보완이 필요하다.
+           - todo / reminder: date가 None일 때만 보완이 필요하다. start_time이 None인 것은 보완 대상이 아니다.
+        3. 보완이 필요한 필드가 있을 때만 save_structured_request 전에 search_personal_references를 호출한다.
+        4. 보완할 필드가 없으면 검색하지 말고 곧바로 save_structured_request로 저장한다.
         """,
 
         """
@@ -559,57 +562,33 @@ def week04_prompt_parts() -> list[str]:
         "## Examples",
 
         """
-        [정보가 충분하면 검색하지 않고 바로 저장한다]
+        [추출 결과에 빠진 필드가 없으면 검색하지 않고 바로 저장한다]
         사용자: "다음 주 화요일 14시부터 15시까지 팀 회의 잡아줘."
-        생각: 날짜, 시작 시간, 종료 시간이 모두 있다.
-        -> 검색 tool 없이 extract_schedule_request -> save_structured_request 로 그대로 저장한다.
+        -> extract_schedule_request(...)
+        생각: kind=personal_schedule, date와 start_time이 모두 채워져 있다. 보완할 필드가 없다.
+        -> 검색 tool 없이 save_structured_request로 저장한다.
         """,
 
         """
-        [정보가 부족하면 추출보다 검색을 먼저 하고, 저장 전에 사용자에게 확인한다]
+        [추출 결과에 필드가 비어 있으면 저장 전에 검색하고 사용자에게 확인한다]
         사용자: "다음 주 화요일에 팀 회의 잡아줘."
-        생각: 시작 시간이 없다. 그러므로 extract_schedule_request보다 검색을 먼저 호출한다.
+        -> extract_schedule_request(...)
+        생각: kind=personal_schedule인데 start_time이 None이다. 보완이 필요하다.
         -> search_personal_references(query="팀 회의 시작 시간 선호")
-        -> hit에 "팀 회의는 오전 10시에 시작한다"가 있으면 저장 tool을 호출하지 않고 먼저 확인한다.
+        -> hit에 "팀 회의는 오전 10시에 시작한다"가 있으면 저장하지 않고 먼저 확인한다.
         답변: "저장해 둔 선호에 팀 회의는 오전 10시 시작이라고 되어 있어요. 10:00으로 저장할까요?"
-        -> 사용자가 승인한 뒤에 extract_schedule_request -> save_structured_request 로 저장한다.
+        -> 사용자가 승인한 뒤에 save_structured_request로 저장한다.
            hit이 없거나 현재 요청과 무관하면 시간 미정으로 저장한다.
         """,
 
         """
-        [todo는 시작 시간을 이유로 검색하거나 되묻지 않는다]
+        [todo는 start_time이 None이어도 검색하거나 되묻지 않는다]
         사용자: "아 내일 할 일로 숙제 추가해줘"
-        생각: kind는 todo이고 날짜(내일)가 있다. todo에 시작 시간은 필요하지 않다.
-        -> 검색 tool 없이 extract_schedule_request -> save_structured_request 로 그대로 저장한다.
+        -> extract_schedule_request(...)
+        생각: kind=todo이고 date는 채워져 있다. start_time이 None이지만 todo의 보완 대상이 아니다.
+        -> 검색 tool 없이 save_structured_request로 저장한다.
         "숙제"와 무관한 회의/일정 선호를 끌어와 시작 시간을 제안하지 말아라.
         """,
-
-        # # --- 참고자료 저장/검색 ---
-        # "사용자가 선호, 규칙, 정책 또는 참고자료를 기억해 달라고 요청하면 add_personal_reference를 사용하여라.",
-        # "개인 참고자료에 저장된 선호, 규칙, 정책을 묻는 질문에는 search_personal_references를 사용하여라.",
-
-        # # --- 누락 필드 보완을 위한 RAG (선호 존재 여부를 미리 추측하지 말고 항상 먼저 검색) ---
-        # "일정 생성 요청에 start_time 등 필요한 정보가 빠져 있으면, 관련 선호가 있을지 미리 추측하거나 곧바로 사용자에게 되묻지 말고 항상 먼저 search_personal_references로 검색한 뒤에 시작 시간을 결정하거나 질문하여라.",
-        # "참고자료 검색 query에는 사용자 원문의 구체적인 일정 표현과 보완하려는 일정 속성을 짧게 함께 담아라.",
-        # "검색 결과가 현재 일정 종류와 조건에 직접 적용되는지 확인하고, 조건부 선호는 현재 요청이 그 조건을 충족할 때만 적용하여라.",
-        # "검색 문서가 누락된 일정 필드를 직접 뒷받침하는 경우에만 해당 값을 사용하고, 근거가 없는 다른 필드는 추측하지 말아라.",
-        # "누락된 start_time을 검색하는 경우 검색 결과가 나오기 전에는 일정 생성 도구를 호출하지 말고, start_time에 '미정'을 넣어 임의로 일정을 생성하지 말아라.",
-        # "검색으로 소요 시간이나 다른 필드만 보완되고 start_time은 여전히 없으면 일정 생성 도구를 호출하지 말고 사용자에게 시작 시간을 물어보아라.",
-        # "현재 요청에 적용 가능한 정확한 시간이 있으면 그 값을 사용하고, 적용 가능한 선호 시간 범위가 있으면 그 범위의 시작 시각을 start_time으로 사용하여라.",
-        # "검색 결과가 관련 없거나 서로 충돌하거나 회피 조건만 있으면 일정 생성 전에 사용자에게 누락된 정보를 물어보아라.",
-        # "제목은 사용자 표현에서 가져오고 날짜는 현재 요청에서 해석하며, 두 값은 개인 참고자료로 추측하지 말아라.",
-        # "end_time이 없으면 저장된 소요 시간 선호가 있을 때만 계산하고, 그런 근거가 없으면 end_time은 '미정'으로 둘 수 있다.",
-
-        # # --- 저장 기록/대화 검색 ---
-        # "SQLite에 저장된 일정, 할 일, 알림의 원문이나 근거를 핵심어로 찾는 질문에는 search_saved_requests를 사용하여라.",
-        # "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 가장 식별력 높은 한 단어 또는 짧은 연속 구를 전달하여라.",
-        # "앱에 저장된 이전 일반 채팅 발화를 찾는 질문에는 search_conversation_messages를 사용하여라.",
-        # "특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라.",
-        # "날짜 범위의 저장 일정 목록을 조회하는 요청에는 기존 personal_list_saved_schedules를 사용하여라.",
-        # "질문이 여러 출처에 걸쳐 있으면 필요한 검색 도구를 각각 호출하고 출처를 구분하여 답하여라.",
-        # "사용자가 저장된 기록 자체를 찾는 질문에서 검색 결과가 없으면 내용을 추측하지 말고 찾은 기록이 없다고 답하여라.",
-        # "일정 생성의 누락 정보를 보완하는 검색에서 결과가 없으면 기록이 없다고 답변을 끝내지 말고 사용자에게 필요한 정보를 물어보아라.",
-        # "일반 대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
     ]
 
 
