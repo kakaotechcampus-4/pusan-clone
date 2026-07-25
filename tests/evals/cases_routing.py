@@ -71,6 +71,12 @@ NO_RECORD_PATTERNS = [
     r"찾(지 못|을 수 없)",
 ]
 
+SEMANTIC_GAP_CLARIFICATION_LIMITATION = (
+    "날짜·대화 출처가 없는 LIKE 검색 실패에서 검색 범위를 설명하고 재질의해야 하지만, "
+    "target과 held-out 모두 15회 측정에서 거짓 부재 답변을 선택했다. "
+    "답변 정확성과 list_saved_requests 폴백 억제를 별도 케이스로 추적한다."
+)
+
 
 ROUTING_CASES = [
     # ------------------------------------------------------------------ 출처 라우팅
@@ -88,36 +94,34 @@ ROUTING_CASES = [
     {
         "id": "routing.saved_request_lookup",
         "group": "출처 라우팅",
-        # 형제 케이스들과 달리 `not_called`를 걸지 않습니다. 모델은 `search_saved_requests`를
-        # **항상** 정확히 먼저 부르고 그 뒤에 출처를 하나 더 붙입니다. 5회 실측에서 덧붙은
-        # 도구가 search_personal_references 2회, search_conversation_messages 1회,
-        # list_saved_requests 2회였는데, 셋 중 list_saved_requests만 금지 목록에 없어서
-        # **같은 동작이 실행마다 통과/실패로 갈렸습니다**(40~60%를 오감).
-        # 이 케이스가 재는 것은 "출처를 옳게 골랐는가"이고 그건 100% 맞습니다. 한 출처로
-        # 끝내지 못하는 과호출은 별개의 동작이라 이 케이스가 겸해서 재지 않습니다.
+        # 사용자가 저장된 일정·할 일을 출처로 분명히 한 경우다. 키워드 검색이 성공했는데
+        # 최근 목록이나 다른 출처까지 확인하면 근거가 늘지 않고 호출만 증가한다.
         "user": "제주도와 관련해서 저장한 일정이나 할 일을 찾아줘.",
         "expect": {
             "called": ["search_saved_requests"],
+            "not_called": [
+                "search_personal_references",
+                "search_conversation_messages",
+            ],
+            "max_calls": {
+                "search_saved_requests": 1,
+                "list_saved_requests": 1,
+            },
         },
     },
     {
         "id": "routing.conversation_lookup",
         "group": "출처 라우팅",
-        # saved_request_lookup과 같은 이유로 `not_called`를 걸지 않습니다. 모델은
-        # search_conversation_messages를 **항상** 부르고, 거기에 search_saved_requests를
-        # 덧붙이는 실행이 섞여 60~90% 사이에서 흔들렸습니다.
-        #
-        # 그 덧붙임을 결함으로 보기 어렵습니다. 시드에서 "철수"는 대화에만 있지만 참고자료
-        # 8건과 저장 기록 15건 중 어디에도 없다는 사실을 **모델은 미리 알 수 없습니다.**
-        # 철수가 참석자로 들어간 일정이 있는지 확인하는 것은 합리적인 행동입니다.
-        # 게다가 prompt가 "글자 검색이 비면 다른 출처도 확인하라"고 명시적으로 시키고 있어서
-        # 이 단정과 정면으로 모순됩니다.
-        #
-        # 한 출처로 끝내지 못하는 과호출이 문제라면 토큰·지연 비용을 재는 별도 케이스로
-        # 만들어야 합니다. 출처 라우팅 케이스가 곁다리로 재면 인과를 잃습니다.
+        # "예전 대화에서"라고 출처를 분명히 했으므로 저장 request나 참고자료를 함께 찾지 않는다.
         "user": "예전 대화에서 철수에 대해 무슨 말을 했지?",
         "expect": {
             "called": ["search_conversation_messages"],
+            "not_called": [
+                "list_saved_requests",
+                "search_saved_requests",
+                "search_personal_references",
+            ],
+            "max_calls": {"search_conversation_messages": 1},
         },
     },
     {
@@ -511,41 +515,120 @@ ROUTING_CASES = [
         },
     },
     {
-        "id": "lookup.semantic_gap_keyword",
-        "group": "날짜+키워드",
-        "held_out": True,
-        # 리뷰에서 지적된 비대칭 — search_personal_references는 embedding이라 표현이 달라도
-        # 걸리지만 search_saved_requests는 SQLite LIKE 부분일치라 글자가 겹쳐야 걸린다.
-        # 시드에 "제주도 여행 일정"과 "제주도 여행 준비물 구매"가 있는데 "섬"은 어디에도 없다.
-        #
-        # 세 갈래를 다 재 보고 **프롬프트로는 못 고친다**고 결론 낸 케이스다.
-        #
-        # 1) 낱말을 넓혀 다시 검색하라는 규칙 → 0/10. 모델이 query='섬 여행'을 그대로 넘겼고
-        #    시도조차 하지 않았다. 저장할 때 쓴 낱말을 추측하라는 건 먹히지 않는다.
-        # 2) 스스로 하는 폴백 → 모델은 지시 없이도 list_saved_requests를 뒤이어 부른다.
-        #    그런데 이 기록은 가장 먼저 시딩돼 created_at DESC LIMIT 20 창 밖이고, 모델이
-        #    범위를 주면 date_to를 오늘로 끊어서 미래 날짜(8/1, 8/3)가 또 빠진다.
-        # 3) 대화 검색(embedding) 폴백 → 라우팅은 고쳐졌다(10/10으로 호출한다). 그런데
-        #    **검색 자체가 실패한다.** 실측 거리: '섬 여행' → 정답 대화 1.5753,
-        #    '섬 여행 관련해서 저장된 거 있어?' → 1.5141. DISTANCE_THRESHOLD=1.2 위다.
-        #    임계값을 낮춰도 소용없다 — 같은 질의에서 **무관한 "이사 계획 이야기"가 1.5393으로
-        #    정답보다 가깝다.** 참고로 '제주도 여행'은 1.0709, '휴가'는 1.0952로 잘 걸린다.
-        #
-        # 즉 "섬 → 제주도"는 의미적 근접이 아니라 세계 지식 추론이라 embedding으로도 안 넘는다.
-        # 근본 해결은 tool 설계다(structured_requests에 embedding 인덱스를 두거나 LIKE와
-        # 벡터를 함께 쓰는 hybrid). 그건 새 저장소가 필요해 이번 범위 밖이다.
-        #
-        # 3)의 폴백 규칙 자체는 프롬프트에 남겼다. embedding이 실제로 이어 주는 표현 차이
-        # ('휴가' 등)에서는 값어치가 있고, 전체 회귀도 없었다.
-        "known_limitation": (
-            "search_saved_requests가 SQLite LIKE 부분일치라 동의어·상위어가 걸리지 않는다. "
-            "대화 검색 폴백도 이 간극(섬 → 제주도)에서는 거리가 임계값 밖이다. "
-            "tool 설계 문제이므로 프롬프트로 고치지 않고 xfail로 추적한다."
-        ),
+        "id": "lookup.semantic_gap_clarifies",
+        "group": "의미 간극",
+        # SQLite LIKE와 대화 embedding 모두 "섬 → 제주도"를 안정적으로 잇지 못한다는 실측
+        # 결과를 반영한다. 날짜나 출처 근거가 없는 질문에서는 최근 목록을 훑거나 다른 출처로
+        # 넘어가지 않고, 현재 키워드 검색의 한계를 설명한 뒤 제목의 핵심어 또는 날짜를 묻는다.
+        "known_limitation": SEMANTIC_GAP_CLARIFICATION_LIMITATION,
         "user": "섬 여행 관련해서 저장된 거 있어?",
         "expect": {
-            "called": ["search_saved_requests", "search_conversation_messages"],
+            "called": ["search_saved_requests"],
+            "not_called": ["search_conversation_messages"],
+            # 정확한 제주도 기록을 근거로 답하거나, LIKE 검색 범위를 밝히고 재질의하면 된다.
+            # 목록 폴백의 효율 문제는 바로 아래 독립 케이스에서 판정한다.
+            "answer_matches_any": [
+                "제주도",
+                (
+                    r"(?s)(검색어|키워드|표현|글자|문자).{0,100}"
+                    r"(제목|핵심어|키워드|날짜).{0,100}"
+                    r"(알려|말해|입력|제공|기억)"
+                ),
+            ],
+            "answer_not_matches_any": [
+                r"(저장된\s*)?(일정|할 일|알림|기록).{0,40}(없|않)",
+            ],
+        },
+    },
+    {
+        "id": "lookup.semantic_gap_clarifies_efficiency",
+        "group": "의미 간극",
+        "known_limitation": SEMANTIC_GAP_CLARIFICATION_LIMITATION,
+        "user": "섬 여행 관련해서 저장된 거 있어?",
+        "expect": {
+            "called": ["search_saved_requests"],
+            "not_called": ["list_saved_requests", "search_conversation_messages"],
+            "max_calls": {"search_saved_requests": 1},
+        },
+    },
+    {
+        "id": "lookup.semantic_gap_with_explicit_date",
+        "group": "의미 간극",
+        # 의미가 다른 키워드라도 사용자가 날짜를 주면 날짜 범위가 독립적인 근거가 된다.
+        # 9월 20일에는 "차량 정기점검" reminder가 시딩돼 있다.
+        "user": "9월 20일에 자동차 검사 관련해서 저장한 거 있어?",
+        "expect": {
+            "called": ["list_saved_requests", "search_saved_requests"],
+            "not_called": ["search_conversation_messages"],
+            "max_calls": {
+                "list_saved_requests": 1,
+                "search_saved_requests": 1,
+            },
+            "answer_matches_any": ["차량", "정기점검"],
+        },
+    },
+    {
+        "id": "lookup.semantic_gap_in_explicit_conversation",
+        "group": "의미 간극",
+        # 사용자가 과거 대화를 출처로 직접 지정했고, "휴가"는 시딩된 제주도 대화와
+        # embedding 거리 1.0952로 임계값 1.2 안에 들어온다.
+        "user": "예전 대화에서 휴가 계획에 대해 무슨 말을 했지?",
+        "expect": {
+            "called": ["search_conversation_messages"],
+            "not_called": ["list_saved_requests", "search_saved_requests"],
+            "max_calls": {"search_conversation_messages": 1},
             "answer_matches_any": ["제주도"],
+        },
+    },
+    {
+        "id": "lookup.current_context_preserves_user_grounding",
+        "group": "의미 간극",
+        # 현재 대화에서 사용자가 직접 확인해 준 제목·날짜는 새 LIKE 검색보다 강한 근거다.
+        "history": [
+            {
+                "role": "user",
+                "content": "내 저장 기록을 확인해 보니 8월 1일에 '제주도 여행 준비물 구매'가 있어.",
+            },
+            {"role": "assistant", "content": "확인했어요."},
+        ],
+        "user": "그 섬 여행 준비물은 언제 사기로 했지?",
+        "expect": {
+            "answer_matches_all": ["제주도", r"(8월\s*1일|2026-08-01)"],
+        },
+    },
+    {
+        "id": "lookup.semantic_gap_clarifies_held_out",
+        "group": "의미 간극",
+        "held_out": True,
+        # target 케이스와 다른 표현에서도 최근 목록·대화 검색으로 임의 확장하지 않는지 본다.
+        "known_limitation": SEMANTIC_GAP_CLARIFICATION_LIMITATION,
+        "user": "바캉스 준비로 저장해 둔 게 있나?",
+        "expect": {
+            "called": ["search_saved_requests"],
+            "not_called": ["search_conversation_messages"],
+            "answer_matches_any": [
+                "제주도",
+                (
+                    r"(?s)(검색어|키워드|표현|글자|문자).{0,100}"
+                    r"(제목|핵심어|키워드|날짜).{0,100}"
+                    r"(알려|말해|입력|제공|기억)"
+                ),
+            ],
+            "answer_not_matches_any": [
+                r"(저장된\s*)?(일정|할 일|알림|기록).{0,40}(없|않)",
+            ],
+        },
+    },
+    {
+        "id": "lookup.semantic_gap_clarifies_held_out_efficiency",
+        "group": "의미 간극",
+        "held_out": True,
+        "known_limitation": SEMANTIC_GAP_CLARIFICATION_LIMITATION,
+        "user": "바캉스 준비로 저장해 둔 게 있나?",
+        "expect": {
+            "called": ["search_saved_requests"],
+            "not_called": ["list_saved_requests", "search_conversation_messages"],
+            "max_calls": {"search_saved_requests": 1},
         },
     },
     {

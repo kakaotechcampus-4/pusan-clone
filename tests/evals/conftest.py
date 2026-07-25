@@ -139,9 +139,8 @@ SEED_CONVERSATIONS = [
         ],
     },
     {
-        # lookup.semantic_gap_keyword 전용입니다. 저장 기록("제주도 여행 일정")은 LIKE 검색이라
-        # "섬"으로는 걸리지 않습니다. 실제 앱이라면 그 기록을 만든 발화가 messages에 남아 있고,
-        # 대화 검색은 embedding이라 표현이 달라도 걸립니다. 그 상황을 재현합니다.
+        # lookup.semantic_gap_in_explicit_conversation 전용입니다. 저장 request와 대화는
+        # 서로 다른 출처이므로, 사용자가 과거 대화를 지정한 경우에만 이 시드를 검색합니다.
         "title": "여름 휴가 이야기",
         "messages": [
             ("user", "이번 여름 휴가는 제주도로 가기로 했어. 항공권부터 알아봐야겠어."),
