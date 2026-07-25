@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 from fixed.config import CONFIG
 from fixed.conversation_rag_store import ConversationRAGStore
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from fixed.reference_store import PersonalReferenceStore
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
@@ -314,6 +313,8 @@ def search_conversation_messages_dict(
     search_results = conversation_rag_store.search(query=search.query, top_k=search.top_k, exclude_conversation_id=current_session_scope() if search.conversation_id is None else None, conversation_id=search.conversation_id)
 
     return {
+        "ok":True,
+        "tool_name":"search_conversation_messages",
         "hits":search_results,
         "rows":search_results,
         # 근거 문자열 
@@ -347,18 +348,25 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
     # 이건 query와 유사한 content를 LLM이 비교. 같은 것은 어떻게 판정할까
     result = AddPersonalReferenceInput(title=title, content=content, tags=tags)
-    if search_personal_reference_hits(REFERENCE_STORE, query=result.content, top_k=1):
-        if search_personal_reference_hits(REFERENCE_STORE, query=result.content, top_k=1)[0].get("distance", 1.0) < 0.45:
-            return json_payload({"error": "이미 존재하는 참고자료입니다."})
+    search_result = search_personal_reference_hits(REFERENCE_STORE, query=result.content, top_k=1)
+    if search_result and search_result[0].get("distance", 1.0) < 0.6:
+        return json_payload({"error": "이미 존재하는 참고자료입니다."})
 
-    return json_payload(REFERENCE_STORE.add_personal_reference(title=result.title, content=result.content, tags=result.tags or []))
+    add_result = REFERENCE_STORE.add_personal_reference(title=result.title, content=result.content, tags=result.tags or [])
+    del add_result["backend"] 
+    # reference_backend 정보는 REFERENCE_STORE.backend_info()로 대체
+    return json_payload({
+        "reference_backend": REFERENCE_STORE.backend_info(),
+        "reference": add_result
+    })
+
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다. distance는 참고용이며, 실제 관련성은 content를 보고 직접 판단해야 합니다."""
 
     # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
-    top_k = safe_limit(top_k, default=2, maximum=20)
+    # Tool에서는 삭제, helper에서만 safe_limit()로 top_k를 제한.
     search = SearchPersonalReferencesInput(query=query, top_k=top_k)
     search_results = search_personal_reference_hits(REFERENCE_STORE, query=search.query, top_k=search.top_k)
     nearest = []
@@ -393,7 +401,6 @@ def search_conversation_messages(
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
     # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    top_k = safe_limit(top_k, default=5, maximum=50)
     search = SearchConversationMessagesInput(query=query, top_k=top_k, conversation_id=conversation_id)
     return json_payload(
         search_conversation_messages_dict(
@@ -441,8 +448,7 @@ def week04_tools() -> list[Any]:
         add_personal_reference,
         search_personal_references,
         search_saved_requests,
-        search_conversation_messages,
-        search_nana_memory
+        search_conversation_messages
     ]
 
 
@@ -463,9 +469,7 @@ def week04_prompt_parts() -> list[str]:
         "개인 참고자료는 ChromaDB + OpenAI embedding 기반으로 검색되며, 저장된 일정/할 일 기록은 SQLite structured_requests/schedules 계열 기록을 검색합니다.",
         "일반 채팅 발화는 SQLite conversations/messages를 대화 단위 청크로 sync하여 검색하는 agentic RAG입니다. search_conversation_messages tool을 사용하여 검색하여야 합니다.",
         "일정/할 일/알림과 관련한 요청에 응답을 할 경우에는 search_saved_requests tool을 사용하여 검색하도록 합니다.",
-        "일정/할 일 시간을 언제 정할지 추천해달라는 요청은 '조회' 요청이 아니라 '추천' 요청입니다. "
-        "이 경우에는 personal_list_saved_schedules를 포함한 다른 조회 tool을 호출하지 말고, "
-        "반드시 search_nana_memory tool을 호출해 개인 참고자료와 SQLite 저장 일정 chunk를 한 번에 가져온 뒤 답변하세요. "
+        "일정/할 일 시간을 언제 정할지 추천해달라는 요청은 '조회' 요청이 아니라 '추천' 요청입니다. 이 경우에는 personal_list_saved_schedules를 포함한 다른 조회 tool을 호출하지 말고, 반드시 개인 참고 자료를 가져오기 위한 search_personal_references와 기존 일정을 확인하기 위한 search_saved_requests를 각각 호출해서 가져온 뒤 답변하세요. "
         "근거는 반드시 이 tool의 결과에서만 가져오고, 그것이 없다면 절대 억지로 지어내지 마세요.",
         "추가적인 참고 사항을 작성하여야 한다면 add_personal_reference tool을 사용하여 개인 참고자료를 추가하도록 합니다.",
         "개인 참고자료와 SQLite 저장 일정 chunk를 한 번에 검색하고자 할 경우에는 search_nana_memory tool을 사용하도록 합니다.",
