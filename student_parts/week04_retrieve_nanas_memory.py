@@ -274,7 +274,7 @@ def search_saved_request_rows(
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    rows = sqlite_store.search_saved_requests(query=query,limit=top_k) # 매개변수로 kind를 받는데 왜 이 helper에선 사용하지 않는 이유는 뭘까?
+    rows = sqlite_store.search_saved_requests(query=query,limit=top_k)
     if rows:
         return rows
     # 통짜 LIKE 매칭 실패 시 단어별로 쪼개 재시도
@@ -305,7 +305,25 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    ...
+    sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
+
+    exclude_conversation_id = None
+    if conversation_id is None:
+        exclude_conversation_id = current_session_scope()
+
+    hits = conversation_rag_store.search(
+        query=query,
+        top_k=top_k,
+        exclude_conversation_id=exclude_conversation_id,
+        conversation_id=conversation_id,
+    )
+    return {
+        "hits": hits,
+        "rows": hits,
+        "context": conversation_rag_store.context_from_hits(hits),
+        "rag_backend": conversation_rag_store.backend_info(),
+        "sync": sync,
+    }
 
 
 def search_conversation_message_rows(
@@ -318,7 +336,14 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    ...
+    result = search_conversation_messages_dict(
+        sqlite_store,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )
+    return result["hits"]
 
 
 @tool(args_schema=AddPersonalReferenceInput)
@@ -364,7 +389,15 @@ def search_conversation_messages(
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
     # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    ...
+    top_k = safe_limit(top_k, default=5, maximum=50) # 스키마(SearchConversationMessagesInput)의 default=5, le=50와 같은 값으로 맞춤
+    result = search_conversation_messages_dict(
+        SQLITE_STORE,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )
+    return json_payload(result)
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -414,6 +447,7 @@ def week04_prompt_parts() -> list[str]:
            - 목록 조회 tool의 결과는 일부만 잘려 나올 수 있다. 특정 항목이 목록에 안 보인다는 이유로 '저장돼 있지 않다'고 단정하지 말고, search_saved_requests로 한 번 더 확인한 뒤 답해라.
            - 키워드 없이 전체나 기간을 훑는 질문이면 목록 조회 tool(list_saved_requests, personal_list_saved_schedules)을 사용해라.
         4. 사용자가 '기억해둬', '적어둬'처럼 취향이나 참고 정보를 저장해 달라고 하면 add_personal_reference로 저장해라.
+        5. 예전에 나눈 일반 대화 내용에 대한 질문('~얘기했잖아', '~말한 적 있지?', '지난번에 뭐라고 했지?')이면 search_conversation_messages를 사용해라. query에는 짧은 핵심 명사를 넣어라.
 
         [tool 선택 예시]
         - "저녁 약속 저장된 거 찾아줘" → search_saved_requests(query="저녁 약속")
@@ -421,12 +455,14 @@ def week04_prompt_parts() -> list[str]:
         - "저장된 일정 전부 보여줘" → list_saved_requests
         - "이번 주 일정 뭐야?" → personal_list_saved_schedules
         - "중요한 회의는 언제 잡는 게 좋을까?" → 먼저 search_personal_references(query="회의 시간 선호")
+        - "우리 지난주에 여행 얘기했잖아, 뭐라고 했지?" → search_conversation_messages(query="여행")
 
         [답변 근거 규칙]
         - 검색 결과(hits/rows)에 있는 내용만 근거로 답한다. 검색 결과에 없는 사실을 절대 지어내지 않는다.
         - 검색 결과가 비어 있으면 관련 기억이 없다고 솔직하게 말해라.
         - 질문이 여러 출처에 걸치면 필요한 tool을 각각 호출해 근거를 모은 뒤 답해라.
-        - 어느 출처인지 애매하면 단정하지 말고 더 가능성 높은 tool부터 검색해 봐라."""
+        - 어느 출처인지 애매하면 단정하지 말고 더 가능성 높은 tool부터 검색해 봐라.
+        - 대화 검색 결과에서는 사용자 발화를 우선 근거로 삼고, assistant 발화만으로 사실을 확정하지 마라."""
     ]
 
 
