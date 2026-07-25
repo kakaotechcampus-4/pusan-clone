@@ -349,7 +349,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     # 이건 query와 유사한 content를 LLM이 비교. 같은 것은 어떻게 판정할까
     result = AddPersonalReferenceInput(title=title, content=content, tags=tags)
     search_result = search_personal_reference_hits(REFERENCE_STORE, query=result.content, top_k=1)
-    if search_result and search_result[0].get("distance", 1.0) < 0.6:
+    if search_result and search_result[0].get("distance", 1.0) < 0.85:
         return json_payload({"error": "이미 존재하는 참고자료입니다."})
 
     add_result = REFERENCE_STORE.add_personal_reference(title=result.title, content=result.content, tags=result.tags or [])
