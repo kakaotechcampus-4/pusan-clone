@@ -22,7 +22,7 @@ from student_parts.week03_build_nanas_logbook import (
     _tool_name
 )
 
-DISTANCE_THRESHOLD = 1.4
+DISTANCE_THRESHOLD = 1.2
 
 
 REFERENCE_STORE = PersonalReferenceStore(CONFIG.chroma_dir)
@@ -306,6 +306,8 @@ def search_conversation_messages_dict(
             current_session_scope() if conversation_id is None else None
         )
     )
+
+    hits = [i for i in hits if i["distance"] < DISTANCE_THRESHOLD]
 
     return {
         "hits" : hits,
