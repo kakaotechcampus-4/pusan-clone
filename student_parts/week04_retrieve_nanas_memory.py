@@ -342,6 +342,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     """
     ## 설명
     개인 참고자료를 ChromaDB에 추가합니다.
+    사용자의 선호, 규칙, 정책 또는 참고자료를 저장할 때 사용할 수 있습니다.
     
     ## 예시
     사용자: '나는 점심시간에는 회의를 잡지 않는다고 기억해줘. 
@@ -371,6 +372,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     """
     ## 설명
     개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다.
+    개인 참고자료에 저장된 선호, 규칙, 정책을 확인하기 위해 사용할 수 있습니다.
     
     ## 예시
     사용자: '내가 저장해 둔 점심시간 회의 선호가 뭐였지?' 
@@ -395,6 +397,8 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     """
     ## 설명
     SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 일정/할 일/알림의 핵심 단어를 넣습니다.
+    벡터 검색이 아닌 텍스트 포함/일치 검색이므로, 가장 식별력 높은 한 단어 또는 짧은 연속 구를 검색하는 것이 좋습니다.
+    또한 이 도구는 구조화된 요청 결과만 조회하므로 사용자의 선호나 참고자료, 과거 대화 기록 등을 확인하기 위해 사용하는 것은 부적절합니다.
     
     ## 예시
     사용자: '제주도와 관련해서 저장한 일정이나 할 일을 찾아줘.' 
@@ -423,6 +427,7 @@ def search_conversation_messages(
     """
     ## 설명
     앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 짧은 핵심 명사나 구를 넣습니다.
+    앱에 저장된 이전 대화 기록을 확인하기 위해 사용할 수 있습니다.
     
     ## 예시
     사용자: '예전 대화에서 철수에 대해 무슨 말을 했지?' 
@@ -537,11 +542,17 @@ def week04_prompt_parts() -> list[str]:
         """
         저장 요청은 다음 순서로 처리하여라. 이 순서는 Week 3의 "새로운 자연어 저장 요청 처리 순서"보다 우선한다.
         1. extract_schedule_request를 호출해 kind와 각 필드를 확인한다.
+           날짜, 시간, 참여자가 빠져 있어 요청이 모호해 보여도 이 호출을 먼저 한다.
+           tool을 하나도 호출하지 않은 채로 사용자에게 되묻지 말아라.
         2. structured_request에서 kind에 필요한 필드가 None인지 확인한다.
            - personal_schedule / group_schedule: date 또는 start_time이 None이면 보완이 필요하다.
            - todo / reminder: date가 None일 때만 보완이 필요하다. start_time이 None인 것은 보완 대상이 아니다.
-        3. 보완이 필요한 필드가 있을 때만 save_structured_request 전에 search_personal_references를 호출한다.
+        3. 보완이 필요한 필드가 있으면 search_personal_references를 호출한다.
+           저장하기 전에도, 사용자에게 빠진 값을 되묻기 전에도 이 검색이 먼저다.
+           검색을 건너뛰고 곧바로 되묻지 말아라.
         4. 보완할 필드가 없으면 검색하지 말고 곧바로 save_structured_request로 저장한다.
+        이 순서는 일정의 제목이나 종류와 무관하게 똑같이 적용한다.
+        아래 Examples에 나온 표현과 다른 요청이어도 2번의 판단 기준만 보고 같은 순서를 따른다.
         """,
 
         """
@@ -553,15 +564,15 @@ def week04_prompt_parts() -> list[str]:
         "검색 tool을 호출할 때는, 어느 저장 출처에 있는지 구분하여 적절한 도구를 사용하여라.",
         "tool의 query에는 사용자 질문을 그대로 넣거나 검색에 필요한 핵심 문구를 넣는다.",
 
-        "사용자가 선호, 규칙, 정책 또는 참고자료를 기억하려면 add_personal_reference를 사용하여라.",
-        "개인 참고자료에 저장된 선호, 규칙, 정책을 확인하려면 search_personal_references를 사용하여라.",
+        # "사용자의 선호, 규칙, 정책 또는 참고자료를 기억하려면 add_personal_reference를 사용하여라.",
+        # "개인 참고자료에 저장된 선호, 규칙, 정책을 확인하려면 search_personal_references를 사용하여라.",
 
-        "앱에 저장된 이전 대화 기록을 확인해 보려면 search_conversation_messages를 사용하여라",
-        "특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라.",
-        "대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
+        # "앱에 저장된 이전 대화 기록을 확인해 보려면 search_conversation_messages를 사용하여라",
+        # "특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라.",
+        # "대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
         
-        "저장된 요청, SQLite row, 구조화 일정/할 일/알림, kind(group_schedule, todo, reminder)를 찾으려면 search_saved_requests를 사용한다.",
-        "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 가장 식별력 높은 한 단어 또는 짧은 연속 구를 전달하여라.",
+        # "저장된 요청, SQLite row, 구조화 일정/할 일/알림, kind(group_schedule, todo, reminder)를 찾으려면 search_saved_requests를 사용한다.",
+        # "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 가장 식별력 높은 한 단어 또는 짧은 연속 구를 전달하여라.",
 
         "질문이 여러 출처에 걸쳐 있으면 필요한 검색 도구를 각각 호출하고 출처를 구분하여 답하여라.",
         "사용자가 저장된 기록 자체를 찾는 질문에서 검색 결과가 없으면 내용을 추측하지 말고 찾은 기록이 없다고 답하여라.",
