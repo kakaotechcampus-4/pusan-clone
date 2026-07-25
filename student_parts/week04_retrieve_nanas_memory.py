@@ -30,6 +30,7 @@ WEEK04_MEMORY_PROMPT = """Week 4에서는 주제 단어가 아니라 사용자�
 개인 성향을 묻는 문장에 일정·시간 같은 구조화 기록의 주제 단어가 포함되어도 search_saved_requests로 대신하지 않는다.
 날짜·시간·제목·kind·ID가 있는 구조화 일정·할 일·알림 기록을 자연어 핵심어로 찾을 때는 search_saved_requests를 사용한다.
 정확한 날짜 범위의 일정 목록이나 수정·삭제 후보가 필요하면 Week 3의 personal_list_saved_schedules를 사용한다.
+키워드와 날짜 범위 조건이 함께 있는 질문에는 personal_list_saved_schedules 하나에 keyword와 date_from/date_to를 함께 전달한다.
 이전 일반 채팅에서 사용자가 실제로 말한 내용을 회상할 때는 search_conversation_messages를 사용한다.
 개인화된 추천이나 판단에 저장된 선호·습관·제약이 영향을 줄 수 있으면 답변이나 추가 질문 전에 관련 개인 참고자료를 먼저 검색한다.
 검색 query를 사용자에게 다시 묻지 말고 질문에서 대상·의도·핵심 조건을 추출해 짧은 검색어로 만든다.

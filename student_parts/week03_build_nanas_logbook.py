@@ -299,6 +299,7 @@ class SavedScheduleListInput(BaseModel):
     kind: RequestKind | None = None
     date_from: str | None = None
     date_to: str | None = None
+    keyword: str | None = None
 
 
 class SavedScheduleUpdateInput(BaseModel):
@@ -447,13 +448,16 @@ def personal_list_saved_schedules(
     kind: RequestKind | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    keyword: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+    """앱 DB에 저장된 일정 목록을 날짜/종류/제목 키워드 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
     # 종류를 생략하면 개인 일정을 기본으로 조회합니다.
     effective_kind = kind or "personal_schedule"
-    schedules = _store().list_schedules(limit=limit, kind=effective_kind, date_from=date_from, date_to=date_to)
-    filters = {"limit": limit, "kind": effective_kind, "date_from": date_from, "date_to": date_to}
+    schedules = _store().list_schedules(
+        limit=limit, kind=effective_kind, date_from=date_from, date_to=date_to, keyword=keyword
+    )
+    filters = {"limit": limit, "kind": effective_kind, "date_from": date_from, "date_to": date_to, "keyword": keyword}
     return json_payload(tool_result("personal_list_saved_schedules", filters=filters, schedules=schedules))
 
 
