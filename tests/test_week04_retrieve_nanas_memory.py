@@ -145,21 +145,29 @@ class SearchSavedRequestRowsTest(unittest.TestCase):
                 "start_time": "10:00",
                 "members": ["철수", "영희"],
                 "reason": "주간 싱크",
+                "original_text": "다음주 화요일 10시에 철수 영희랑 팀 회의",
+                "source_schedule_id": "p_seed",
             }
         )
         return store
 
-    def test_members와_raw_request가_디코딩된다(self):
+    def test_members_디코딩과_extra_잔여키만_노출된다(self):
         store = self._seeded_store()
         rows = search_saved_request_rows(store, query="회의", top_k=3)
         self.assertEqual(len(rows), 1)
         row = rows[0]
         # JSON 문자열 컬럼은 디코딩되고, 원래 *_json 키는 노출되지 않는다.
         self.assertEqual(row["members"], ["철수", "영희"])
-        self.assertIsInstance(row["raw_request"], dict)
-        self.assertEqual(row["raw_request"]["title"], "팀 회의")
         self.assertNotIn("members_json", row)
         self.assertNotIn("raw_json", row)
+        # extra는 컬럼과 겹치는 키(중복)를 담지 않는다.
+        self.assertIsInstance(row["extra"], dict)
+        self.assertNotIn("title", row["extra"])
+        self.assertNotIn("date", row["extra"])
+        self.assertNotIn("members", row["extra"])
+        # extra는 컬럼에 없는 원문 고유 필드만 보존한다.
+        self.assertEqual(row["extra"]["original_text"], "다음주 화요일 10시에 철수 영희랑 팀 회의")
+        self.assertEqual(row["extra"]["source_schedule_id"], "p_seed")
 
     def test_결과가_없으면_빈list다(self):
         store = self._seeded_store()

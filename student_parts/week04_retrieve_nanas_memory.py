@@ -331,10 +331,14 @@ def search_saved_request_rows(
     normalized: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
-        # store는 members/raw payload를 JSON 문자열로 저장한다. 이스케이프된 JSON을
-        # 그대로 노출하지 않고 디코딩해 LLM이 바로 읽을 수 있는 형태로 정규화한다.
+        # members_json은 JSON 문자열이라 list로 디코딩한다.
         item["members"] = _decode_attendees(item.pop("members_json", None))
-        item["raw_request"] = _decode_raw_request(item.pop("raw_json", None))
+        # raw_json 대부분(kind/title/date/times/members/priority/reason)은 이미 컬럼과
+        # 값이 겹친다. 같은 값을 두 벌 실으면 토큰만 늘고 LLM이 근거를 헷갈리므로,
+        # 컬럼으로 노출되지 않은 원문 고유 필드(original_text, source_schedule_id 등)만
+        # extra에 남긴다.
+        raw = _decode_raw_request(item.pop("raw_json", None))
+        item["extra"] = {key: value for key, value in raw.items() if key not in item}
         normalized.append(item)
     return normalized
 
