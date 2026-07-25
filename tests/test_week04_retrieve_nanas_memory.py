@@ -113,6 +113,7 @@ class Week04MemoryTests(unittest.TestCase):
 
         self.assertEqual(store.search_limit, 20)
         self.assertEqual(hits[0]["metadata"]["title"], "회의 선호")
+        self.assertEqual(hits[0]["metadata"]["tags"], ["meeting", "preference"])
         self.assertEqual(hits[0]["distance"], 0.12)
 
     def test_saved_request_search_returns_rows_and_preserves_empty_results(self) -> None:

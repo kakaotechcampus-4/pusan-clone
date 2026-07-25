@@ -267,19 +267,17 @@ def search_personal_reference_hits(
     )
     hits: list[dict[str, Any]] = []
     for row in rows:
-        # 저장소의 title/tags를 tool 계약의 metadata 안으로 모아 LLM이 출처 정보를 함께 읽게 합니다.
-        metadata = row.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {
-                "title": row.get("title", ""),
-                "tags": row.get("tags", ""),
-            }
+        # ChromaDB의 쉼표 구분 tags를 tool 계약의 list로 되돌립니다.
+        tags = [tag.strip() for tag in str(row.get("tags") or "").split(",") if tag.strip()]
         hits.append(
             {
                 "id": row.get("id"),
                 "content": row.get("content", ""),
                 "distance": row.get("distance"),
-                "metadata": metadata,
+                "metadata": {
+                    "title": row.get("title", ""),
+                    "tags": tags,
+                },
             }
         )
     return hits
