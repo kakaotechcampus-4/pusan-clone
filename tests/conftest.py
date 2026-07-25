@@ -7,6 +7,62 @@ import pytest
 import student_parts.week02_structure_natural_language_requests as week02
 
 
+EVAL_MARKER = "eval"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """LLM 동작 평가용 옵션을 등록합니다.
+
+    `pyproject.toml`은 강사 베이스코드라 수정하지 않으므로 `addopts`/`markers` 대신
+    여기에서 옵션과 마커를 정의합니다. `pytest_addoption`은 initial conftest에서만
+    동작하는데, `testpaths = ["tests"]` 덕분에 이 파일이 그 조건을 만족합니다.
+    """
+
+    group = parser.getgroup("eval", "LLM 동작 정량 평가")
+    group.addoption(
+        "--eval",
+        action="store_true",
+        default=False,
+        help="실제 LLM/embedding API를 호출하는 평가만 실행합니다 (기본값은 제외).",
+    )
+    group.addoption(
+        "--eval-repeats",
+        type=int,
+        default=5,
+        help="케이스당 반복 실행 횟수입니다 (기본 5).",
+    )
+    group.addoption(
+        "--eval-workers",
+        type=int,
+        default=4,
+        help="반복 실행을 병렬로 돌릴 worker 수입니다 (기본 4).",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """`eval` 마커를 등록합니다."""
+
+    config.addinivalue_line(
+        "markers",
+        "eval: 실제 LLM API를 호출하는 동작 평가 (기본 실행에서 제외, --eval로 실행)",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """`--eval` 여부에 따라 평가 테스트와 일반 테스트 중 한쪽만 남깁니다."""
+
+    run_eval = bool(config.getoption("--eval"))
+    selected: list[pytest.Item] = []
+    deselected: list[pytest.Item] = []
+    for item in items:
+        is_eval = item.get_closest_marker(EVAL_MARKER) is not None
+        (selected if is_eval == run_eval else deselected).append(item)
+
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
+
+
 @pytest.fixture(autouse=True)
 def reset_week02_agent():
     """각 테스트 전후로 memoization된 전역 agent를 초기화한다.
