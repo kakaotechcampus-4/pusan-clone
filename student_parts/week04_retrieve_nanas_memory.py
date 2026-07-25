@@ -317,7 +317,9 @@ def search_conversation_messages_dict(
 
     # DONE: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
     sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
-    exclude_conversation_id = current_session_scope()
+    exclude_conversation_id = None # 멘토님 가이드 코드로 변경
+    if not conversation_id and current_session_scope() != DEFAULT_SESSION_SCOPE:
+        exclude_conversation_id = current_session_scope()
     
     hits = conversation_rag_store.search(
         query=query,
