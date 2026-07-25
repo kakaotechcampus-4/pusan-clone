@@ -243,17 +243,26 @@ def add_personal_reference_dict(
     }
 
 
+# 실측상 관련 hit는 distance 0.54~1.32, 무관 hit는 1.29~1.86에 분포해 경계가 일부 겹친다.
+# 실제 메모를 숨기는 쪽(false negative)이 더 나쁘므로 회수를 우선하는 보수적 상한을 두고,
+# 상한 아래로 남는 회색지대 hit는 프롬프트에서 모델이 내용으로 걸러내게 한다.
+REFERENCE_MAX_DISTANCE = 1.35
+
+
 def search_personal_reference_hits(
     reference_store: PersonalReferenceStore,
     *,
     query: str,
     top_k: int = 2,
 ) -> list[dict[str, Any]]:
-    """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
+    """ChromaDB 검색 결과를 distance 상한으로 거른 뒤 hit 구조로 정리합니다."""
 
     hits = reference_store.search_personal_references(query=query, limit=top_k)
     results = []
     for hit in hits:
+        distance = hit["distance"]
+        if distance is not None and distance > REFERENCE_MAX_DISTANCE:
+            continue
         result = {
             "id": hit["id"],
             "content": hit["content"],
@@ -423,7 +432,8 @@ def week04_prompt_parts() -> list[str]:
         "add_personal_reference에 title/content/tags를 정리해 저장한다. "
         "이것은 일정/할 일/알림 저장 경로(extract_schedule_request -> save_structured_request)와 다른 경로이며 혼동하지 않는다.",
         "'내가 적어 둔 메모/참고자료'에 대한 질문은 search_personal_references를 호출해 hits의 content만 근거로 답한다. "
-        "hits가 비어 있으면 지어내지 말고 관련 참고자료가 없다고 답한다.",
+        "관련도가 낮은 결과는 distance 상한으로 미리 걸러지므로 hits가 비어 있으면 지어내지 말고 관련 참고자료가 없다고 답한다. "
+        "hits에 남은 결과라도 내용이 질문과 무관하면 근거로 쓰지 않고 관련 참고자료가 없다고 답한다.",
         "저장된 일정/할 일/알림 기록을 주제어로 찾는 질문(예: '회의 관련해서 뭐 저장했었지?')은 "
         "search_saved_requests를 호출해 rows를 근거로 답한다. 이 결과는 관련도 순이 아니라 최근 저장 순이다. "
         "날짜/기간 조건 조회나 전체 목록은 기존 personal_list_saved_schedules와 list_saved_requests를 그대로 사용한다.",
