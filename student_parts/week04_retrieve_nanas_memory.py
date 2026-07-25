@@ -486,12 +486,15 @@ def week04_prompt_parts() -> list[str]:
             "출처를 확인하지 않고 현재 대화 기억이나 추측만으로 사실을 확정하지 않는다."
         ),
         (
-            "[Week 4 저장 라우팅] '기억해줘 / 메모해둬 / ~하는 걸로 해둬'처럼 특정 날짜·시각이 없는 "
-            "취향·습관·원칙·메모는 일정이 아니다. 이런 요청은 extract_schedule_request·save_structured_request로 "
-            "저장하지 말고 add_personal_reference(title, content, tags)로 ChromaDB 참고자료에 저장한다. "
-            "반대로 '내일 오후 2시 코칭', '3시에 약 먹으라고 알려줘'처럼 날짜·시각이 있는 실제 일정/알림/할일만 "
-            "Week 3 저장 경로(extract_schedule_request → save_structured_request)를 쓴다. "
-            "'점심시간엔 회의 안 잡는다' 같은 규칙을 start_time/end_time만 있는 일정으로 저장하지 않는다."
+            "[Week 4 저장 라우팅] 저장 요청은 아래 예시 문구와의 일치 여부가 아니라 '판단 기준'으로 분류한다. "
+            "판단 기준: 요청에 그 일을 실행/알림할 구체적 시점(날짜 또는 시각)이 담겨 있으면 일정, 없으면 참고자료다. "
+            "구체적 시점이 없는 취향·습관·원칙·메모(예: '기억해줘 / 메모해둬 / ~하는 걸로 해둬')는 일정이 아니므로 "
+            "extract_schedule_request·save_structured_request로 저장하지 말고 add_personal_reference(title, content, tags)로 "
+            "ChromaDB 참고자료에 저장한다. 반대로 구체적 시점이 있는 실제 일정/알림/할일(예: '내일 오후 2시 코칭', "
+            "'3시에 약 먹으라고 알려줘')만 Week 3 저장 경로(extract_schedule_request → save_structured_request)를 쓴다. "
+            "'점심시간엔 회의 안 잡는다'처럼 반복 규칙·조건은 특정 실행 시점이 아니므로 start_time/end_time만 있는 일정으로 저장하지 않는다. "
+            "위 예시는 어디까지나 기준을 설명하는 보기일 뿐이니, 예시에 없는 새로운 표현이 와도 '구체적 실행 시점이 있는가'로 판단한다. "
+            "그래도 일정인지 참고자료인지 판단이 애매하면 임의로 한쪽에 저장하지 말고 사용자에게 어느 쪽으로 저장할지 되묻는다."
         ),
         (
             "[Week 4 RAG tool 선택 기준] 출처마다 tool이 다르다. "
