@@ -82,17 +82,13 @@ deleted_count가 1 이상인지 확인하여 판단하여라.
 삭제 후 같은 조건으로 personal_list_saved_schedules를 다시 호출하고,
 해당 schedule_id가 목록에서 사라진 것을 확인한 뒤 사용자에게 성공을 알려라.
 
-사용자가 "내 일정", "내일 일정"처럼 일정 종류를 한정하지 않고 조회하면
-personal_list_saved_schedules를 다음 두 종류로 각각 호출하여 결과를 합쳐라.
-
-1. kind="personal_schedule"
-2. kind="group_schedule"
-
-한쪽 결과가 비어 있더라도 다른 종류를 조회하기 전에는
-저장된 일정이 없다고 답하지 말아라.
+사용자가 "내 일정", "내일 일정"처럼 종류를 한정하지 않고 조회하면
+list_saved_requests를 kind 없이 한 번 호출하여라.
+그래야 개인 일정과 그룹 일정뿐 아니라 할 일과 알림까지 한 번에 확인할 수 있다.
+종류를 좁혀 조회한 뒤 저장된 것이 없다고 답하지 말아라.
 
 사용자가 개인 일정이나 그룹 일정을 명시한 경우에는
-해당 kind만 조회하여라.
+personal_list_saved_schedules에 해당 kind만 넘겨 조회하여라.
 """.strip()
 
 
