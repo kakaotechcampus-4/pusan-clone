@@ -245,6 +245,9 @@ def search_personal_reference_hits(
 ) -> list[dict[str, Any]]:
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
+    if not str(query or "").strip():
+        return []
+    
     # DONE: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
     search_results = reference_store.search_personal_references(query, limit=top_k)
     hits: list[dict[str, Any]] = []
