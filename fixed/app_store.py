@@ -483,6 +483,7 @@ class AppSQLiteStore(SQLiteFileStore):
         kind: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        keyword: str | None = None,
     ) -> list[dict[str, Any]]:
         """저장된 일정 후보를 날짜/시간순으로 반환합니다."""
 
@@ -497,6 +498,9 @@ class AppSQLiteStore(SQLiteFileStore):
         if date_to:
             where.append("date <= ?")
             params.append(date_to)
+        if keyword:
+            where.append("title LIKE ?")
+            params.append(f"%{keyword}%")
 
         query = f"""
                 SELECT {SCHEDULE_COLUMNS_WITH_KIND}

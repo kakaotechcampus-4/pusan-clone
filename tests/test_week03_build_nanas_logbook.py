@@ -11,6 +11,7 @@ from student_parts import week03_build_nanas_logbook as week03
 class _RecordingStore:
     def __init__(self) -> None:
         self.saved_payloads: list[dict[str, object]] = []
+        self.list_schedules_calls: list[dict[str, object]] = []
 
     def save_structured_request(self, payload: dict[str, object]) -> dict[str, object]:
         self.saved_payloads.append(payload)
@@ -21,6 +22,10 @@ class _RecordingStore:
             "saved_rows": [],
             "shared_sync": None,
         }
+
+    def list_schedules(self, **kwargs: object) -> list[dict[str, object]]:
+        self.list_schedules_calls.append(kwargs)
+        return []
 
 
 class Week03ReviewFeedbackTests(unittest.TestCase):
@@ -109,6 +114,28 @@ class Week03ReviewFeedbackTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(store.saved_payloads[0]["original_text"], original_text)
+
+    def test_forwards_keyword_to_store_list_schedules(self) -> None:
+        store = _RecordingStore()
+
+        with patch.object(week03, "_store", return_value=store):
+            week03.personal_list_saved_schedules.invoke(
+                {"date_from": "2026-07-20", "date_to": "2026-07-26", "keyword": "회의"}
+            )
+
+        self.assertEqual(len(store.list_schedules_calls), 1)
+        call = store.list_schedules_calls[0]
+        self.assertEqual(call["keyword"], "회의")
+        self.assertEqual(call["date_from"], "2026-07-20")
+        self.assertEqual(call["date_to"], "2026-07-26")
+
+    def test_excludes_week01_in_memory_list_and_delete_tools(self) -> None:
+        tool_names = {week03._tool_name(item) for item in week03.week03_tools()}
+
+        self.assertNotIn("personal_list_schedules", tool_names)
+        self.assertNotIn("personal_delete_schedule", tool_names)
+        self.assertIn("personal_list_saved_schedules", tool_names)
+        self.assertIn("personal_delete_saved_schedules", tool_names)
 
 
 if __name__ == "__main__":
