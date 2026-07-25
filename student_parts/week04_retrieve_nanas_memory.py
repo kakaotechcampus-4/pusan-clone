@@ -277,7 +277,7 @@ def search_saved_request_rows(
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    top_k = safe_limit(top_k, default=3, maximum=20)
+    top_k = safe_limit(top_k, default=3, maximum=50)
     return sqlite_store.search_saved_requests(
         query=query, 
         limit=top_k
