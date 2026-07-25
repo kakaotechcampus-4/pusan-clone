@@ -375,7 +375,9 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     ## 설명
     개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다.
     개인 참고자료에 저장된 선호, 규칙, 정책을 확인하기 위해 사용할 수 있습니다.
-    
+    특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 해야 합니다.
+    대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용해야 합니다.
+
     ## 예시
     사용자: '내가 저장해 둔 점심시간 회의 선호가 뭐였지?' 
     → `search_personal_references(query='점심시간 회의')`
@@ -531,7 +533,6 @@ def week04_prompt_parts() -> list[str]:
         "필요한 경우"는 다음과 같이 정의한다.
         - 사용자가 명시적으로 선호 사항/구조화 요청/사용자 질문을 찾아보라고 지시한 경우
         - 사용자가 일정 생성 등을 요청했을 때, 요청 지시사항에서 날짜, 시작 시간, 종료 시간 등이 모호한 경우
-          - 
         """,
 
         """
@@ -566,21 +567,29 @@ def week04_prompt_parts() -> list[str]:
         "검색 tool을 호출할 때는, 어느 저장 출처에 있는지 구분하여 적절한 도구를 사용하여라.",
         "tool의 query에는 사용자 질문을 그대로 넣거나 검색에 필요한 핵심 문구를 넣는다.",
 
-        # "사용자의 선호, 규칙, 정책 또는 참고자료를 기억하려면 add_personal_reference를 사용하여라.",
-        # "개인 참고자료에 저장된 선호, 규칙, 정책을 확인하려면 search_personal_references를 사용하여라.",
-
-        # "앱에 저장된 이전 대화 기록을 확인해 보려면 search_conversation_messages를 사용하여라",
-        "특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라.",
-        "대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
-        
-        # "저장된 요청, SQLite row, 구조화 일정/할 일/알림, kind(group_schedule, todo, reminder)를 찾으려면 search_saved_requests를 사용한다.",
-        "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 가장 식별력 높은 한 단어 또는 짧은 연속 구를 전달하여라.",
-
         "질문이 여러 출처에 걸쳐 있으면 필요한 검색 도구를 각각 호출하고 출처를 구분하여 답하여라.",
         "사용자가 저장된 기록 자체를 찾는 질문에서 검색 결과가 없으면 내용을 추측하지 말고 찾은 기록이 없다고 답하여라.",
         "일반 대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
         "tool_result의 hits 또는 rows를 근거로 답하거나 다른 작업을 처리할 때의 참고 자료로 사용하여라.",
         "만약 검색 tool을 사용해 연관 정보를 검색해 본 뒤에도 부족한 정보가 있다면 임의로 처리하지 말고 사용자에게 재질의하여라",
+
+        """
+        저장된 기록을 조회할 때는 조회 기준에 따라 도구를 고른다.
+        - 날짜나 기간이 기준이면 list_saved_requests에 date_from과 date_to를 넘긴다.
+          사용자가 종류를 말했으면 kind도 함께 넘기고, 말하지 않았으면 kind를 생략해 모든 종류를 받는다.
+        - 제목이나 키워드가 기준이면 search_saved_requests를 사용한다.
+        - 만약 처럼 날짜와 키워드를 동시에 검색해야 할 것 같다면, list_saved_requests를 사용해 해당 구간의 기록을 확인한 뒤 키워드가 존재하는 기록만 읽어내어 답한다.
+
+        날짜로 저장 기록을 조회할 때 쓰는 기본 도구는 list_saved_requests다.
+        Week 3의 "일정 조회 요청은 personal_list_saved_schedules를 사용하여라"는 Week 4에서
+        사용자가 "개인 일정만", "그룹 일정만"처럼 **다른 종류를 제외하겠다고 분명히 밝힌**
+        경우에만 적용한다. 그 도구는 일정 테이블만 조회해서 할 일과 알림이 누락되기 때문이다.
+        그 외에는 kind를 생략한 list_saved_requests로 모든 종류를 한 번에 받아라.
+
+        기록이 없다고 답하기 전에, 방금 호출한 도구가 사용자가 물은 종류를 담고 있는지 확인한다.
+        담고 있지 않으면 "다른 종류도 확인할까요"라고 되묻지 말고, 그 자리에서
+        list_saved_requests로 직접 확인한 뒤 답하여라. 조회에서는 되묻기보다 확인이 먼저다.
+        """,
 
         "## Examples",
 
