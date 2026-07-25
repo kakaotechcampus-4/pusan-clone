@@ -277,7 +277,12 @@ def search_saved_request_rows(
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    top_k = safe_limit(top_k, default=3, maximum=50)
+    #
+    # 상한이 51인 이유: 호출자(search_saved_requests)가 "잘렸는지" 알아내려고 top_k보다 한 건
+    # 더 받아 봅니다. 여기서 50으로 잘라 버리면 top_k=50일 때 프로브가 무력화되어, 매치가
+    # 가장 많은 상황에서 하필 잘림을 감지하지 못합니다. 스키마 상한(le=50)과 실제 반환 행 수는
+    # 그대로 50이고, 51은 내부 프로브 여유입니다.
+    top_k = safe_limit(top_k, default=3, maximum=51)
     return sqlite_store.search_saved_requests(
         query=query, 
         limit=top_k
@@ -410,15 +415,24 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     """
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
-    rows = search_saved_request_rows(
-        sqlite_store=SQLITE_STORE, 
-        query=query, 
-        top_k=top_k
+    #
+    # top_k보다 한 건 더 받아서 "잘렸는지"를 알아냅니다. LIKE 검색이라 "정리", "회의"처럼 흔한
+    # 단어는 저장량에 비례해 매치가 늘고, created_at DESC로 잘리면 오래된 기록이 사라집니다.
+    # 잘린 걸 알리지 않으면 모델이 "그 날짜엔 없다"고 확신에 차서 잘못 답합니다. truncated를
+    # 함께 주면 top_k를 올려 다시 부르거나 범위를 좁혀 달라고 할 수 있습니다.
+    # (top_k=50에서는 상한 때문에 한 건 더 받을 수 없어 잘림을 감지하지 못합니다.)
+    limit = safe_limit(top_k, default=3, maximum=50)
+    probed = search_saved_request_rows(
+        sqlite_store=SQLITE_STORE,
+        query=query,
+        top_k=limit + 1,
     )
+    rows = probed[:limit]
 
     return json_payload(tool_result(
         tool_name=_tool_name(search_saved_requests),
-        rows=rows
+        rows=rows,
+        truncated=len(probed) > limit
     ))
 
 
@@ -578,13 +592,20 @@ def week04_prompt_parts() -> list[str]:
         - 날짜나 기간이 기준이면 list_saved_requests에 date_from과 date_to를 넘긴다.
           사용자가 종류를 말했으면 kind도 함께 넘기고, 말하지 않았으면 kind를 생략해 모든 종류를 받는다.
         - 제목이나 키워드가 기준이면 search_saved_requests를 사용한다.
-        - 만약 처럼 날짜와 키워드를 동시에 검색해야 할 것 같다면, list_saved_requests를 사용해 해당 구간의 기록을 확인한 뒤 키워드가 존재하는 기록만 읽어내어 답한다.
 
         날짜로 저장 기록을 조회할 때 쓰는 기본 도구는 list_saved_requests다.
         Week 3의 "일정 조회 요청은 personal_list_saved_schedules를 사용하여라"는 Week 4에서
         사용자가 "개인 일정만", "그룹 일정만"처럼 **다른 종류를 제외하겠다고 분명히 밝힌**
         경우에만 적용한다. 그 도구는 일정 테이블만 조회해서 할 일과 알림이 누락되기 때문이다.
-        그 외에는 kind를 생략한 list_saved_requests로 모든 종류를 한 번에 받아라.
+
+        날짜와 키워드가 함께 주어진 조회라면 list_saved_requests와 search_saved_requests를
+        둘 다 호출하고 두 결과를 합쳐서 판단한다. 어느 쪽을 고를지 고민하지 말고 둘 다 부른다.
+        각 도구는 반환 건수 상한이 있어서 한쪽만 부르면 조건에 맞는 기록이 상한 밖으로 밀려
+        누락될 수 있고, 그러면 실제로 있는 기록을 없다고 답하게 된다.
+        이때 넘기는 인자가 서로 다르다. list_saved_requests는 kind/date_from/date_to만 받고
+        키워드 인자가 없으므로 날짜만 넘긴다. 키워드는 search_saved_requests의 query로만 넘긴다.
+        list_saved_requests에 키워드를 넘기면 그 값은 버려지고 날짜 조건만 걸린 목록이 오므로,
+        그 결과를 키워드로 걸러진 것처럼 취급하지 말아라.
 
         기록이 없다고 답하기 전에, 방금 호출한 도구가 사용자가 물은 종류를 담고 있는지 확인한다.
         담고 있지 않으면 "다른 종류도 확인할까요"라고 되묻지 말고, 그 자리에서
