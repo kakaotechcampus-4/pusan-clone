@@ -340,7 +340,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     result = add_personal_reference_dict(
         REFERENCE_STORE, title=title, content=content, tags=list(tags or [])
     )
-    return json_payload({"ok": True, **result})
+    return json_payload({"ok": True, "tool_name": "add_personal_reference", **result})
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
@@ -350,7 +350,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     hits = search_personal_reference_hits(
         REFERENCE_STORE, query=query, top_k=safe_limit(top_k, default=2, maximum=20)
     )
-    return json_payload({"hits": hits})
+    return json_payload({"ok": True, "tool_name": "search_personal_references", "hits": hits})
 
 
 @tool(args_schema=SearchSavedRequestsInput)
@@ -360,7 +360,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     rows = search_saved_request_rows(
         SQLITE_STORE, query=query, top_k=safe_limit(top_k, default=3, maximum=50)
     )
-    return json_payload({"rows": rows})
+    return json_payload({"ok": True, "tool_name": "search_saved_requests", "rows": rows})
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -378,7 +378,7 @@ def search_conversation_messages(
         top_k=safe_limit(top_k, default=5, maximum=50),
         conversation_id=conversation_id,
     )
-    return json_payload(payload)
+    return json_payload({"ok": True, "tool_name": "search_conversation_messages", **payload})
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -442,6 +442,8 @@ def search_nana_memory(
 
     return json_payload(
         {
+            "ok": True,
+            "tool_name": "search_nana_memory",
             "reference_backend": REFERENCE_STORE.backend_info(),
             "hits": reference_hits,
             "schedule_chunks": schedule_chunks,
