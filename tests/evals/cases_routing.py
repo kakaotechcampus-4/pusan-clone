@@ -103,10 +103,21 @@ ROUTING_CASES = [
     {
         "id": "routing.conversation_lookup",
         "group": "출처 라우팅",
+        # saved_request_lookup과 같은 이유로 `not_called`를 걸지 않습니다. 모델은
+        # search_conversation_messages를 **항상** 부르고, 거기에 search_saved_requests를
+        # 덧붙이는 실행이 섞여 60~90% 사이에서 흔들렸습니다.
+        #
+        # 그 덧붙임을 결함으로 보기 어렵습니다. 시드에서 "철수"는 대화에만 있지만 참고자료
+        # 8건과 저장 기록 15건 중 어디에도 없다는 사실을 **모델은 미리 알 수 없습니다.**
+        # 철수가 참석자로 들어간 일정이 있는지 확인하는 것은 합리적인 행동입니다.
+        # 게다가 prompt가 "글자 검색이 비면 다른 출처도 확인하라"고 명시적으로 시키고 있어서
+        # 이 단정과 정면으로 모순됩니다.
+        #
+        # 한 출처로 끝내지 못하는 과호출이 문제라면 토큰·지연 비용을 재는 별도 케이스로
+        # 만들어야 합니다. 출처 라우팅 케이스가 곁다리로 재면 인과를 잃습니다.
         "user": "예전 대화에서 철수에 대해 무슨 말을 했지?",
         "expect": {
             "called": ["search_conversation_messages"],
-            "not_called": ["search_personal_references", "search_saved_requests"],
         },
     },
     {
