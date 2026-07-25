@@ -95,6 +95,22 @@ class TestCalledPredicates:
     def test_not_called_passes_on_empty_trace(self):
         assert predicates.check_case({"not_called": ["personal_create_schedule"]}, [], "") == []
 
+    def test_max_calls_passes_at_limit(self):
+        events = [tool_call("search_saved_requests", query="제주도")]
+
+        assert predicates.check_case({"max_calls": {"search_saved_requests": 1}}, events, "") == []
+
+    def test_max_calls_reports_excess_calls(self):
+        events = [
+            tool_call("search_saved_requests", query="섬 여행"),
+            tool_call("search_saved_requests", query="여행"),
+        ]
+
+        reasons = predicates.check_case({"max_calls": {"search_saved_requests": 1}}, events, "")
+
+        assert len(reasons) == 1
+        assert "2회 호출" in reasons[0]
+
 
 class TestOrderPredicate:
     def test_correct_order_passes(self):
@@ -191,6 +207,22 @@ class TestAnswerPredicate:
 
         assert predicates.check_case(expect, [], "등산 모임은 8월 3일입니다.") != []
 
+    def test_all_required_patterns_must_match(self):
+        expect = {"answer_matches_all": ["현재 검색어", r"(제목|날짜)", "알려"]}
+
+        assert predicates.check_case(
+            expect,
+            [],
+            "현재 검색어로는 확인하기 어려워요. 저장 당시 제목이나 날짜를 알려주세요.",
+        ) == []
+        assert predicates.check_case(expect, [], "현재 검색어로는 확인하기 어려워요.") != []
+
+    def test_forbidden_answer_pattern_fails(self):
+        expect = {"answer_not_matches_any": ["제주도", "일본"]}
+
+        assert predicates.check_case(expect, [], "저장 당시 제목이나 날짜를 알려주세요.") == []
+        assert predicates.check_case(expect, [], "제주도 여행 일정이 있습니다.") != []
+
 
 class TestNoRecordPatterns:
     """`NO_RECORD_PATTERNS`가 실제 관측된 답변을 옳게 판정하는지 고정합니다.
@@ -249,7 +281,17 @@ class TestRoutingCaseDataset:
     def test_expect_keys_are_known(self):
         """오타 난 기대값 키가 조용히 무시되는 것을 막습니다."""
 
-        known = {"called", "called_any", "not_called", "order", "args", "answer_matches_any"}
+        known = {
+            "called",
+            "called_any",
+            "not_called",
+            "max_calls",
+            "order",
+            "args",
+            "answer_matches_any",
+            "answer_matches_all",
+            "answer_not_matches_any",
+        }
         for case in cases_routing.ROUTING_CASES:
             unknown = set(case["expect"]) - known
             assert not unknown, f"{case['id']}에 알 수 없는 기대값 키: {unknown}"

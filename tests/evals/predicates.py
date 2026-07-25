@@ -13,9 +13,12 @@ from __future__ import annotations
         "called":     ["search_personal_references"],       # 전부 호출됐어야 한다
         "called_any": ["search_saved_requests", "list_saved_requests"],  # 하나 이상
         "not_called": ["personal_create_schedule"],         # 하나도 호출되면 안 된다
+        "max_calls":  {"search_saved_requests": 1},          # 호출 횟수 상한
         "order":      ["extract_schedule_request", "save_structured_request"],
         "args": {"search_saved_requests": {"query": {"max_words": 3}}},
         "answer_matches_any": [r"없", r"찾지 못"],
+        "answer_matches_all": [r"현재 검색어", r"(제목|날짜)"],
+        "answer_not_matches_any": [r"제주도"],
     }
 
 `args`에 쓸 수 있는 검사는 `is_null`, `equals`, `max_words`, `contains_any`입니다.
@@ -105,6 +108,11 @@ def check_case(
         if tool_name in called_set:
             reasons.append(f"{tool_name}이 호출되면 안 되는데 호출됐다 (호출됨: {called})")
 
+    for tool_name, maximum in expect.get("max_calls", {}).items():
+        count = called.count(tool_name)
+        if count > int(maximum):
+            reasons.append(f"{tool_name}은 최대 {maximum}회 호출돼야 하는데 {count}회 호출됐다")
+
     reasons.extend(_check_order(expect.get("order", []), called))
 
     for tool_name, argument_checks in expect.get("args", {}).items():
@@ -118,6 +126,16 @@ def check_case(
     patterns = expect.get("answer_matches_any")
     if patterns and not any(re.search(pattern, answer) for pattern in patterns):
         reasons.append(f"답변이 {list(patterns)} 중 아무 패턴과도 맞지 않는다: {answer[:120]!r}")
+
+    required_patterns = expect.get("answer_matches_all", [])
+    missing_patterns = [pattern for pattern in required_patterns if not re.search(pattern, answer)]
+    if missing_patterns:
+        reasons.append(f"답변이 필수 패턴 {missing_patterns}과 맞지 않는다: {answer[:120]!r}")
+
+    forbidden_patterns = expect.get("answer_not_matches_any", [])
+    matched_patterns = [pattern for pattern in forbidden_patterns if re.search(pattern, answer)]
+    if matched_patterns:
+        reasons.append(f"답변이 금지 패턴 {matched_patterns}과 맞는다: {answer[:120]!r}")
 
     return reasons
 
