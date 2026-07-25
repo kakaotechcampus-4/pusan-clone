@@ -311,7 +311,7 @@ def search_conversation_messages_dict(
     sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
     active_conversation_id = current_session_scope()
     exclude_conversation_id = None
-    # 특정 대화를 지정하지 않은 과거 검색에서는 방금 진행 중인 대화가 자기 근거로 재검색되지 않게 합니다.
+    # 기본 scope는 직접 tool 호출을 나타내는 sentinel이므로, 실제 대화 ID가 있을 때만 현재 대화를 제외합니다.
     if conversation_id is None and active_conversation_id != DEFAULT_SESSION_SCOPE:
         exclude_conversation_id = active_conversation_id
     hits = conversation_rag_store.search(
@@ -491,6 +491,7 @@ def search_nana_memory(
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
 
+    # 통합 호환 tool은 출처별 검색과 역할이 겹쳐 routing 근거를 흐리므로 Agent에 노출하지 않습니다.
     return [
         *week03_tools(),
         add_personal_reference,
