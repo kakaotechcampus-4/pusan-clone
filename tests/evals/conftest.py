@@ -29,6 +29,7 @@ import pytest
 import fixed.config as config_module
 from fixed.langchain_trace import extract_agent_events, extract_final_text
 from fixed.session_scope import conversation_session_scope
+from tests.evals.cases_routing import ROUTING_CASES
 
 
 WEEK03_MODULE = "student_parts.week03_build_nanas_logbook"
@@ -88,6 +89,38 @@ SEED_SAVED_REQUESTS = [
     {"kind": "todo", "title": "제주도 여행 준비물 구매", "date": "2026-08-01"},
     {"kind": "todo", "title": "숙제하기", "date": "2026-07-26"},
     {"kind": "reminder", "title": "약 먹기", "date": "2026-07-26", "start_time": "21:00"},
+    # 아래 셋은 날짜 조회 케이스 전용입니다. **9월로 몰아 둔 이유**: 저장 케이스들은
+    # "내일", "다음 주 금요일" 같은 상대 날짜를 쓰고 그 해석을 LLM이 하므로 7월 말~8월 초에
+    # 예측할 수 없는 날짜로 기록이 생깁니다. 처음에는 8/5, 8/7을 "조용한 날짜"로 골랐는데
+    # "다음 주 금요일 ... 치과 진료"가 2026-08-07로 저장돼 조회 케이스를 오염시켰습니다
+    # (조회 답변에 그 일정이 나와서, 모델이 todo를 더 볼 이유가 없어졌습니다).
+    # 상대 날짜가 닿을 수 없는 구간이어야 케이스가 서로 독립적입니다.
+    {"kind": "todo", "title": "겨울옷 정리", "date": "2026-09-10"},
+    {"kind": "reminder", "title": "건강검진 예약 확인", "date": "2026-09-12", "start_time": "10:00"},
+    {"kind": "todo", "title": "도서관 책 반납", "date": "2026-09-14"},
+    # 아래 둘은 날짜 조회 프롬프트 규칙을 **다 고친 뒤에** 추가한, 한 번도 튜닝 지표로 쓰지 않은
+    # 표면형 전용 시드입니다 (cases_routing.py의 lookup.unseen_* 케이스).
+    # lookup.date_and_keyword_schedule_question 전용 시드입니다.
+    {"kind": "personal_schedule", "title": "분기 전략 회의", "date": "2026-09-16", "start_time": "14:00"},
+    {"kind": "todo", "title": "김장 준비", "date": "2026-09-18"},
+    {"kind": "reminder", "title": "차량 정기점검", "date": "2026-09-20", "start_time": "14:00"},
+    # --- 날짜+키워드 동시 조회 실험용 (10월) ---
+    #
+    # `list_saved_requests`는 `created_at DESC LIMIT 20`이고 tool이 limit을 노출하지 않습니다.
+    # 그래서 **가장 먼저 시딩한** 이 레코드는 10월에 20건 이상이 쌓이면 상위 20 창 밖으로
+    # 밀려납니다(시딩 순서 = created_at 순서). 즉 "구간 전체를 받아 훑는" 방식으로는 못 찾고,
+    # 키워드로 바로 찾는 방식으로는 찾을 수 있는 레코드입니다.
+    {"kind": "todo", "title": "핼러윈 의상 준비", "date": "2026-10-05"},
+    # 반대 상황용입니다. 아래 filler들과 "정리"라는 흔한 단어를 공유하므로
+    # `search_saved_requests(query="정리")`는 top_k(기본 3)에 걸려 최신 몇 건만 돌려줍니다.
+    # 이 레코드는 그 창에 못 들어가고, 날짜(하루)로 좁히면 바로 찾힙니다.
+    {"kind": "todo", "title": "회의실 정리", "date": "2026-10-15"},
+    # 10월 볼륨을 20건 위로 올리는 filler입니다. 위 두 레코드보다 나중에 시딩돼야
+    # (created_at이 더 최신이어야) 창을 차지합니다.
+    *[
+        {"kind": "todo", "title": f"사무실 정리 {number}", "date": f"2026-10-{number:02d}"}
+        for number in range(1, 24)
+    ],
 ]
 
 # 과거 대화 검색(`search_conversation_messages`) 대상입니다. user 발화에 근거가 있어야
@@ -233,55 +266,92 @@ def eval_repeats(request: pytest.FixtureRequest) -> int:
 
 
 @pytest.fixture(scope="session")
-def run_routing_case(request: pytest.FixtureRequest, eval_env: EvalEnvironment, eval_repeats: int) -> Any:
-    """케이스를 여러 번 실행해 통과 횟수를 집계하는 러너를 돌려줍니다."""
+def case_results(
+    request: pytest.FixtureRequest,
+    eval_env: EvalEnvironment,
+    eval_repeats: int,
+) -> dict[str, dict[str, Any]]:
+    """수집된 모든 케이스의 반복 실행을 **하나의 pool**에서 돌려 결과를 미리 만듭니다.
+
+    케이스마다 따로 pool을 만들면 동시 실행 수가 `--eval-repeats`(기본 5)에 묶여서, 케이스가
+    몇 개든 전체 실행 시간이 선형으로 늘어납니다. 실측으로 프록시는 동시 15개를 무리 없이
+    처리했고(5런 12.7초 vs 15런 14.1초 — 3배 작업량에 같은 시간), 병목은 동시 실행 **개수**
+    뿐이었습니다. 그래서 `케이스 × 반복` 전체를 한 번에 넣습니다.
+
+    `-k`로 일부만 골라도 그만큼만 실행됩니다 — 실제로 수집된 test item에서 케이스 id를
+    읽어 오기 때문입니다.
+    """
 
     workers = max(1, int(request.config.getoption("eval_workers")))
+    cases = _selected_cases(request.session)
 
-    def _run(case: dict[str, Any]) -> dict[str, Any]:
-        # week01 도구는 모듈 전역 리스트에 일정을 쌓으므로 케이스 사이에 비웁니다.
-        import student_parts.week01_wake_up_nana as week01
+    # week01 도구는 모듈 전역 리스트에 일정을 쌓습니다. 전역 병렬 실행에서는 케이스 사이에
+    # 비울 수 없으므로(어느 케이스가 언제 도는지 정해지지 않음) 배치 시작 전에 한 번 비웁니다.
+    # 이 리스트를 단정하는 케이스는 없습니다.
+    import student_parts.week01_wake_up_nana as week01
 
-        week01.PERSONAL_SCHEDULES.clear()
+    week01.PERSONAL_SCHEDULES.clear()
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            failures = list(
-                pool.map(
-                    lambda index: _run_once(eval_env, case, index),
-                    range(eval_repeats),
-                )
-            )
+    tasks = [(case, index) for case in cases for index in range(eval_repeats)]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        outcomes = list(pool.map(lambda task: (task[0]["id"], _run_once(eval_env, *task)), tasks))
 
-        return _tally(case["id"], repeats=eval_repeats, failures=failures)
+    failures_by_case: dict[str, list[list[str]]] = {case["id"]: [] for case in cases}
+    for case_id, failures in outcomes:
+        failures_by_case[case_id].append(failures)
 
-    return _run
+    return {
+        case_id: _tally(case_id, repeats=eval_repeats, failures=failures)
+        for case_id, failures in failures_by_case.items()
+    }
 
 
-def _tally(case_id: str, *, repeats: int, failures: list[list[str]]) -> dict[str, Any]:
+def _selected_cases(session: pytest.Session) -> list[dict[str, Any]]:
+    """이번 실행에서 수집된 케이스만 골라냅니다 (`-k` 필터를 그대로 존중합니다)."""
+
+    selected_ids = {
+        item.callspec.params["case"]["id"]
+        for item in session.items
+        if getattr(item, "callspec", None) and "case" in item.callspec.params
+    }
+    return [case for case in ROUTING_CASES if case["id"] in selected_ids]
+
+
+def _tally(case_id: str, *, repeats: int, failures: list[list[str] | None]) -> dict[str, Any]:
     """반복 실행 결과를 통과 횟수와 중복 없는 실패 이유로 정리합니다.
 
-    `failures`는 실행 횟수만큼의 리스트이고, 각 원소는 그 실행에서 나온 실패 이유
-    목록입니다. 빈 리스트인 실행이 통과한 실행입니다.
+    `failures`의 각 원소는 그 실행의 실패 이유 목록이고, 빈 리스트면 통과입니다.
+    `None`은 인프라 오류라서 **분모에서 제외**합니다 — 프록시가 한 번 튕긴 것을 동작 실패로
+    세면 통과율이 프롬프트와 무관하게 흔들립니다.
     """
 
     unique_reasons: list[str] = []
     for reasons in failures:
-        for reason in reasons:
+        for reason in reasons or []:
             if reason not in unique_reasons:
                 unique_reasons.append(reason)
 
-    passes = sum(1 for reasons in failures if not reasons)
+    errors = sum(1 for reasons in failures if reasons is None)
+    effective = repeats - errors
+    passes = sum(1 for reasons in failures if reasons == [])
     return {
         "id": case_id,
         "repeats": repeats,
+        "errors": errors,
+        "effective": effective,
         "passes": passes,
-        "pass_rate": passes / repeats if repeats else 0.0,
+        "pass_rate": passes / effective if effective else 0.0,
         "failure_reasons": unique_reasons,
     }
 
 
-def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) -> list[str]:
-    """케이스를 한 번 실행하고 실패 이유 목록을 반환합니다."""
+def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) -> list[str] | None:
+    """케이스를 한 번 실행하고 실패 이유 목록을 반환합니다.
+
+    **None은 "인프라 오류"** 를 뜻합니다(프록시 오류, 타임아웃 등). 동작 불일치와 구분해야
+    합니다 — 예전에는 예외도 실패 이유로 세어서, 동시 실행 중 프록시가 한 번 튕기면 통과율이
+    떨어지고 그게 프롬프트 회귀처럼 보였습니다. 실제로 그 때문에 오판할 뻔했습니다.
+    """
 
     from tests.evals import predicates
 
@@ -294,8 +364,9 @@ def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) ->
         agent = week04.build_week04_agent()
         with conversation_session_scope(conversation_id):
             result = agent.invoke({"messages": messages})
-    except Exception as exc:  # 한 번의 실패가 전체 평가를 죽이지 않게 합니다.
-        return [f"실행 중 예외: {type(exc).__name__}: {exc}"]
+    except Exception as exc:  # 한 번의 오류가 전체 평가를 죽이지 않게 합니다.
+        print(f"[eval] {case['id']} #{index} 인프라 오류: {type(exc).__name__}: {exc}")
+        return None
 
     events = extract_agent_events(result)
     answer = extract_final_text(result)
@@ -306,10 +377,17 @@ def assert_case_passes(result: dict[str, Any]) -> None:
     """케이스 통과율이 하한을 넘는지 확인합니다. 실패 시 이유를 함께 보여 줍니다."""
 
     floor = CASE_PASS_RATE_FLOOR
+    errors = result.get("errors", 0)
+    if result["effective"] == 0:
+        raise AssertionError(
+            f"{result['id']}: {result['repeats']}회 모두 인프라 오류로 실행되지 않았습니다. "
+            "동작을 판정할 수 없습니다 (프록시 상태나 --eval-workers를 확인하세요)."
+        )
     if result["pass_rate"] >= floor:
         return
     reasons = "\n".join(f"  - {reason}" for reason in result["failure_reasons"])
+    error_note = f" (인프라 오류 {errors}회는 분모에서 제외)" if errors else ""
     raise AssertionError(
-        f"{result['id']} 통과율 {result['passes']}/{result['repeats']}"
-        f"({result['pass_rate']:.0%})이 하한 {floor:.0%} 미달입니다.\n{reasons}"
+        f"{result['id']} 통과율 {result['passes']}/{result['effective']}"
+        f"({result['pass_rate']:.0%})이 하한 {floor:.0%} 미달입니다.{error_note}\n{reasons}"
     )

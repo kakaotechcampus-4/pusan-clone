@@ -34,8 +34,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption(
         "--eval-workers",
         type=int,
-        default=4,
-        help="반복 실행을 병렬로 돌릴 worker 수입니다 (기본 4).",
+        default=12,
+        help=(
+            "평가 실행을 병렬로 돌릴 worker 수입니다 (기본 12). "
+            "케이스×반복 전체가 한 pool에 들어가므로 이 값이 곧 동시 LLM 호출 수입니다. "
+            "프록시 오류가 나면 낮추세요."
+        ),
     )
 
 

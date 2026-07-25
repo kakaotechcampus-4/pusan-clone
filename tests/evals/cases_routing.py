@@ -26,6 +26,21 @@ Example에 적어 넣는 것**입니다. 그러면 통과율은 오르지만 모
 규칙이 전달된 것으로 봅니다. 반대로 "검색하지 말아야 하는" 케이스들
 (`save.complete_fields_skips_search`, `todo.dated_todo_skips_search`,
 `reminder.dated_reminder_skips_search`)이 내려가면 규칙을 **과잉 적용**하게 된 것입니다.
+
+## 케이스끼리 데이터로 간섭하지 않기
+
+모든 케이스×반복이 **한 pool에서 동시에** 실행됩니다(`tests/evals/conftest.py`의
+`case_results`). 즉 어느 케이스가 언제 도는지 정해져 있지 않고, 저장 케이스가 만드는 기록과
+조회 케이스가 읽는 시점이 겹칩니다. 그래서 케이스를 추가할 때 이걸 지켜야 합니다.
+
+- **조회 케이스는 저장 케이스가 만들 수 없는 날짜를 쓴다.** 저장 케이스는 "내일", "다음 주
+  금요일" 같은 상대 날짜를 쓰고 그 해석은 LLM이 하므로 어느 날짜로 떨어질지 예측할 수 없다.
+  그래서 조회 케이스 시드는 9월로 몰아 두었다.
+- 실제로 이걸 어겨서 한 번 당했다: 8/7을 "조용한 날짜"로 골랐는데 "다음 주 금요일 ... 치과
+  진료"가 2026-08-07로 저장돼, 조회 케이스 답변에 그 일정이 나왔다. 모델은 뭔가 찾았으니
+  할 일을 더 볼 이유가 없어졌고, 케이스는 엉뚱한 이유로 실패했다.
+- 특정 기록의 **부재**를 단정하는 케이스는 특히 위험하다. 다른 케이스가 그 날짜에 뭔가
+  만들면 조용히 깨진다.
 """
 
 
@@ -266,6 +281,200 @@ ROUTING_CASES = [
             "called": ["save_structured_request"],
             "not_called": FORBIDDEN_LEGACY_SAVE,
             "args": {"save_structured_request": {"start_time": {"is_null": True}}},
+        },
+    },
+    # ------------------------------------------------------------ 날짜로 저장 기록 조회
+    #
+    # 여기는 **아직 프롬프트에 규칙이 없는 영역**이다. `week04_prompt_parts()`에는
+    # `list_saved_requests`, `personal_list_saved_schedules`, `personal_list_schedules`가
+    # 한 번도 언급되지 않고 날짜 범위 조회 안내도 없다. 그래서 "N일에 할 일 뭐 있어?" 같은
+    # 질문에서 모델이 목록 도구를 임의로 고르고, 그중 둘은 구조적으로 todo를 반환할 수 없다.
+    #
+    #   - personal_list_saved_schedules → schedules 테이블. todo/reminder는 각각 todos,
+    #     reminders 테이블로 들어가므로(`fixed/app_store.py`의 save_structured_request)
+    #     여기서는 절대 안 나온다.
+    #   - personal_list_schedules → week01의 인메모리 PERSONAL_SCHEDULES. 앱을 다시 켜면 빈다.
+    #
+    # 답을 줄 수 있는 도구는 structured_requests를 날짜로 거르는
+    # `list_saved_requests(kind, date_from, date_to)`이거나, 날짜 문자열이 raw_json에
+    # 우연히 걸리는 `search_saved_requests`뿐이다.
+    #
+    # 판정을 **답변 내용**으로 하는 이유: 사용자가 겪은 실패는 "저장해 둔 할 일을 없다고
+    # 답하는 것"이다. 어떤 도구를 골랐는지보다 기록을 실제로 찾아냈는지가 본질이다.
+    {
+        "id": "lookup.todo_by_date",
+        "group": "날짜 조회",
+        # 시딩된 2026-09-10에는 todo만 있고 schedule은 없다 — 사용자가 겪은 조건과 같다.
+        "user": "9월 10일에 할 일 뭐 있어?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["겨울옷"],
+        },
+    },
+    {
+        "id": "lookup.reminder_by_date",
+        "group": "날짜 조회",
+        "held_out": True,
+        # 같은 규칙을 kind=reminder 축에서 검사한다.
+        "user": "9월 12일에 알림 설정해 둔 거 있어?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["건강검진"],
+        },
+    },
+    {
+        "id": "lookup.by_date_alt_wording",
+        "group": "날짜 조회",
+        "held_out": True,
+        # "할 일"/"알림" 같은 kind 키워드를 주지 않는 표면형.
+        "user": "9월 14일에 내가 뭐 해야 하지?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["도서관", "반납"],
+        },
+    },
+    # --- 날짜 조회 규칙을 다 고친 뒤 추가한, 튜닝에 쓰지 않은 표면형 ---
+    #
+    # 위의 lookup.todo_by_date / reminder_by_date / by_date_alt_wording은 프롬프트를 두 번
+    # 고치는 동안 지표로 삼았으므로 그 시점부터 일반화 증거가 아닙니다. 아래 둘은 수정을
+    # 끝낸 뒤 추가했고 한 번도 튜닝 근거로 쓰지 않았습니다.
+    {
+        "id": "lookup.unseen_schedule_word_still_finds_todo",
+        "group": "날짜 조회",
+        "held_out": True,
+        # 적대적 케이스입니다. 사용자가 "스케줄"이라는 **일정 계열 단어**로 묻지만 그 날짜에
+        # 있는 건 todo뿐입니다. 원래 버그가 "일정처럼 들리면 schedules 테이블만 본다"였으므로,
+        # 종류를 콕 집어 말한 게 아니면 모든 종류를 봐야 한다는 규칙이 이 표현에서도
+        # 버티는지 확인합니다.
+        "user": "9월 18일 스케줄 알려줘.",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["김장"],
+        },
+    },
+    {
+        "id": "lookup.unseen_neutral_wording",
+        "group": "날짜 조회",
+        "held_out": True,
+        # 종류 단어를 아예 쓰지 않는 중립적 표현 + kind=reminder.
+        "user": "9월 20일에 예정된 거 있어?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["정기점검", "차량"],
+        },
+    },
+    {
+        "id": "lookup.unseen_month_range",
+        "group": "날짜 조회",
+        "held_out": True,
+        # 지금까지의 조회 케이스는 전부 "특정 하루"였습니다. 이건 **기간** 조회라 모양이 다르고,
+        # date_from/date_to를 범위로 넘겨야 답이 나옵니다. 종류 단어도 없습니다.
+        # 9월 시드 중 아무거나 하나만 답변에 나와도 통과입니다 (기간 조회는 여러 건이 나오고
+        # 모델이 무엇을 먼저 언급할지는 정해져 있지 않으므로 특정 항목을 강제하지 않습니다).
+        "user": "9월에 저장해 둔 거 뭐 있어?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["겨울옷", "도서관", "반납", "김장", "건강검진", "차량", "정기점검"],
+        },
+    },
+    # --- 날짜 + 키워드 동시 조회 (두 도구 중 어느 순서가 나은지 실험) ---
+    #
+    # 어느 도구도 날짜와 키워드를 동시에 못 받는다. 그래서 하나로 좁히고 나머지는 결과를 읽어
+    # 걸러야 하는데, 어느 쪽을 먼저 쓰느냐에 따라 **잘려서 못 찾는 상황**이 갈린다.
+    #
+    #   list_saved_requests : created_at DESC LIMIT 20, tool에 limit 노출 없음 → 넓힐 수 없다
+    #   search_saved_requests: top_k 최대 50 → 넓힐 수 있다
+    #
+    # 아래 두 케이스는 각각 한쪽 순서만 통과하도록 시드를 설계했다(10월 25건).
+    {
+        "id": "lookup.wide_range_with_selective_keyword",
+        "group": "날짜+키워드",
+        "held_out": True,
+        # 넓은 구간(한 달) + 선택적 키워드. 타깃은 10월에서 created_at이 가장 오래돼 상위 20
+        # 창 밖이므로, 구간을 받아 훑는 방식으로는 못 찾는다. 키워드로는 1건에 바로 걸린다.
+        "user": "10월에 저장한 핼러윈 관련 기록 있어?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["핼러윈"],
+        },
+    },
+    {
+        "id": "lookup.narrow_date_with_generic_keyword",
+        "group": "날짜+키워드",
+        "held_out": True,
+        # 반대 상황. 좁은 구간(하루) + 흔한 키워드("정리"는 24건이 공유). 키워드로 먼저 찾으면
+        # top_k 창에 안 들어와 못 찾고, 날짜로 좁히면 바로 찾힌다.
+        "user": "10월 15일에 정리 관련해서 저장한 거 있어?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["회의실"],
+        },
+        # 이 케이스를 통과시키기까지 네 가지를 재 봤다 (2026-07-25). 앞의 셋은 기각했다.
+        #
+        # 1) "날짜+키워드면 list_saved_requests로 구간을 훑고 키워드로 걸러라" → 이 케이스는
+        #    통과하지만 날짜 전용 조회가 5/5 → 0~1/5로 무너졌다. 조회 규칙에 **조건 분기**가
+        #    늘면 모델이 분류 단계로 돌아가고, 그 틈에 Week 3의 "일정 조회 요청은
+        #    personal_list_saved_schedules" 포괄 지시가 이긴다.
+        # 2) search_saved_requests의 top_k 기본값 3 → 50(상한) → 통과하지만 키워드 검색 한 번에
+        #    payload가 1,038자 → 8,180자(약 4천 토큰)로 늘고, 매치가 50건을 넘으면 다시 조용히
+        #    잘린다. 실패를 없앤 게 아니라 드물게 만든 것.
+        # 3) payload에 truncated 플래그 추가 → 모델이 무시했다(5/5로 여전히 "없다").
+        #    플래그 자체는 trace에서 사람이 잘림을 볼 수 있으니 구현에 남겨 두었다.
+        # 4) **채택**: "날짜와 키워드가 함께 주어지면 두 도구를 다 호출하고 합쳐서 판단한다."
+        #    1)과 달리 도구 선택을 대체하지 않고 **선택 자체를 없앤다**. 두 도구의 잘림이
+        #    상보적이라(넓은 구간은 list가 잘리고 흔한 키워드는 search가 잘린다) 합집합이 답을
+        #    담는다. 날짜 전용 조회도 그대로 5/5를 유지했다.
+        #
+        # 남은 제약: 넓은 구간 + 흔한 키워드가 겹치면 양쪽이 동시에 잘려 여전히 놓칠 수 있다.
+        # 근본 해결은 tool 설계(날짜+키워드를 함께 받거나 limit을 노출)인데 week03 파일이라
+        # 이번 범위 밖이다.
+    },
+    {
+        "id": "lookup.each_tool_gets_its_own_arguments",
+        "group": "날짜+키워드",
+        "held_out": True,
+        # 앱 trace에서 발견한 실제 버그의 회귀 가드다. "둘 다 호출하라"는 규칙만 주면 모델이
+        # 두 도구에 같은 `query`를 넘긴다. 그런데 SavedRequestListInput은 kind/date_from/date_to만
+        # 가지고 있고 pydantic extra 정책이 ignore라서, `query`는 **예외 없이 조용히 버려지고**
+        # 날짜 조건만 걸린 목록(없으면 최근 20건)이 돌아온다. 모델은 그걸 키워드로 걸러진
+        # 결과로 착각한다.
+        "user": "10월에 저장한 핼러윈 관련 기록 찾아줘.",
+        "expect": {
+            "called": ["list_saved_requests", "search_saved_requests"],
+            "args": {"list_saved_requests": {"query": {"is_null": True}}},
+        },
+    },
+    {
+        "id": "lookup.date_and_keyword_schedule_question",
+        "group": "날짜+키워드",
+        "held_out": True,
+        # 리뷰에서 지적된 유형 — 날짜(구간)와 키워드가 함께 있는 질문이다.
+        #
+        # **어느 도구를 부르는지로 판정하지 않는다.** 처음에는 "날짜 도구 + 키워드 도구를 둘 다
+        # 불러라"로 단정했는데 0/10이었고, trace를 보니 모델은 날짜 도구로 구간을 뽑아 제목을
+        # 훑고 있었다. 즉 리뷰어가 제시한 선택지 중 "날짜로 뽑고 제목 후처리"를 하고 있었고,
+        # 일정 목록 도구는 limit 50에 날짜순이라 그 구간 기록이 다 들어온다. 결과가 맞는데
+        # 특정 호출 조합을 강제하는 건 취향을 단정하는 것이라 판정을 결과로 바꿨다.
+        #
+        # 상대 날짜("이번 주") 대신 조용한 절대 날짜를 쓰는 이유: 저장 케이스들이 이번 주에
+        # 기록을 만들어서 무엇이 있는지가 실행마다 달라진다. 상대 날짜 해석 자체는 저장 케이스
+        # ("내일", "다음 주 화요일")가 이미 검증한다.
+        "user": "9월 16일에 잡힌 회의 있어?",
+        "expect": {
+            "answer_matches_any": ["분기 전략"],
+        },
+    },
+    {
+        "id": "lookup.empty_date_reports_none",
+        "group": "날짜 조회",
+        "held_out": True,
+        # 반대 방향 가드다. 날짜 조회 규칙을 넣은 뒤 모델이 "일단 뭔가 있다"고 답하거나
+        # 다른 날짜 기록을 끌어오면 이 케이스가 잡는다. 2026-09-25에는 시드도, 저장
+        # 케이스가 만드는 기록도 없다.
+        "user": "9월 25일에 할 일 뭐 있어?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": NO_RECORD_PATTERNS,
         },
     },
     # ----------------------------------------------------------------- 인자 품질
