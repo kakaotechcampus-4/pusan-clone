@@ -275,6 +275,32 @@ def search_saved_request_rows(
     rows = sqlite_store.search_saved_requests(query, limit=top_k)
     return list(rows) if rows else []
 
+def _schedule_chunk(schedule: dict[str, Any], attendees: list[str]) -> dict[str, Any]:
+    """저장 일정 하나를 대화 청크와 같은 chunk_id/content/metadata 구조로 만듭니다."""
+
+    schedule_id = str(schedule.get("schedule_id") or "")
+    title = str(schedule.get("title") or "제목 없음")
+    date = str(schedule.get("date") or "")
+    start_time = str(schedule.get("start_time") or "")
+    end_time = str(schedule.get("end_time") or "")
+    lines = [
+        f"일정 제목: {title}",
+        f"일정 날짜: {date}",
+        f"일정 시간: {start_time} ~ {end_time}",
+        f"참석자: {', '.join(attendees) or '없음'}",
+    ]
+    return {
+        "chunk_id": f"schedule:{schedule_id}",
+        "content": "\n".join(lines),
+        "metadata": {
+            "schedule_id": schedule_id,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "attendees": attendees,
+        },
+    }
 
 def search_conversation_messages_dict(
     sqlite_store: AppSQLiteStore,
@@ -410,8 +436,41 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
-    # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    # DONE: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
+    limit = safe_limit(limit, default=5, maximum=20)
+    hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=limit)
+
+    kind = "personal_schedule"
+    schedules = SQLITE_STORE.list_schedules(limit=100, kind=kind, date_from=date_from, date_to=date_to)
+    chunks: list[dict[str, Any]] = []
+    for schedule in schedules:
+        attendees = schedule.get("attendees") or []
+        if attendee and attendee not in attendees:
+            continue
+        if query and query not in str(schedule.get("title") or ""):
+            continue
+        chunks.append(_schedule_chunk(schedule, attendees))
+        if len(chunks) >= limit:
+            break
+
+    filters = {"kind": kind, "date_from": date_from, "date_to": date_to, "attendee": attendee, "limit": limit}
+    context_lines = ["[개인 참고자료]"]
+    context_lines += [f"- {hit['metadata']['title']}: {hit['content']}" for hit in hits] or ["- 없음"]
+    context_lines.append("[저장된 일정]")
+    context_lines += [chunk["content"] for chunk in chunks] or ["- 없음"]
+
+    return json_payload(
+        {
+            "ok": True,
+            "tool_name": "search_nana_memory",
+            "query": query,
+            "filters": filters,
+            "reference_backend": REFERENCE_STORE.backend_info(),
+            "hits": hits,
+            "chunks": chunks,
+            "context": "\n".join(context_lines),
+        }
+    )
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
