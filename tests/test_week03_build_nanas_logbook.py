@@ -129,5 +129,14 @@ class Week03ReviewFeedbackTests(unittest.TestCase):
         self.assertEqual(call["date_from"], "2026-07-20")
         self.assertEqual(call["date_to"], "2026-07-26")
 
+    def test_excludes_week01_in_memory_list_and_delete_tools(self) -> None:
+        tool_names = {week03._tool_name(item) for item in week03.week03_tools()}
+
+        self.assertNotIn("personal_list_schedules", tool_names)
+        self.assertNotIn("personal_delete_schedule", tool_names)
+        self.assertIn("personal_list_saved_schedules", tool_names)
+        self.assertIn("personal_delete_saved_schedules", tool_names)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -38,7 +38,6 @@ WEEK03_TOOL_CALL_PROMPT = """저장 요청은 먼저 extract_schedule_request로
 save_structured_request에 그대로 전달한다. wrapper 전체나 자연어 원문을 save_structured_request 인자 하나로 넘기지 않는다.
 personal_create_schedule을 호출할 때는 original_text에 사용자의 요청 원문을 그대로 전달한다.
 조회·수정·삭제 전에는 personal_list_saved_schedules로 후보와 schedule_id를 확인한다.
-Week 1의 personal_list_schedules와 personal_delete_schedule은 현재 대화의 임시 메모리만 다루므로 Week 3 조회·삭제에 사용하지 않는다.
 할 일과 알림은 list_saved_requests에 kind=todo 또는 kind=reminder를 전달해 조회한다.
 삭제는 확인된 schedule_ids 또는 사용자가 명시한 필터를 사용하며, delete_all=True는 사용자가 전체 삭제를 명확히 요청했을 때만 사용한다."""
 
@@ -516,8 +515,13 @@ def personal_delete_saved_schedules(
 def week03_tools() -> list[Any]:
     """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
 
+    # personal_list_schedules/personal_delete_schedule은 현재 대화의 임시 메모리만 다루는 Week 1 버전이라
+    # Week 3+ DB 기반 조회·삭제 도구와 이름만 다르고 역할이 겹쳐 routing 근거를 흐리므로 Agent에 노출하지 않습니다.
+    excluded_week01_tool_names = {"personal_list_schedules", "personal_delete_schedule"}
     base_tools = [
-        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item for item in week01_tools()
+        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item
+        for item in week01_tools()
+        if _tool_name(item) not in excluded_week01_tool_names
     ]
     return [
         *base_tools,
