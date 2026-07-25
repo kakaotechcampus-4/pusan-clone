@@ -338,7 +338,14 @@ def search_conversation_message_rows(
 
 @tool(args_schema=AddPersonalReferenceInput)
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
-    """개인 참고자료를 ChromaDB에 추가합니다."""
+    """
+    ## 설명
+    개인 참고자료를 ChromaDB에 추가합니다.
+    
+    ## 예시
+    사용자: '나는 점심시간에는 회의를 잡지 않는다고 기억해줘. 
+    → `add_personal_reference(title='점심시간 회의 선호', content='점심시간에는 회의를 잡지 않는다.', tags=['preference', 'meeting'])`
+    """
 
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
     result = add_personal_reference_dict(
@@ -357,7 +364,14 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
-    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
+    """
+    ## 설명
+    개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다.
+    
+    ## 예시
+    사용자: '내가 저장해 둔 점심시간 회의 선호가 뭐였지?' 
+    → `search_personal_references(query='점심시간 회의')`
+    """
 
     # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
     references = search_personal_reference_hits(
@@ -374,7 +388,14 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
-    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
+    """
+    ## 설명
+    SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 일정/할 일/알림의 핵심 단어를 넣습니다.
+    
+    ## 예시
+    사용자: '제주도와 관련해서 저장한 일정이나 할 일을 찾아줘.' 
+    → `search_saved_requests(query='제주도')`
+    """
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
     rows = search_saved_request_rows(
@@ -395,7 +416,14 @@ def search_conversation_messages(
     top_k: int = 5,
     conversation_id: str | None = None,
 ) -> str:
-    """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    """
+    ## 설명
+    앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 짧은 핵심 명사나 구를 넣습니다.
+    
+    ## 예시
+    사용자: '예전 대화에서 철수에 대해 무슨 말을 했지?' 
+    → `search_conversation_messages(query='철수')`
+    """
 
     res = search_conversation_messages_dict(
         sqlite_store=SQLITE_STORE,
@@ -483,49 +511,65 @@ def week04_prompt_parts() -> list[str]:
     return [
         *week03_prompt_parts(),
         # Week 4 Nana memory agent system prompt.
-        "Week 4에서는 질문의 대상이 어느 저장 출처에 있는지 구분하여 적절한 도구를 사용하여라.",
+        "# Week4 System Prompt",
+        "## Instructions",
+        "단계별로 차근차근 생각한다. 도구를 호출하기 전에 사용자의 요청을 먼저 읽어보고 생각한다",
+        "사용자 질문을 보고 필요한 경우 검색 tool 하나를 호출한다.",
 
-        # --- 일정 생성 라우팅: Week 3의 extract_schedule_request 절차를 대체한다 ---
-        "Week 4에서 personal_schedule 또는 group_schedule 일정을 새로 생성하는 요청은 Week 3의 'extract_schedule_request → save_structured_request' 순서를 따르지 말고 아래 Week 4 일정 흐름을 따라라.",
-        "Week 4 일정 흐름: (1) start_time 등 필요한 정보가 빠져 있으면 먼저 search_personal_references로 관련 선호를 검색한다. (2) 필요한 정보를 확정한 뒤 personal_create_schedule을 한 번만 호출한다.",
-        "personal_create_schedule은 일정 생성과 SQLite 저장을 함께 처리하므로 같은 일정에 extract_schedule_request나 save_structured_request를 추가로 호출하지 말아라.",
-        "extract_schedule_request와 save_structured_request는 일정이 아닌 할 일(todo)이나 알림(reminder) 저장 요청에만 사용하여라.",
+        """
+        "필요한 경우"는 다음과 같이 정의한다.
+        - 사용자가 명시적으로 선호 사항/구조화 요청/사용자 질문을 찾아보라고 지시한 경우
+        - 사용자가 일정 생성 등을 요청했을 때, 요청 지시사항에서 날짜, 시작 시간, 종료 시간 등이 모호한 경우
+        """,
 
-        # --- 참고자료 저장/검색 ---
-        "사용자가 선호, 규칙, 정책 또는 참고자료를 기억해 달라고 요청하면 add_personal_reference를 사용하여라.",
-        "개인 참고자료에 저장된 선호, 규칙, 정책을 묻는 질문에는 search_personal_references를 사용하여라.",
+        "검색 tool을 호출할 때는, 어느 저장 출처에 있는지 구분하여 적절한 도구를 사용하여라.",
+        "tool의 query에는 사용자 질문을 그대로 넣거나 검색에 필요한 핵심 문구를 넣는다.",
 
-        # --- 누락 필드 보완을 위한 RAG (선호 존재 여부를 미리 추측하지 말고 항상 먼저 검색) ---
-        "일정 생성 요청에 start_time 등 필요한 정보가 빠져 있으면, 관련 선호가 있을지 미리 추측하거나 곧바로 사용자에게 되묻지 말고 항상 먼저 search_personal_references로 검색한 뒤에 시작 시간을 결정하거나 질문하여라.",
-        "참고자료 검색 query에는 사용자 원문의 구체적인 일정 표현과 보완하려는 일정 속성을 짧게 함께 담아라.",
-        "검색 결과가 현재 일정 종류와 조건에 직접 적용되는지 확인하고, 조건부 선호는 현재 요청이 그 조건을 충족할 때만 적용하여라.",
-        "검색 문서가 누락된 일정 필드를 직접 뒷받침하는 경우에만 해당 값을 사용하고, 근거가 없는 다른 필드는 추측하지 말아라.",
-        "누락된 start_time을 검색하는 경우 검색 결과가 나오기 전에는 일정 생성 도구를 호출하지 말고, start_time에 '미정'을 넣어 임의로 일정을 생성하지 말아라.",
-        "검색으로 소요 시간이나 다른 필드만 보완되고 start_time은 여전히 없으면 일정 생성 도구를 호출하지 말고 사용자에게 시작 시간을 물어보아라.",
-        "현재 요청에 적용 가능한 정확한 시간이 있으면 그 값을 사용하고, 적용 가능한 선호 시간 범위가 있으면 그 범위의 시작 시각을 start_time으로 사용하여라.",
-        "검색 결과가 관련 없거나 서로 충돌하거나 회피 조건만 있으면 일정 생성 전에 사용자에게 누락된 정보를 물어보아라.",
-        "제목은 사용자 표현에서 가져오고 날짜는 현재 요청에서 해석하며, 두 값은 개인 참고자료로 추측하지 말아라.",
-        "end_time이 없으면 저장된 소요 시간 선호가 있을 때만 계산하고, 그런 근거가 없으면 end_time은 '미정'으로 둘 수 있다.",
+        "사용자가 선호, 규칙, 정책 또는 참고자료를 기억하려면 add_personal_reference를 사용하여라.",
+        "개인 참고자료에 저장된 선호, 규칙, 정책을 확인하려면 search_personal_references를 사용하여라.",
 
-        # --- 저장 기록/대화 검색 ---
-        "SQLite에 저장된 일정, 할 일, 알림의 원문이나 근거를 핵심어로 찾는 질문에는 search_saved_requests를 사용하여라.",
-        "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 가장 식별력 높은 한 단어 또는 짧은 연속 구를 전달하여라.",
-        "앱에 저장된 이전 일반 채팅 발화를 찾는 질문에는 search_conversation_messages를 사용하여라.",
+        "앱에 저장된 이전 대화 기록을 확인해 보려면 search_conversation_messages를 사용하여라",
         "특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라.",
-        "날짜 범위의 저장 일정 목록을 조회하는 요청에는 기존 personal_list_saved_schedules를 사용하여라.",
+        "대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
+        
+        "저장된 요청, SQLite row, 구조화 일정/할 일/알림, kind(group_schedule, todo, reminder)를 찾으려면 search_saved_requests를 사용한다.",
+        "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 가장 식별력 높은 한 단어 또는 짧은 연속 구를 전달하여라.",
+
         "질문이 여러 출처에 걸쳐 있으면 필요한 검색 도구를 각각 호출하고 출처를 구분하여 답하여라.",
         "사용자가 저장된 기록 자체를 찾는 질문에서 검색 결과가 없으면 내용을 추측하지 말고 찾은 기록이 없다고 답하여라.",
-        "일정 생성의 누락 정보를 보완하는 검색에서 결과가 없으면 기록이 없다고 답변을 끝내지 말고 사용자에게 필요한 정보를 물어보아라.",
         "일반 대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
-        "[Week 4 도구 사용 예시]",
-        "사용자: '나는 점심시간에는 회의를 잡지 않는다고 기억해줘.' → add_personal_reference(title='점심시간 회의 선호', content='점심시간에는 회의를 잡지 않는다.', tags=['preference', 'meeting'])를 사용하여라.",
-        "사용자: '내가 저장해 둔 점심시간 회의 선호가 뭐였지?' → search_personal_references(query='점심시간 회의')를 사용하여라.",
-        "사용자: '내일 팀 싱크 일정 잡아줘.' → extract_schedule_request를 호출하지 말고, 시작 시간이 없으므로 먼저 search_personal_references(query='팀 싱크 시작 시간')로 선호를 검색하여라. 직접 적용 가능한 시각 근거가 있으면 그 값으로 personal_create_schedule을 한 번 호출하고, 없으면 사용자에게 시작 시간을 물어보아라.",
-        "사용자: '다음 주 독서 모임을 잡아줘.' → search_personal_references를 사용하되 query에 사용자 원문의 '독서 모임'과 보완하려는 일정 속성을 포함하고, 독서 모임에 직접 적용되는 검색 근거가 있는 필드만 보완하여라.",
-        "검색 결과가 '독서 모임은 한 시간 진행한다'는 소요 시간만 제공하면 start_time을 만들지 말고 사용자에게 시작 시간을 물어보아라.",
-        "검색 결과가 '독서 모임은 항상 19시에 시작한다'는 직접 적용 가능한 기본 시각도 제공하면 그 값을 사용해 personal_create_schedule을 한 번만 호출하여라.",
-        "사용자: '제주도와 관련해서 저장한 일정이나 할 일을 찾아줘.' → search_saved_requests(query='제주도')를 사용하여라.",
-        "사용자: '예전 대화에서 철수에 대해 무슨 말을 했지?' → search_conversation_messages(query='철수')를 사용하고 conversation_id는 생략하여라.",
+        "tool_result의 hits 또는 rows를 근거로 답하거나 다른 작업을 처리할 때의 참고 자료로 사용하여라.",
+        "만약 검색 tool을 사용해 연관 정보를 검색해 본 뒤에도 부족한 정보가 있다면 임의로 처리하지 말고 사용자에게 재질의하여라",
+
+        "## Examples",
+
+
+        # # --- 참고자료 저장/검색 ---
+        # "사용자가 선호, 규칙, 정책 또는 참고자료를 기억해 달라고 요청하면 add_personal_reference를 사용하여라.",
+        # "개인 참고자료에 저장된 선호, 규칙, 정책을 묻는 질문에는 search_personal_references를 사용하여라.",
+
+        # # --- 누락 필드 보완을 위한 RAG (선호 존재 여부를 미리 추측하지 말고 항상 먼저 검색) ---
+        # "일정 생성 요청에 start_time 등 필요한 정보가 빠져 있으면, 관련 선호가 있을지 미리 추측하거나 곧바로 사용자에게 되묻지 말고 항상 먼저 search_personal_references로 검색한 뒤에 시작 시간을 결정하거나 질문하여라.",
+        # "참고자료 검색 query에는 사용자 원문의 구체적인 일정 표현과 보완하려는 일정 속성을 짧게 함께 담아라.",
+        # "검색 결과가 현재 일정 종류와 조건에 직접 적용되는지 확인하고, 조건부 선호는 현재 요청이 그 조건을 충족할 때만 적용하여라.",
+        # "검색 문서가 누락된 일정 필드를 직접 뒷받침하는 경우에만 해당 값을 사용하고, 근거가 없는 다른 필드는 추측하지 말아라.",
+        # "누락된 start_time을 검색하는 경우 검색 결과가 나오기 전에는 일정 생성 도구를 호출하지 말고, start_time에 '미정'을 넣어 임의로 일정을 생성하지 말아라.",
+        # "검색으로 소요 시간이나 다른 필드만 보완되고 start_time은 여전히 없으면 일정 생성 도구를 호출하지 말고 사용자에게 시작 시간을 물어보아라.",
+        # "현재 요청에 적용 가능한 정확한 시간이 있으면 그 값을 사용하고, 적용 가능한 선호 시간 범위가 있으면 그 범위의 시작 시각을 start_time으로 사용하여라.",
+        # "검색 결과가 관련 없거나 서로 충돌하거나 회피 조건만 있으면 일정 생성 전에 사용자에게 누락된 정보를 물어보아라.",
+        # "제목은 사용자 표현에서 가져오고 날짜는 현재 요청에서 해석하며, 두 값은 개인 참고자료로 추측하지 말아라.",
+        # "end_time이 없으면 저장된 소요 시간 선호가 있을 때만 계산하고, 그런 근거가 없으면 end_time은 '미정'으로 둘 수 있다.",
+
+        # # --- 저장 기록/대화 검색 ---
+        # "SQLite에 저장된 일정, 할 일, 알림의 원문이나 근거를 핵심어로 찾는 질문에는 search_saved_requests를 사용하여라.",
+        # "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 가장 식별력 높은 한 단어 또는 짧은 연속 구를 전달하여라.",
+        # "앱에 저장된 이전 일반 채팅 발화를 찾는 질문에는 search_conversation_messages를 사용하여라.",
+        # "특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라.",
+        # "날짜 범위의 저장 일정 목록을 조회하는 요청에는 기존 personal_list_saved_schedules를 사용하여라.",
+        # "질문이 여러 출처에 걸쳐 있으면 필요한 검색 도구를 각각 호출하고 출처를 구분하여 답하여라.",
+        # "사용자가 저장된 기록 자체를 찾는 질문에서 검색 결과가 없으면 내용을 추측하지 말고 찾은 기록이 없다고 답하여라.",
+        # "일정 생성의 누락 정보를 보완하는 검색에서 결과가 없으면 기록이 없다고 답변을 끝내지 말고 사용자에게 필요한 정보를 물어보아라.",
+        # "일반 대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
     ]
 
 
