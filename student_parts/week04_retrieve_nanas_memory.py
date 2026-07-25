@@ -225,7 +225,16 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
-    return reference_store.add_personal_reference(title, content, tags or [])
+    saved = reference_store.add_personal_reference(title, content, tags or [])
+    backend = saved.get("backend")
+    reference = {k: v for k, v in saved.items() if k != "backend"}
+    
+    return {
+        "ok": True,
+        "tool_name": "add_personal_reference",
+        "reference_backend": backend,
+        "reference": reference,
+    }
 
 
 def search_personal_reference_hits(
@@ -270,11 +279,17 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
+    exclude_conversation_id = None
+    if not conversation_id:
+        current_scope = current_session_scope()
+        if current_scope != DEFAULT_SESSION_SCOPE:
+            exclude_conversation_id = current_scope
+
     hits = conversation_rag_store.search(
         query=query,
         top_k=top_k,
         conversation_id=conversation_id,
-        exclude_conversation_id=None if conversation_id else current_session_scope(),
+        exclude_conversation_id=exclude_conversation_id,
     )
     return {
         "hits": hits,
@@ -308,9 +323,8 @@ def search_conversation_message_rows(
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
-    saved = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags)
-    backend = saved.pop("backend")
-    return json_payload({"reference_backend": backend, "reference": saved})
+    result = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags)
+    return json_payload(result)
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
