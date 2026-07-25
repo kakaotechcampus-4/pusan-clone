@@ -296,13 +296,13 @@ def case_results(
     with ThreadPoolExecutor(max_workers=workers) as pool:
         outcomes = list(pool.map(lambda task: (task[0]["id"], _run_once(eval_env, *task)), tasks))
 
-    failures_by_case: dict[str, list[list[str]]] = {case["id"]: [] for case in cases}
-    for case_id, failures in outcomes:
-        failures_by_case[case_id].append(failures)
+    outcomes_by_case: dict[str, list[RunOutcome]] = {case["id"]: [] for case in cases}
+    for case_id, outcome in outcomes:
+        outcomes_by_case[case_id].append(outcome)
 
     return {
-        case_id: _tally(case_id, repeats=eval_repeats, failures=failures)
-        for case_id, failures in failures_by_case.items()
+        case_id: _tally(case_id, repeats=eval_repeats, outcomes=case_outcomes)
+        for case_id, case_outcomes in outcomes_by_case.items()
     }
 
 
@@ -317,23 +317,39 @@ def _selected_cases(session: pytest.Session) -> list[dict[str, Any]]:
     return [case for case in ROUTING_CASES if case["id"] in selected_ids]
 
 
-def _tally(case_id: str, *, repeats: int, failures: list[list[str] | None]) -> dict[str, Any]:
+@dataclasses.dataclass(frozen=True)
+class RunOutcome:
+    """케이스를 한 번 실행한 결과입니다.
+
+    `failures`가 None이면 인프라 오류이고, 빈 리스트면 통과입니다.
+
+    `calls`와 `answer`를 함께 남기는 이유는 실패 이유만으로는 원인을 좁힐 수 없기
+    때문입니다. 실제로 `lookup.unseen_month_range`가 `called_any`를 통과하면서도 답변은
+    일정만 보고한 적이 있는데, 이유 목록만 봐서는 **옳은 도구를 부르고 그 결과를 무시한
+    것**인지 구분할 수 없었습니다.
+    """
+
+    failures: list[str] | None
+    calls: list[str]
+    answer: str
+
+
+def _tally(case_id: str, *, repeats: int, outcomes: list[RunOutcome]) -> dict[str, Any]:
     """반복 실행 결과를 통과 횟수와 중복 없는 실패 이유로 정리합니다.
 
-    `failures`의 각 원소는 그 실행의 실패 이유 목록이고, 빈 리스트면 통과입니다.
-    `None`은 인프라 오류라서 **분모에서 제외**합니다 — 프록시가 한 번 튕긴 것을 동작 실패로
-    세면 통과율이 프롬프트와 무관하게 흔들립니다.
+    인프라 오류는 **분모에서 제외**합니다 — 프록시가 한 번 튕긴 것을 동작 실패로 세면
+    통과율이 프롬프트와 무관하게 흔들립니다.
     """
 
     unique_reasons: list[str] = []
-    for reasons in failures:
-        for reason in reasons or []:
+    for outcome in outcomes:
+        for reason in outcome.failures or []:
             if reason not in unique_reasons:
                 unique_reasons.append(reason)
 
-    errors = sum(1 for reasons in failures if reasons is None)
+    errors = sum(1 for outcome in outcomes if outcome.failures is None)
     effective = repeats - errors
-    passes = sum(1 for reasons in failures if reasons == [])
+    passes = sum(1 for outcome in outcomes if outcome.failures == [])
     return {
         "id": case_id,
         "repeats": repeats,
@@ -342,15 +358,16 @@ def _tally(case_id: str, *, repeats: int, failures: list[list[str] | None]) -> d
         "passes": passes,
         "pass_rate": passes / effective if effective else 0.0,
         "failure_reasons": unique_reasons,
+        "outcomes": outcomes,
     }
 
 
-def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) -> list[str] | None:
-    """케이스를 한 번 실행하고 실패 이유 목록을 반환합니다.
+def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) -> RunOutcome:
+    """케이스를 한 번 실행해 채점 결과와 도구 호출 트레이스를 반환합니다.
 
-    **None은 "인프라 오류"** 를 뜻합니다(프록시 오류, 타임아웃 등). 동작 불일치와 구분해야
-    합니다 — 예전에는 예외도 실패 이유로 세어서, 동시 실행 중 프록시가 한 번 튕기면 통과율이
-    떨어지고 그게 프롬프트 회귀처럼 보였습니다. 실제로 그 때문에 오판할 뻔했습니다.
+    **`failures=None`은 "인프라 오류"** 를 뜻합니다(프록시 오류, 타임아웃 등). 동작 불일치와
+    구분해야 합니다 — 예전에는 예외도 실패 이유로 세어서, 동시 실행 중 프록시가 한 번 튕기면
+    통과율이 떨어지고 그게 프롬프트 회귀처럼 보였습니다. 실제로 그 때문에 오판할 뻔했습니다.
     """
 
     from tests.evals import predicates
@@ -366,11 +383,41 @@ def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) ->
             result = agent.invoke({"messages": messages})
     except Exception as exc:  # 한 번의 오류가 전체 평가를 죽이지 않게 합니다.
         print(f"[eval] {case['id']} #{index} 인프라 오류: {type(exc).__name__}: {exc}")
-        return None
+        return RunOutcome(failures=None, calls=[], answer="")
 
     events = extract_agent_events(result)
     answer = extract_final_text(result)
-    return predicates.check_case(case["expect"], events, answer)
+    return RunOutcome(
+        failures=predicates.check_case(case["expect"], events, answer),
+        calls=_describe_calls(events),
+        answer=answer,
+    )
+
+
+def _describe_calls(events: list[dict[str, Any]]) -> list[str]:
+    """도구 호출을 `이름(인자)` 형태로 적습니다.
+
+    이름만 남기면 같은 도구를 두 번 부른 실행에서 무엇이 달랐는지 알 수 없습니다. 실제로
+    `list_saved_requests`를 연달아 두 번 부른 실패를 두고, 종류를 나눠 부른 것인지 날짜를
+    나눠 부른 것인지 구분하지 못했습니다. None인 인자는 대부분이라 생략합니다.
+    """
+
+    described: list[str] = []
+    for event in events:
+        if event.get("event") != "tool_call":
+            continue
+        arguments = event.get("arguments")
+        pairs = (
+            ", ".join(
+                f"{key}={value!r}"
+                for key, value in arguments.items()
+                if value is not None
+            )
+            if isinstance(arguments, dict)
+            else ""
+        )
+        described.append(f"{event.get('tool_name')}({pairs})")
+    return described
 
 
 def assert_case_passes(result: dict[str, Any]) -> None:
@@ -389,5 +436,26 @@ def assert_case_passes(result: dict[str, Any]) -> None:
     error_note = f" (인프라 오류 {errors}회는 분모에서 제외)" if errors else ""
     raise AssertionError(
         f"{result['id']} 통과율 {result['passes']}/{result['effective']}"
-        f"({result['pass_rate']:.0%})이 하한 {floor:.0%} 미달입니다.{error_note}\n{reasons}"
+        f"({result['pass_rate']:.0%})이 하한 {floor:.0%} 미달입니다.{error_note}\n{reasons}\n"
+        f"{_format_traces(result['outcomes'])}"
     )
+
+
+def _format_traces(outcomes: list[RunOutcome]) -> str:
+    """실행별 도구 호출 순서와 답변 앞부분을 보여 줍니다.
+
+    통과한 실행도 함께 찍습니다. 같은 케이스가 어떤 실행에서는 옳은 도구를 고르고 어떤
+    실행에서는 아닌지를 나란히 봐야 흔들리는 케이스와 일관되게 틀리는 케이스를 구분할 수
+    있습니다.
+    """
+
+    lines = ["  실행별 트레이스:"]
+    for index, outcome in enumerate(outcomes):
+        if outcome.failures is None:
+            lines.append(f"    #{index} ERROR  (인프라 오류)")
+            continue
+        verdict = "pass" if not outcome.failures else "FAIL"
+        calls = " → ".join(outcome.calls) if outcome.calls else "(호출 없음)"
+        lines.append(f"    #{index} {verdict}  {calls}")
+        lines.append(f"           답변: {outcome.answer[:90]!r}")
+    return "\n".join(lines)
