@@ -356,9 +356,12 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
         tags=tags
     )
 
+    reference_backend = result.pop("backend")
+
     return json_payload(tool_result(
         tool_name=_tool_name(add_personal_reference),
-        **result
+        reference_backend=reference_backend,
+        reference=result
     ))
 
 
