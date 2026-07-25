@@ -159,6 +159,15 @@ def _decode_attendees(raw_attendees: str | None) -> list[str]:
     return decoded if isinstance(decoded, list) else []
 
 
+def _decode_original_text(raw_json: str | None) -> str | None:
+    try:
+        decoded = json.loads(raw_json or "{}")
+    except Exception:
+        return None
+    value = decoded.get("original_text")
+    return value if isinstance(value, str) else None
+
+
 def json_payload(payload: dict[str, Any]) -> str:
     """도구 반환용 dict를 한글이 깨지지 않는 JSON 문자열로 변환합니다."""
 
@@ -280,6 +289,7 @@ def search_saved_request_rows(
             "priority": request["priority"],
             "reason": request["reason"],
             "created_at": request["created_at"],
+            "original_text": _decode_original_text(request.get("raw_json")),
         }
         for request in saved_requests
     ]
