@@ -500,6 +500,44 @@ ROUTING_CASES = [
         },
     },
     {
+        "id": "lookup.semantic_gap_keyword",
+        "group": "날짜+키워드",
+        "held_out": True,
+        # 리뷰에서 지적된 비대칭 — search_personal_references는 embedding이라 표현이 달라도
+        # 걸리지만 search_saved_requests는 SQLite LIKE 부분일치라 글자가 겹쳐야 걸린다.
+        # 시드에 "제주도 여행 일정"과 "제주도 여행 준비물 구매"가 있는데 "섬"은 어디에도 없다.
+        #
+        # 세 갈래를 다 재 보고 **프롬프트로는 못 고친다**고 결론 낸 케이스다.
+        #
+        # 1) 낱말을 넓혀 다시 검색하라는 규칙 → 0/10. 모델이 query='섬 여행'을 그대로 넘겼고
+        #    시도조차 하지 않았다. 저장할 때 쓴 낱말을 추측하라는 건 먹히지 않는다.
+        # 2) 스스로 하는 폴백 → 모델은 지시 없이도 list_saved_requests를 뒤이어 부른다.
+        #    그런데 이 기록은 가장 먼저 시딩돼 created_at DESC LIMIT 20 창 밖이고, 모델이
+        #    범위를 주면 date_to를 오늘로 끊어서 미래 날짜(8/1, 8/3)가 또 빠진다.
+        # 3) 대화 검색(embedding) 폴백 → 라우팅은 고쳐졌다(10/10으로 호출한다). 그런데
+        #    **검색 자체가 실패한다.** 실측 거리: '섬 여행' → 정답 대화 1.5753,
+        #    '섬 여행 관련해서 저장된 거 있어?' → 1.5141. DISTANCE_THRESHOLD=1.2 위다.
+        #    임계값을 낮춰도 소용없다 — 같은 질의에서 **무관한 "이사 계획 이야기"가 1.5393으로
+        #    정답보다 가깝다.** 참고로 '제주도 여행'은 1.0709, '휴가'는 1.0952로 잘 걸린다.
+        #
+        # 즉 "섬 → 제주도"는 의미적 근접이 아니라 세계 지식 추론이라 embedding으로도 안 넘는다.
+        # 근본 해결은 tool 설계다(structured_requests에 embedding 인덱스를 두거나 LIKE와
+        # 벡터를 함께 쓰는 hybrid). 그건 새 저장소가 필요해 이번 범위 밖이다.
+        #
+        # 3)의 폴백 규칙 자체는 프롬프트에 남겼다. embedding이 실제로 이어 주는 표현 차이
+        # ('휴가' 등)에서는 값어치가 있고, 전체 회귀도 없었다.
+        "known_limitation": (
+            "search_saved_requests가 SQLite LIKE 부분일치라 동의어·상위어가 걸리지 않는다. "
+            "대화 검색 폴백도 이 간극(섬 → 제주도)에서는 거리가 임계값 밖이다. "
+            "tool 설계 문제이므로 프롬프트로 고치지 않고 xfail로 추적한다."
+        ),
+        "user": "섬 여행 관련해서 저장된 거 있어?",
+        "expect": {
+            "called": ["search_saved_requests", "search_conversation_messages"],
+            "answer_matches_any": ["제주도"],
+        },
+    },
+    {
         "id": "lookup.empty_date_reports_none",
         "group": "날짜 조회",
         "held_out": True,
