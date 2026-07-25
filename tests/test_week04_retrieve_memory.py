@@ -158,14 +158,20 @@ class TestPersonalReferences:
     def test_add_helper_normalizes_missing_tags(self, week04):
         store = RecordingReferenceStore()
 
-        backend = week04.add_personal_reference_dict(
+        reference = week04.add_personal_reference_dict(
             store,
             title="회의 선호",
             content="오전 회의를 선호한다.",
             tags=None,
         )
 
-        assert backend == {"vector_store": "fake-chroma"}
+        assert reference == {
+            "reference_id": "ref_1",
+            "title": "회의 선호",
+            "content": "오전 회의를 선호한다.",
+            "tags": [],
+            "backend": {"vector_store": "fake-chroma"},
+        }
         assert store.add_calls == [
             {
                 "title": "회의 선호",
@@ -196,7 +202,7 @@ class TestPersonalReferences:
                 "distance": 0.12,
                 "metadata": {
                     "title": "회의 선호",
-                    "tags": "preference,meeting",
+                    "tags": ["preference", "meeting"],
                 },
             }
         ]
@@ -218,6 +224,7 @@ class TestPersonalReferences:
         assert payload["ok"] is True
         assert payload["tool_name"] == "add_personal_reference"
         assert payload["reference"] == {
+            "reference_id": "ref_1",
             "title": "점심시간",
             "content": "12시부터 13시는 비워 둔다.",
             "tags": [],
