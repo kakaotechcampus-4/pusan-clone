@@ -104,6 +104,11 @@ SEED_SAVED_REQUESTS = [
     {"kind": "personal_schedule", "title": "분기 전략 회의", "date": "2026-09-16", "start_time": "14:00"},
     {"kind": "todo", "title": "김장 준비", "date": "2026-09-18"},
     {"kind": "reminder", "title": "차량 정기점검", "date": "2026-09-20", "start_time": "14:00"},
+    # 아래 둘은 Week 3의 "종류 미지정 조회는 kind를 나눠 두 번 호출하라" 지시를 고친 **뒤에**
+    # 추가한 시드입니다. 위 unseen_* 케이스들은 그 수정 과정에서 지표로 썼으므로 그 시점부터
+    # 일반화 증거가 아닙니다 (cases_routing.py의 lookup.holdout_* 케이스).
+    {"kind": "todo", "title": "재활용 배출", "date": "2026-09-24"},
+    {"kind": "reminder", "title": "관리비 납부", "date": "2026-09-26", "start_time": "09:00"},
     # --- 날짜+키워드 동시 조회 실험용 (10월) ---
     #
     # `list_saved_requests`는 `created_at DESC LIMIT 20`이고 tool이 limit을 노출하지 않습니다.

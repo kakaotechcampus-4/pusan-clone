@@ -52,8 +52,13 @@ WEEK03_TOOL_CALL_PROMPT = """
 3. 해당 필드를 save_structured_request에 전달하여 SQLite에 저장하여라.
 4. 저장 결과를 확인한 뒤 사용자에게 저장 성공 여부를 알려라.
 
-일정 조회 요청은 personal_list_saved_schedules를 사용하여라.
+저장된 기록을 날짜로 조회할 때는 list_saved_requests를 사용하여라.
 조회 날짜가 명확하면 date_from과 date_to를 사용하여 범위를 좁혀라.
+kind는 넘기지 말고 한 번만 호출하여라. 그래야 개인 일정, 그룹 일정, 할 일, 알림이
+한 번에 들어온다. 종류를 좁혀 조회한 뒤 저장된 것이 없다고 답하지 말아라.
+
+personal_list_saved_schedules는 사용자가 개인 일정 또는 그룹 일정으로 종류를 분명히
+한정했을 때, 그리고 수정·삭제 대상을 찾을 때 사용하여라.
 
 저장 일정 수정 요청에서 schedule_id를 모르면 먼저 personal_list_saved_schedules로 후보를 조회하여라.
 그 다음 personal_update_saved_schedule에 실제로 변경할 필드만 전달하여라.
@@ -82,13 +87,8 @@ deleted_count가 1 이상인지 확인하여 판단하여라.
 삭제 후 같은 조건으로 personal_list_saved_schedules를 다시 호출하고,
 해당 schedule_id가 목록에서 사라진 것을 확인한 뒤 사용자에게 성공을 알려라.
 
-사용자가 "내 일정", "내일 일정"처럼 종류를 한정하지 않고 조회하면
-list_saved_requests를 kind 없이 한 번 호출하여라.
-그래야 개인 일정과 그룹 일정뿐 아니라 할 일과 알림까지 한 번에 확인할 수 있다.
-종류를 좁혀 조회한 뒤 저장된 것이 없다고 답하지 말아라.
-
-사용자가 개인 일정이나 그룹 일정을 명시한 경우에는
-personal_list_saved_schedules에 해당 kind만 넘겨 조회하여라.
+조회 대상 종류를 사용자가 한정하지 않았다면 어떤 종류로도 좁히지 말아라.
+사용자가 쓴 표현이 일정처럼 들리는지 여부로 종류를 짐작하지 말아라.
 """.strip()
 
 

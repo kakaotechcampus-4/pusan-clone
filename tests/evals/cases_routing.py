@@ -383,6 +383,35 @@ ROUTING_CASES = [
             "answer_matches_any": ["겨울옷", "도서관", "반납", "김장", "건강검진", "차량", "정기점검"],
         },
     },
+    # --- Week 3 조회 지시문을 고친 뒤 추가한, 한 번도 지표로 쓰지 않은 표면형 ---
+    #
+    # 위 unseen_* 셋은 "종류 미지정 조회는 kind를 나눠 두 번 호출하라"는 Week 3 지시를 찾아
+    # 고치는 동안 지표로 썼습니다. 그 시점부터 그 케이스들은 일반화 증거가 아닙니다.
+    # 아래 둘은 수정을 끝낸 뒤에 만들었고, 여기 쓰인 표현과 시드 제목은 프롬프트·도구 설명
+    # 어디에도 등장하지 않습니다.
+    {
+        "id": "lookup.holdout_availability_question",
+        "group": "날짜 조회",
+        "held_out": True,
+        # "비어 있어?"는 적대적입니다. 종류 단어가 없을 뿐 아니라 **없음을 기대하는 질문**이라
+        # 일정 테이블만 보고 "네, 비어 있습니다"라고 답하기 쉽습니다. 그날 있는 것은 todo뿐입니다.
+        "user": "9월 24일 비어 있어?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["재활용", "배출"],
+        },
+    },
+    {
+        "id": "lookup.holdout_recall_framing",
+        "group": "날짜 조회",
+        "held_out": True,
+        # 조회가 아니라 **회상** 형태로 묻습니다. 그날 있는 것은 reminder뿐입니다.
+        "user": "9월 26일에 나 뭐 하기로 했더라?",
+        "expect": {
+            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "answer_matches_any": ["관리비", "납부"],
+        },
+    },
     # --- 날짜 + 키워드 동시 조회 (두 도구 중 어느 순서가 나은지 실험) ---
     #
     # 어느 도구도 날짜와 키워드를 동시에 못 받는다. 그래서 하나로 좁히고 나머지는 결과를 읽어
