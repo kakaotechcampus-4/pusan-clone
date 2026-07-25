@@ -302,6 +302,8 @@ def search_conversation_messages_dict(
     )
 
     return {
+        "ok": True,
+        "tool_name": "search_conversation_messages_dict"
         "hits": search_result,
         "rows": search_result,
         "context": conversation_rag_store.context_from_hits(search_result),
@@ -340,7 +342,10 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요
     # from fixed.reference_store import PersonalReferenceStore
     tags = tags or []
-    return json_payload(REFERENCE_STORE.add_personal_reference(title, content, tags))
+    return json_payload({
+        "reference_backend": REFERENCE_STORE.backend_info(),
+        "reference": REFERENCE_STORE.add_personal_reference(title, content, tags)
+    })
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
