@@ -568,11 +568,11 @@ def week04_prompt_parts() -> list[str]:
         # "개인 참고자료에 저장된 선호, 규칙, 정책을 확인하려면 search_personal_references를 사용하여라.",
 
         # "앱에 저장된 이전 대화 기록을 확인해 보려면 search_conversation_messages를 사용하여라",
-        # "특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라.",
-        # "대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
+        "특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라.",
+        "대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용하여라.",
         
         # "저장된 요청, SQLite row, 구조화 일정/할 일/알림, kind(group_schedule, todo, reminder)를 찾으려면 search_saved_requests를 사용한다.",
-        # "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 가장 식별력 높은 한 단어 또는 짧은 연속 구를 전달하여라.",
+        "search_saved_requests의 query에는 사용자의 문장 전체가 아니라 가장 식별력 높은 한 단어 또는 짧은 연속 구를 전달하여라.",
 
         "질문이 여러 출처에 걸쳐 있으면 필요한 검색 도구를 각각 호출하고 출처를 구분하여 답하여라.",
         "사용자가 저장된 기록 자체를 찾는 질문에서 검색 결과가 없으면 내용을 추측하지 말고 찾은 기록이 없다고 답하여라.",
