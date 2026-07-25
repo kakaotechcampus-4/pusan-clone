@@ -623,7 +623,12 @@ def list_saved_requests(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
+    """저장된 일정·할 일·알림 목록을 날짜 범위로 조회합니다.
+
+    개인 일정, 그룹 일정, 할 일, 알림이 모두 이 목록에 함께 들어 있습니다.
+    kind를 생략하면 네 종류를 한 번에 반환합니다.
+    date_from과 date_to는 YYYY-MM-DD 형태이며 저장된 date를 기준으로 거릅니다.
+    """
 
     # TODO: kind/date_from/date_to 필터로 저장 요청을 조회하고 rows를 JSON 문자열로 반환하세요.
     rows = _store().list_saved_requests(
