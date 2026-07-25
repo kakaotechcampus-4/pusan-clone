@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from langchain.agents import create_agent
@@ -22,6 +23,7 @@ REFERENCE_STORE = PersonalReferenceStore(CONFIG.chroma_dir)
 SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
 CONVERSATION_RAG_STORE = ConversationRAGStore(CONFIG.chroma_dir)
 _WEEK04_AGENT: Any | None = None
+logger = logging.getLogger(__name__)
 
 
 # [4주차 수강생 구현 가이드]
@@ -245,6 +247,9 @@ def search_personal_reference_hits(
     result = reference_store.search_personal_references(query, top_k)
     hits = []
     for item in result:
+        if "content" not in item or item.get("distance") is None:
+            logger.warning("비정상 reference hit: id=%s keys=%s", item.get("id"), list(item.keys()))
+
         hits.append({
             "id": item.get("id"),
             "content": item.get("content", ""),
@@ -391,10 +396,11 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        "week3의 'RAG검색은 고려하지 않는다'는 규칙을 무시한다. "
+        "week3의 'RAG검색은 고려하지 않는다'와 '조회는 반드시 personal_list_saved_schedules를 사용한다'는 규칙을 무시한다. ",
         "사용자가 자신의 선호, 습관, 메모 등을 기억하라 지시하면 add_personal_reference를 사용하여 저장한다. ",
         "사용자의 요청이 SQLite, ChromaDB 중 무엇을 조회해야 하는지 직접 판단하고 결정한다. ",
-        "'다음주까지 저장된 일정 보여줘'와 같은 문장은 search_saved_requests를 사용하여 SQLite DB를 검색한다. ",
+        "일정/할 일/리마인더를 날짜 기준으로 조회할 때는 personal_list_saved_schedules를 사용한다. ",
+        "'부산 워크숍 관련해서 저장한 거 있어?'처럼 키워드로 검색하는 문장은 search_saved_requests를 사용하여 SQLite DB를 검색한다. ",
         "'내가 좋아하는 회의 시간대가 언제였지?'와 같은 문장은 search_personal_references를 사용하여 Chroma DB를 검색한다. ",
         "검색이 필요할 때 무슨 tool을 사용할지 모호할 경우 search_saved_requests, search_personal_references를 모두 사용하여 최종 판단에 두 결과를 적절히 반영한다. ",
         "검색 결과가 질문과 무관할 경우 임의로 답변을 지어내지 말고 '관련된 자료가 없습니다'라고 답한다. ",
