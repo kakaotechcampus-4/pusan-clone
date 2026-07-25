@@ -286,7 +286,28 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    ...
+    sync_result = conversation_rag_store.sync_from_sqlite(sqlite_store)
+
+    current_scope = current_session_scope()
+    exclude_id: str | None = None
+
+    if conversation_id is None and current_scope != DEFAULT_SESSION_SCOPE:
+        exclude_id = current_scope
+
+    search_result = conversation_rag_store.search(
+        query=query,
+        top_k=safe_limit(top_k),
+        exclude_conversation_id=exclude_id,
+        conversation_id=conversation_id,
+    )
+
+    return {
+        "hits": search_result,
+        "rows": search_result,
+        "context": conversation_rag_store.context_from_hits(search_result),
+        "rag_backend": conversation_rag_store.backend_info(),
+        "sync": sync_result
+    }
 
 
 def search_conversation_message_rows(
@@ -299,7 +320,17 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    ...
+    # conversation_id를 명시하지 않으면 현재 대화 범위는 검색에서 제외해 "방금 한 말"이 과거 검색처럼 섞이지 않게 됨
+    search_result = search_conversation_messages_dict(
+        sqlite_store=sqlite_store,
+        conversation_rag_store=CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=safe_limit(top_k),
+        conversation_id=conversation_id
+    )
+
+    return search_result["hits"]
+
 
 
 @tool(args_schema=AddPersonalReferenceInput)
@@ -346,7 +377,15 @@ def search_conversation_messages(
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
     # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    ...
+    sqlite_list = search_conversation_messages_dict(
+        sqlite_store=SQLITE_STORE,
+        conversation_rag_store=CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=safe_limit(top_k),
+        conversation_id=conversation_id
+    )
+
+    return json_payload({"ok": True, "tool_name": "search_conversation_messages", **sqlite_list})
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -360,7 +399,61 @@ def search_nana_memory(
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    limit = safe_limit(limit)
+
+    personal = search_personal_reference_hits(
+        REFERENCE_STORE,
+        query=query,
+        top_k=limit
+    )
+
+    saved_schedules = SQLITE_STORE.list_schedules(
+        limit=limit,
+        date_from=date_from,
+        date_to=date_to
+    )
+
+    if attendee is not None:
+        schedules = []
+        for row in saved_schedules:
+            attendee_list = row.get("attendees", [])
+            for i in range(len(attendee_list)):
+                attendee_list[i] = attendee_list[i].strip()
+            if attendee.strip() in attendee_list:
+                schedules.append(row)
+    else:
+        schedules = saved_schedules
+
+    context = ["[reference]"]
+
+    if personal:
+        for idx, hit in enumerate(personal, start=1):
+            context.append(f"[{idx} {hit.get('title', '')}]")
+            context.append(str(hit.get("content", "")).strip())
+    else:
+        context.append(" - nothing reference -")
+
+    context.append("[SQLite schedule]")
+    if schedules:
+        for idx, row in enumerate(schedules, start=1):
+            attendees = ", ".join(row.get("attendees", [])) or "미정"
+            context.append(f"[{idx} {row.get('title', '')}]")
+            context.append(
+                f"{row.get('date') or '미정'} {row.get('start_time') or '미정'}-{row.get('end_time') or '미정'} | attendees: {attendees}"
+            )
+    else:
+        context.append(" - nothing schedule -")
+
+    context = "\n".join(context)
+
+    return json_payload({
+        "ok": True,
+        "tool_name": "search_nana_memory",
+        "reference_backend": REFERENCE_STORE.backend_info(),
+        "personal_reference": personal,
+        "schedules": schedules,
+        "context": context,
+    })
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
