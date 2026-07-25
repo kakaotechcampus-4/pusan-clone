@@ -269,10 +269,22 @@ def search_saved_request_rows(
     *,
     query: str,
     top_k: int = 3,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    attendee: str | None = None,
 ) -> list[dict[str, Any]]:
-    """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
-    
-    return sqlite_store.search_saved_requests(query = query, limit = top_k)
+    """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다.
+
+    date_from/date_to/attendee가 주어지면 먼저 검색 공간을 좁힌 뒤 query로 텍스트 검색합니다.
+    """
+
+    return sqlite_store.search_saved_requests(
+        query=query,
+        limit=top_k,
+        date_from=date_from,
+        date_to=date_to,
+        attendee=attendee,
+    )
 
 def search_conversation_messages_dict(
     sqlite_store: AppSQLiteStore,
@@ -370,12 +382,34 @@ def search_nana_memory(
     attendee: str | None = None,
     limit: int = 5,
 ) -> str:
-    """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
+    """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다.
+
+    date_from/date_to로 날짜 범위를, attendee로 참석자를 먼저 좁힌 뒤
+    query로 텍스트 검색을 수행합니다. 개인 참고자료(ChromaDB)는 날짜/참석자
+    개념이 없으므로 query만 사용합니다.
+    """
 
     safe_top_k = safe_limit(limit, default=5, maximum=20)
+    query_text = str(query or "").strip()
 
-    hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=safe_top_k)
-    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=safe_top_k)
+    # 참고자료: 벡터 검색 — query가 없으면 건너뜀 (빈 문자열은 embedding API 오류 발생)
+    # 날짜/참석자 필터는 ChromaDB 개념에 없으므로 query만 사용
+    hits = (
+        search_personal_reference_hits(REFERENCE_STORE, query=query_text, top_k=safe_top_k)
+        if query_text
+        else []
+    )
+
+    # 일정/할일: 날짜·참석자로 검색 공간을 먼저 좁히고, 그 안에서 query 검색
+    # query가 없으면 날짜/참석자 조건만으로 조회 (키워드 조건 없이 필터만 적용)
+    rows = search_saved_request_rows(
+        SQLITE_STORE,
+        query=query_text,
+        top_k=safe_top_k,
+        date_from=date_from,
+        date_to=date_to,
+        attendee=attendee,
+    )
 
     lines = []
     for hit in hits:
@@ -421,13 +455,16 @@ def week04_prompt_parts() -> list[str]:
         "search_personal_references: 사용자의 선호/정책/참고자료에 관련된 질문에 사용 (ChromaDB 벡터 검색) ",
         "search_saved_requests: 저장된 일정/할일/알림을 키워드로 검색할 때 사용 (SQLite 텍스트 검색), ",
         "search_conversation_messages: 이전 대화에서 나눈 내용을 검색할 때 사용 (SQLite → ChromaDB lazy sync 후 벡터 검색), ",
-        "search_nana_memory: 참고자료와 저장된 일정을 한 번에 통합 검색할 때 사용",
+        "search_nana_memory: 참고자료와 저장된 일정을 한 번에 통합 검색할 때 사용. "
+        "date_from/date_to로 날짜 범위를, attendee로 특정 참석자를 SQL 필터로 먼저 좁힌 뒤 query로 키워드 검색한다. ",
         "[도구 선택 기준] ",
         "일정을 키워드로 '찾아줘/검색해줘' → search_saved_requests ",
-        "특정 날짜 범위의 일정 '목록 보여줘/알려줘' → personal_list_saved_schedules ",
+        "특정 날짜 범위의 일정 '목록 보여줘/알려줘' (참석자 조건 없음) → personal_list_saved_schedules ",
         "선호/정책/참고자료 질문 → search_personal_references, ",
         "'지난번에 뭐 얘기했지?', '예전에 뭐라고 했었지?' 같은 과거 대화 검색 → search_conversation_messages, ",
         "참고자료와 일정을 동시에 검색하고 싶을 때 → search_nana_memory, ",
+        "'~랑', '~와 잡힌', '~이 참석한' 처럼 특정 참석자 조건이 포함된 일정 검색 → search_nana_memory (attendee 파라미터 사용), ",
+        "날짜 범위 + 참석자 조건을 함께 쓸 때 → search_nana_memory (date_from/date_to + attendee 파라미터 함께 사용), ",
         "참고자료 관련 질문은 대화 기억에 의존하지 말고 반드시 search_personal_references를 호출해서 응답해"
     ]
 
