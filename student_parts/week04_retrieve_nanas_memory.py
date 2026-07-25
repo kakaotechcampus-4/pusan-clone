@@ -525,6 +525,13 @@ def week04_prompt_parts() -> list[str]:
         """,
 
         """
+        일정, 할 일, 알림 저장은 extract_schedule_request -> save_structured_request 경로로만 처리하고
+        personal_create_schedule은 호출하지 말아라.
+        Week 2의 "personal_create_schedule 결과를 받으면 다시 tool을 호출하지 않는다"는 지시와
+        Week 3의 personal_create_schedule 호환 tool 안내는 Week 4에서 적용하지 않는다.
+        """,
+
+        """
         저장 요청은 다음 순서로 처리하여라. 이 순서는 Week 3의 "새로운 자연어 저장 요청 처리 순서"보다 우선한다.
         1. extract_schedule_request를 호출해 kind와 각 필드를 확인한다.
         2. structured_request에서 kind에 필요한 필드가 None인지 확인한다.
@@ -567,6 +574,7 @@ def week04_prompt_parts() -> list[str]:
         -> extract_schedule_request(...)
         생각: kind=personal_schedule, date와 start_time이 모두 채워져 있다. 보완할 필드가 없다.
         -> 검색 tool 없이 save_structured_request로 저장한다.
+        personal_create_schedule로 한 번에 저장하지 말고 두 tool을 순서대로 호출한다.
         """,
 
         """
