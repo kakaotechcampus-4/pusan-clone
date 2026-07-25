@@ -242,7 +242,11 @@ def search_personal_reference_hits(
     hits: list[dict[str, Any]] = []
     for hit in raw_hits:
         tags_raw = hit.get("tags", "")
-        tags = [tag for tag in tags_raw.split(",") if tag] if isinstance(tags_raw, str) else list(tags_raw or [])
+        tags = (
+            [tag.strip() for tag in tags_raw.split(",") if tag.strip()]
+            if isinstance(tags_raw, str)
+            else list(tags_raw or [])
+        )
         hits.append(
             {
                 "id": hit.get("id"),
