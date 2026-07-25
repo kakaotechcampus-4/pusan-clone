@@ -22,12 +22,13 @@ from student_parts.week03_build_nanas_logbook import (
     _tool_name
 )
 
+DISTANCE_THRESHOLD = 1.4
+
 
 REFERENCE_STORE = PersonalReferenceStore(CONFIG.chroma_dir)
 SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
 CONVERSATION_RAG_STORE = ConversationRAGStore(CONFIG.chroma_dir)
 _WEEK04_AGENT: Any | None = None
-
 
 # [4주차 수강생 구현 가이드]
 #
@@ -263,7 +264,7 @@ def search_personal_reference_hits(
             }
         }
         for ref in res
-        if ref["distance"] < 1.6
+        if ref["distance"] < DISTANCE_THRESHOLD
     ]
 
 
