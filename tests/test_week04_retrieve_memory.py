@@ -340,7 +340,7 @@ class TestConversationRAG:
         prompt의 "검색 결과가 없으면 찾은 기록이 없다고 답하여라"가 발동할 수 없습니다.
         """
 
-        threshold = week04.DISTANCE_THRESHOLD
+        threshold = week04.CONVERSATION_DISTANCE_THRESHOLD
         near = {"conversation_id": "near", "content": "가까운 대화", "distance": threshold - 0.1}
         far = {"conversation_id": "far", "content": "먼 대화", "distance": threshold + 0.1}
         rag_store = RecordingConversationRAGStore([near, far])
@@ -357,7 +357,11 @@ class TestConversationRAG:
     def test_all_hits_beyond_threshold_yield_empty_result(self, week04):
         """전부 임계값을 넘으면 hits가 빈 목록이 됩니다 — 이게 "기록 없음" 신호입니다."""
 
-        far = {"conversation_id": "far", "content": "먼 대화", "distance": week04.DISTANCE_THRESHOLD + 1}
+        far = {
+            "conversation_id": "far",
+            "content": "먼 대화",
+            "distance": week04.CONVERSATION_DISTANCE_THRESHOLD + 1,
+        }
         rag_store = RecordingConversationRAGStore([far])
 
         payload = week04.search_conversation_messages_dict(object(), rag_store, query="무관한 질문")
