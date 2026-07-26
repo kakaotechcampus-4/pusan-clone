@@ -260,7 +260,11 @@ def search_personal_reference_hits(
             "distance" : ref["distance"],
             "metadata" : {
                 "title" : ref["title"],
-                "tags" : ref["tags"].split(",")
+                "tags" : [
+                    tag.strip() 
+                    for tag in ref["tags"].split(",") 
+                    if tag.strip()
+                ]
             }
         }
         for ref in res
