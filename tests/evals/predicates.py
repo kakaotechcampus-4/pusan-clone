@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""agent trace와 최종 답변을 케이스 기대값과 대조하는 채점 함수들입니다.
+"""agent trace의 tool call과 tool result를 케이스 기대값과 대조하는 채점 함수들입니다.
 
 `fixed/langchain_trace.py`의 `extract_agent_events()`가 만든 이벤트 배열을 그대로
 입력으로 받습니다. 채점 결과는 예외가 아니라 **실패 이유 목록**으로 돌려줍니다.
@@ -16,15 +16,25 @@ from __future__ import annotations
         "max_calls":  {"search_saved_requests": 1},          # 호출 횟수 상한
         "order":      ["extract_schedule_request", "save_structured_request"],
         "args": {"search_saved_requests": {"query": {"max_words": 3}}},
-        "answer_matches_any": [r"없", r"찾지 못"],
-        "answer_matches_all": [r"현재 검색어", r"(제목|날짜)"],
-        "answer_not_matches_any": [r"제주도"],
+        "result_contains": [
+            {
+                "tool": "list_saved_requests",
+                "path": "rows",
+                "row": {"kind": "todo", "title": "겨울옷 정리", "date": "2026-09-10"},
+            }
+        ],
+        "result_contains_any": [
+            {"tool": "list_saved_requests", "path": "rows", "row": {"title": "겨울옷 정리"}},
+            {"tool": "search_saved_requests", "path": "rows", "row": {"title": "겨울옷 정리"}},
+        ],
+        "result_empty": [{"tool": "search_saved_requests", "path": "rows"}],
+        "result_equals": [{"tool": "save_structured_request", "path": "ok", "value": True}],
     }
 
-`args`에 쓸 수 있는 검사는 `is_null`, `equals`, `max_words`, `contains_any`입니다.
+`args`에 쓸 수 있는 검사는 `is_null`, `equals`, `max_words`입니다.
+`max_words`는 비어 있지 않은 문자열에만 적용됩니다.
 """
 
-import re
 from typing import Any
 
 
@@ -46,6 +56,20 @@ def first_call_arguments(events: list[dict[str, Any]], tool_name: str) -> dict[s
             arguments = event.get("arguments")
             return arguments if isinstance(arguments, dict) else {}
     return None
+
+
+def tool_result_contents(events: list[dict[str, Any]], tool_name: str) -> list[dict[str, Any]]:
+    """지정한 tool의 JSON object 결과를 호출 순서대로 반환합니다."""
+
+    return [
+        event["content"]
+        for event in events
+        if (
+            event.get("event") == "tool_result"
+            and event.get("tool_name") == tool_name
+            and isinstance(event.get("content"), dict)
+        )
+    ]
 
 
 def _word_count(value: Any) -> int:
@@ -72,15 +96,12 @@ def _check_argument(tool_name: str, argument: str, value: Any, checks: dict[str,
 
     if "max_words" in checks:
         maximum = int(checks["max_words"])
-        counted = _word_count(value)
-        if counted > maximum:
-            reasons.append(f"{label}이 {maximum}단어 이하여야 하는데 {counted}단어이다: {value!r}")
-
-    if "contains_any" in checks:
-        candidates = list(checks["contains_any"])
-        text = "" if value is None else str(value)
-        if not any(candidate in text for candidate in candidates):
-            reasons.append(f"{label}에 {candidates} 중 하나가 있어야 하는데 {value!r}이다")
+        if not isinstance(value, str) or not value.strip():
+            reasons.append(f"{label}은 비어 있지 않은 문자열이어야 하는데 {value!r}이다")
+        else:
+            counted = _word_count(value)
+            if counted > maximum:
+                reasons.append(f"{label}이 {maximum}단어 이하여야 하는데 {counted}단어이다: {value!r}")
 
     return reasons
 
@@ -123,21 +144,77 @@ def check_case(
         for argument, checks in argument_checks.items():
             reasons.extend(_check_argument(tool_name, argument, arguments.get(argument), checks))
 
-    patterns = expect.get("answer_matches_any")
-    if patterns and not any(re.search(pattern, answer) for pattern in patterns):
-        reasons.append(f"답변이 {list(patterns)} 중 아무 패턴과도 맞지 않는다: {answer[:120]!r}")
+    del answer
+    for spec in expect.get("result_contains", []):
+        if not _result_contains(events, spec):
+            reasons.append(f"tool result가 기대 row를 포함하지 않는다: {spec!r}")
 
-    required_patterns = expect.get("answer_matches_all", [])
-    missing_patterns = [pattern for pattern in required_patterns if not re.search(pattern, answer)]
-    if missing_patterns:
-        reasons.append(f"답변이 필수 패턴 {missing_patterns}과 맞지 않는다: {answer[:120]!r}")
+    contains_any_specs = expect.get("result_contains_any", [])
+    if contains_any_specs and not any(_result_contains(events, spec) for spec in contains_any_specs):
+        reasons.append(f"tool result 중 기대 row를 포함하는 후보가 없다: {contains_any_specs!r}")
 
-    forbidden_patterns = expect.get("answer_not_matches_any", [])
-    matched_patterns = [pattern for pattern in forbidden_patterns if re.search(pattern, answer)]
-    if matched_patterns:
-        reasons.append(f"답변이 금지 패턴 {matched_patterns}과 맞는다: {answer[:120]!r}")
+    for spec in expect.get("result_empty", []):
+        if not _result_is_empty(events, spec):
+            reasons.append(f"tool result가 빈 collection이어야 한다: {spec!r}")
+
+    for spec in expect.get("result_equals", []):
+        if not _result_equals(events, spec):
+            reasons.append(f"tool result 값이 기대와 다르다: {spec!r}")
 
     return reasons
+
+
+def _resolve_path(content: dict[str, Any], path: str) -> tuple[bool, Any]:
+    """점으로 구분한 JSON object 경로를 따라 값과 존재 여부를 반환합니다."""
+
+    value: Any = content
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return False, None
+        value = value[part]
+    return True, value
+
+
+def _row_matches(row: Any, expected: dict[str, Any]) -> bool:
+    """row의 지정 필드들이 타입 변환 없이 정확히 일치하는지 확인합니다."""
+
+    return isinstance(row, dict) and all(
+        key in row and row[key] == value
+        for key, value in expected.items()
+    )
+
+
+def _result_contains(events: list[dict[str, Any]], spec: dict[str, Any]) -> bool:
+    """지정한 tool result collection 중 하나가 기대 row를 포함하는지 확인합니다."""
+
+    for content in tool_result_contents(events, str(spec["tool"])):
+        exists, collection = _resolve_path(content, str(spec["path"]))
+        if exists and isinstance(collection, list):
+            if any(_row_matches(row, dict(spec["row"])) for row in collection):
+                return True
+    return False
+
+
+def _result_is_empty(events: list[dict[str, Any]], spec: dict[str, Any]) -> bool:
+    """지정한 tool의 모든 result collection이 정확히 빈 list인지 확인합니다."""
+
+    collections: list[Any] = []
+    for content in tool_result_contents(events, str(spec["tool"])):
+        exists, collection = _resolve_path(content, str(spec["path"]))
+        if not exists:
+            return False
+        collections.append(collection)
+    return bool(collections) and all(collection == [] for collection in collections)
+
+
+def _result_equals(events: list[dict[str, Any]], spec: dict[str, Any]) -> bool:
+    """지정한 tool result 중 하나의 경로 값이 기대값과 정확히 같은지 확인합니다."""
+
+    for content in tool_result_contents(events, str(spec["tool"])):
+        exists, value = _resolve_path(content, str(spec["path"]))
+        if exists and value == spec["value"]:
+            return True
+    return False
 
 
 def _check_order(expected_order: list[str], called: list[str]) -> list[str]:

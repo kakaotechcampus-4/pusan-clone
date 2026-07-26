@@ -3,8 +3,8 @@ from __future__ import annotations
 """Week 4 LLM 동작 검증용 격리 환경과 반복 실행 러너입니다.
 
 여기서 확인하는 것은 하나입니다 — **system prompt가 요구하는 대로 모델이 도구를 고르고
-순서를 지키는가.** 판정은 trace의 tool call 이름·인자·순서로 하고, 답변 텍스트는 "기록이
-없다고 말해야 하는" 케이스에서만 봅니다.
+순서를 지키는가.** 판정은 trace의 tool call 이름·인자·순서로 하고, 저장 기록을 찾거나
+찾지 못했다고 답해야 하는 케이스에서는 답변의 존재·부재 의미도 함께 봅니다.
 
 이 디렉터리의 테스트는 실제 LLM API를 호출하므로 `--eval`을 줘야 수집됩니다
 (옵션과 마커 정의는 `tests/conftest.py`).
@@ -21,12 +21,14 @@ import importlib
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 import fixed.config as config_module
+import fixed.runtime_clock as runtime_clock
 from fixed.langchain_trace import extract_agent_events, extract_final_text
 from fixed.session_scope import conversation_session_scope
 from tests.evals.cases_routing import ROUTING_CASES
@@ -45,6 +47,13 @@ CASE_PASS_RATE_FLOOR = 0.8
 # 가리키고, 그 안의 `pytest-of-*` 디렉터리를 나열할 권한이 없어 PermissionError로 깨지기
 # 때문입니다. 이 경로는 `.git/info/exclude`로 git에서 제외돼 있습니다.
 EVAL_TMP_ROOT = Path(__file__).resolve().parent / ".tmp" / "session"
+EVAL_TODAY = date(2026, 7, 26)
+
+
+def _freeze_eval_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """상대 날짜 평가가 고정 시드와 충돌하지 않도록 앱 기준일을 고정합니다."""
+
+    monkeypatch.setattr(runtime_clock, "APP_TODAY", EVAL_TODAY)
 
 
 # --- 시딩 데이터 -----------------------------------------------------------------
@@ -192,6 +201,7 @@ def eval_env() -> Any:
     )
 
     monkeypatch = pytest.MonkeyPatch()
+    _freeze_eval_clock(monkeypatch)
     monkeypatch.setattr(config_module, "CONFIG", patched_config)
     # 외부 공유 일정 저장소는 MCP **subprocess**가 열기 때문에 in-process CONFIG 패치가
     # 닿지 않습니다. subprocess가 물려받는 환경 변수로 따로 격리해야 합니다
@@ -346,6 +356,7 @@ class RunOutcome:
     failures: list[str] | None
     calls: list[str]
     answer: str
+    events: list[dict[str, Any]]
 
 
 def _tally(case_id: str, *, repeats: int, outcomes: list[RunOutcome]) -> dict[str, Any]:
@@ -397,7 +408,7 @@ def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) ->
             result = agent.invoke({"messages": messages})
     except Exception as exc:  # 한 번의 오류가 전체 평가를 죽이지 않게 합니다.
         print(f"[eval] {case['id']} #{index} 인프라 오류: {type(exc).__name__}: {exc}")
-        return RunOutcome(failures=None, calls=[], answer="")
+        return RunOutcome(failures=None, calls=[], answer="", events=[])
 
     events = extract_agent_events(result)
     answer = extract_final_text(result)
@@ -405,6 +416,7 @@ def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) ->
         failures=predicates.check_case(case["expect"], events, answer),
         calls=_describe_calls(events),
         answer=answer,
+        events=events,
     )
 
 

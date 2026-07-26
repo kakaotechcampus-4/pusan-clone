@@ -11,7 +11,9 @@ from typing import Any
 
 import pytest
 
+import fixed.runtime_clock as runtime_clock
 from tests.evals import cases_routing, predicates
+from tests.evals.conftest import EVAL_TODAY, _freeze_eval_clock
 
 
 def tool_call(tool_name: str, **arguments: Any) -> dict[str, Any]:
@@ -59,6 +61,15 @@ class TestEventHelpers:
 
     def test_first_call_arguments_is_none_when_not_called(self):
         assert predicates.first_call_arguments([], "search_saved_requests") is None
+
+    def test_tool_result_contents_keeps_json_results_only(self):
+        events = [
+            tool_result("search_saved_requests", {"rows": []}),
+            tool_result("search_saved_requests", "not-json"),
+            tool_result("other", {"rows": [{"title": "다른 기록"}]}),
+        ]
+
+        assert predicates.tool_result_contents(events, "search_saved_requests") == [{"rows": []}]
 
 
 class TestCalledPredicates:
@@ -175,15 +186,16 @@ class TestArgumentPredicates:
 
         assert (predicates.check_case(expect, events, "") == []) is passes
 
+    @pytest.mark.parametrize("query", [None, "", "   ", 123, ["제주도"]])
+    def test_max_words_requires_non_empty_string(self, query):
+        events = [tool_call("search_saved_requests", query=query)]
+        expect = {"args": {"search_saved_requests": {"query": {"max_words": 3}}}}
+
+        assert predicates.check_case(expect, events, "") != []
+
     def test_equals(self):
         events = [tool_call("save_structured_request", kind="todo")]
         expect = {"args": {"save_structured_request": {"kind": {"equals": "todo"}}}}
-
-        assert predicates.check_case(expect, events, "") == []
-
-    def test_contains_any(self):
-        events = [tool_call("search_personal_references", query="팀 회의 시작 시간 선호")]
-        expect = {"args": {"search_personal_references": {"query": {"contains_any": ["회의"]}}}}
 
         assert predicates.check_case(expect, events, "") == []
 
@@ -196,73 +208,127 @@ class TestArgumentPredicates:
         assert "호출되지 않아" in reasons[0]
 
 
-class TestAnswerPredicate:
-    def test_matching_pattern_passes(self):
-        expect = {"answer_matches_any": ["없", "찾지 못"]}
+class TestToolResultPredicates:
+    def test_result_contains_matches_exact_partial_row(self):
+        events = [
+            tool_result(
+                "list_saved_requests",
+                {
+                    "rows": [
+                        {
+                            "request_id": "req-1",
+                            "kind": "todo",
+                            "title": "겨울옷 정리",
+                            "date": "2026-09-10",
+                        }
+                    ]
+                },
+            )
+        ]
+        expect = {
+            "result_contains": [
+                {
+                    "tool": "list_saved_requests",
+                    "path": "rows",
+                    "row": {
+                        "kind": "todo",
+                        "title": "겨울옷 정리",
+                        "date": "2026-09-10",
+                    },
+                }
+            ]
+        }
 
-        assert predicates.check_case(expect, [], "관련 기록을 찾지 못했어요.") == []
+        assert predicates.check_case(expect, events, "") == []
 
-    def test_no_match_fails(self):
-        expect = {"answer_matches_any": ["없", "찾지 못"]}
+    def test_result_contains_does_not_use_substring_matching(self):
+        events = [
+            tool_result(
+                "list_saved_requests",
+                {"rows": [{"kind": "todo", "title": "겨울옷 정리", "date": "2026-09-10"}]},
+            )
+        ]
+        expect = {
+            "result_contains": [
+                {
+                    "tool": "list_saved_requests",
+                    "path": "rows",
+                    "row": {"title": "겨울옷"},
+                }
+            ]
+        }
 
-        assert predicates.check_case(expect, [], "등산 모임은 8월 3일입니다.") != []
+        assert predicates.check_case(expect, events, "") != []
 
-    def test_all_required_patterns_must_match(self):
-        expect = {"answer_matches_all": ["현재 검색어", r"(제목|날짜)", "알려"]}
+    def test_result_contains_any_accepts_one_matching_tool(self):
+        events = [
+            tool_result(
+                "search_saved_requests",
+                {"rows": [{"kind": "todo", "title": "김장 준비", "date": "2026-09-18"}]},
+            )
+        ]
+        expect = {
+            "result_contains_any": [
+                {
+                    "tool": "list_saved_requests",
+                    "path": "rows",
+                    "row": {"title": "김장 준비"},
+                },
+                {
+                    "tool": "search_saved_requests",
+                    "path": "rows",
+                    "row": {"title": "김장 준비"},
+                },
+            ]
+        }
+
+        assert predicates.check_case(expect, events, "") == []
+
+    def test_result_empty_requires_every_result_collection_to_be_empty(self):
+        expect = {"result_empty": [{"tool": "search_saved_requests", "path": "rows"}]}
 
         assert predicates.check_case(
             expect,
-            [],
-            "현재 검색어로는 확인하기 어려워요. 저장 당시 제목이나 날짜를 알려주세요.",
+            [tool_result("search_saved_requests", {"rows": []})],
+            "",
         ) == []
-        assert predicates.check_case(expect, [], "현재 검색어로는 확인하기 어려워요.") != []
-
-    def test_forbidden_answer_pattern_fails(self):
-        expect = {"answer_not_matches_any": ["제주도", "일본"]}
-
-        assert predicates.check_case(expect, [], "저장 당시 제목이나 날짜를 알려주세요.") == []
-        assert predicates.check_case(expect, [], "제주도 여행 일정이 있습니다.") != []
-
-
-class TestNoRecordPatterns:
-    """`NO_RECORD_PATTERNS`가 실제 관측된 답변을 옳게 판정하는지 고정합니다.
-
-    처음에는 `없`만 봐서, 모델이 "저장되어 있지 않습니다"로 올바르게 답한 것을 실패로 세는
-    false negative가 났습니다. 채점기의 오판은 평가 전체를 무의미하게 만들므로 관측된 문장을
-    그대로 테스트에 박아 둡니다.
-    """
+        assert predicates.check_case(
+            expect,
+            [
+                tool_result("search_saved_requests", {"rows": []}),
+                tool_result("search_saved_requests", {"rows": [{"title": "등산 모임"}]}),
+            ],
+            "",
+        ) != []
 
     @pytest.mark.parametrize(
-        "answer",
+        "events",
         [
-            # 아래 둘은 2026-07-25 실행에서 실제로 모델이 낸 답변입니다.
-            "예전 대화 기록 중에 '양자역학'에 관한 내용은 저장되어 있지 않습니다. 다른 질문이나 요청 있으시면 알려주세요.",
-            "예전 대화 기록을 확인한 결과, 사용자가 양자역학에 대해 언급한 내용은 저장되어 있지 않습니다.",
-            "관련 기록을 찾지 못했어요.",
-            "저장된 등산 모임 일정이 없습니다.",
-            "해당 내용은 확인되지 않습니다.",
-            "찾을 수 없었어요.",
+            [],
+            [tool_result("search_saved_requests", "not-json")],
+            [tool_result("search_saved_requests", {"hits": []})],
         ],
     )
-    def test_correct_no_record_answers_pass(self, answer):
-        expect = {"answer_matches_any": cases_routing.NO_RECORD_PATTERNS}
+    def test_result_empty_fails_for_missing_or_malformed_result(self, events):
+        expect = {"result_empty": [{"tool": "search_saved_requests", "path": "rows"}]}
 
-        assert predicates.check_case(expect, [], answer) == []
+        assert predicates.check_case(expect, events, "") != []
 
-    @pytest.mark.parametrize(
-        "answer",
-        [
-            # 기록이 없다고 말하지 않고 내용을 만들어 낸 답변들.
-            "양자역학 스터디를 목요일 저녁에 한다고 하셨어요.",
-            "등산 모임은 8월 3일 오전 9시입니다.",
-            # 부정 표현이 섞여 있지만 결국 추측을 제시하는 답변 — 통과하면 안 됩니다.
-            "정확히 기억나지 않지만 양자역학 스터디를 하신다고 하셨어요.",
-        ],
-    )
-    def test_fabricated_answers_fail(self, answer):
-        expect = {"answer_matches_any": cases_routing.NO_RECORD_PATTERNS}
+    def test_result_equals_resolves_nested_path(self):
+        events = [
+            tool_result(
+                "save_structured_request",
+                {"ok": True, "saved": {"request_id": "req-1", "kind": "todo"}},
+            )
+        ]
+        expect = {
+            "result_equals": [
+                {"tool": "save_structured_request", "path": "ok", "value": True},
+                {"tool": "save_structured_request", "path": "saved.kind", "value": "todo"},
+            ]
+        }
 
-        assert predicates.check_case(expect, [], answer) != []
+        assert predicates.check_case(expect, events, "") == []
 
 
 class TestRoutingCaseDataset:
@@ -288,9 +354,10 @@ class TestRoutingCaseDataset:
             "max_calls",
             "order",
             "args",
-            "answer_matches_any",
-            "answer_matches_all",
-            "answer_not_matches_any",
+            "result_contains",
+            "result_contains_any",
+            "result_empty",
+            "result_equals",
         }
         for case in cases_routing.ROUTING_CASES:
             unknown = set(case["expect"]) - known
@@ -315,10 +382,22 @@ class TestMultipleFailuresAreCollected:
         expect = {
             "called": ["search_personal_references"],
             "not_called": ["personal_create_schedule"],
-            "answer_matches_any": ["없"],
+            "result_empty": [{"tool": "search_saved_requests", "path": "rows"}],
         }
         events = [tool_call("personal_create_schedule")]
 
         reasons = predicates.check_case(expect, events, "8월 3일로 잡았어요.")
 
         assert len(reasons) == 3
+
+
+class TestEvalClock:
+    def test_eval_clock_is_frozen_and_restored(self):
+        original_today = runtime_clock.APP_TODAY
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            _freeze_eval_clock(monkeypatch)
+            assert runtime_clock.current_app_date() == EVAL_TODAY
+            assert runtime_clock.current_app_date_iso() == "2026-07-26"
+
+        assert runtime_clock.APP_TODAY == original_today

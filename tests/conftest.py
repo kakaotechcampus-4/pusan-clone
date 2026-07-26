@@ -8,6 +8,7 @@ import student_parts.week02_structure_natural_language_requests as week02
 
 
 EVAL_MARKER = "eval"
+ANSWER_EVAL_MARKER = "answer_eval"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -24,6 +25,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         default=False,
         help="실제 LLM/embedding API를 호출하는 평가만 실행합니다 (기본값은 제외).",
+    )
+    group.addoption(
+        "--eval-answers",
+        action="store_true",
+        default=False,
+        help="LLM judge가 최종 답변의 정합성을 판정하는 비차단 평가만 실행합니다.",
     )
     group.addoption(
         "--eval-repeats",
@@ -50,17 +57,31 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "eval: 실제 LLM API를 호출하는 동작 평가 (기본 실행에서 제외, --eval로 실행)",
     )
+    config.addinivalue_line(
+        "markers",
+        "answer_eval: LLM judge가 최종 답변을 판정하는 비차단 평가 (--eval-answers로 실행)",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """`--eval` 여부에 따라 평가 테스트와 일반 테스트 중 한쪽만 남깁니다."""
 
     run_eval = bool(config.getoption("--eval"))
+    run_answer_eval = bool(config.getoption("--eval-answers"))
+    selecting_eval = run_eval or run_answer_eval
     selected: list[pytest.Item] = []
     deselected: list[pytest.Item] = []
     for item in items:
         is_eval = item.get_closest_marker(EVAL_MARKER) is not None
-        (selected if is_eval == run_eval else deselected).append(item)
+        is_answer_eval = item.get_closest_marker(ANSWER_EVAL_MARKER) is not None
+        if selecting_eval:
+            should_select = (
+                (run_eval and is_eval and not is_answer_eval)
+                or (run_answer_eval and is_answer_eval)
+            )
+        else:
+            should_select = not is_eval and not is_answer_eval
+        (selected if should_select else deselected).append(item)
 
     if deselected:
         config.hook.pytest_deselected(items=deselected)
