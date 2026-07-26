@@ -237,7 +237,7 @@ def search_conversation_messages(
         SQLITE_STORE, CONVERSATION_RAG_STORE,
         query=query, top_k=limit, conversation_id=conversation_id,
     )
-    return json_payload(result)
+    return json_payload({"ok": True, "tool_name": "search_conversation_messages", **result})
 
 
 @tool(args_schema=SearchNanaMemoryInput)
