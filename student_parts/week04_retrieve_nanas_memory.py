@@ -243,20 +243,22 @@ def search_personal_reference_hits(
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
     # from fixed.reference_store import PersonalReferenceStore  참고
+    
     hits: list[dict[str, Any]] = []
-    result = reference_store.collection.query(query_texts=[query], n_results=safe_limit(top_k))
-    for idx, document in enumerate(result.get("documents", [[]])[0]):
-        metadata = result.get("metadatas", [[]])[0][idx] or {}
-        distance = result.get("distances", [[]])[0][idx]
-        hits.append(
-            {
-                "id": result.get("ids", [[]])[0][idx],
-                "title": metadata.get("title", ""),
-                "content": document,
-                "tags": metadata.get("tags", ""),
-                "distance": distance,
-            }
-        )
+
+    reference = reference_store.search_personal_references(
+        query=query,
+        limit=safe_limit(top_k)
+    )
+
+    for row in reference:
+        hits.append({
+            "id": row.get("id", ""),
+            "content": row.get("content", ""),
+            "distance": row.get("distance", 0),
+            "metadata": {"title": row.get("title", ""), "tags": row.get("tags", "")}
+        })
+
 
     return hits
 
@@ -303,12 +305,12 @@ def search_conversation_messages_dict(
 
     return {
         "ok": True,
-        "tool_name": "search_conversation_messages_dict"
+        "tool_name": "search_conversation_messages_dict",
         "hits": search_result,
         "rows": search_result,
         "context": conversation_rag_store.context_from_hits(search_result),
         "rag_backend": conversation_rag_store.backend_info(),
-        "sync": sync_result
+        "sync": sync_result,
     }
 
 
@@ -485,8 +487,12 @@ def week04_prompt_parts() -> list[str]:
         *week03_prompt_parts(),
         """- Week 4부터는 서로 다른 세 출처를 구분해서 검색한다: (1) add_personal_reference로 사용자가 직접 남긴 개인 참고자료, (2) Week 3에서 SQLite에 저장된 일정/할 일/알림 구조화 기록, (3) 앱에 저장된 일반 채팅 발화.
         - 사용자가 "이거 기억해줘", "참고자료로 저장해줘", "메모해줘"처럼 일정/할 일이 아닌 정보를 남기고 싶어하면 add_personal_reference를 사용한다. Week 3의 save_structured_request는 일정/할 일/알림 저장 전용이므로 참고자료 저장에는 쓰지 않는다.
+        - 참고자료를 남기고 싶어하는 요청에는 tool 호출 없이 '기억했다/저장했다'라고 거짓으로 답하지 않는다. 반드시 add_personal_reference를 호출한 경우에만 저장 완료를 알린다.
+        - "기억해줘", "저장해줘", "메모해줘"처럼 저장 의도가 이미 분명한 요청에는 "저장해도 될까요?" 같은 확인 질문을 하지 않고 add_personal_reference를 호출하여 저장한다.
         - "내가 적어둔 OO 찾아줘", "OO에 대해 메모한 거 있었나?"처럼 사용자가 남긴 참고자료/메모 내용을 찾는 질문에는 search_personal_references를 사용한다. query에는 검색할 핵심 키워드를 넣고, 답변은 hits에 실제로 들어있는 content/title만 근거로 삼는다.
-        - "내 일정/할 일/알림 중에 OO 있었나?", "저장된 회의 기록에서 OO 찾아줘"처럼 이미 SQLite에 저장된 구조화 기록을 키워드로 찾는 질문에는 search_saved_requests를 사용한다. 날짜 범위로 목록 전체를 보여달라는 조회는 Week 3의 personal_list_saved_schedules를 그대로 쓰고, search_saved_requests는 제목/이유/원문에 대한 키워드 검색이 필요할 때만 사용한다. 결과는 항상 rows에 담겨 온다.
+        - "내 일정/할 일/알림 중에 OO 있었나?", "저장된 회의 기록에서 OO 찾아줘"처럼 이미 SQLite에 저장된 구조화 기록을 키워드로 찾는 질문에는 search_saved_requests를 사용한다.
+        - 날짜 범위로 목록 전체를 보여달라는 조회는 Week 3의 personal_list_saved_schedules를 그대로 쓰고, search_saved_requests는 제목/이유/원문에 대한 키워드 검색이 필요할 때만 사용한다. 결과는 항상 rows에 담겨 온다.
+        - "알림"이라는 단어만 보고 무조건 search_saved_requests로 가지 않는다. 날짜/시간이 있는 구체적인 할 일과 알림 요청(예: "내일 오전 9시에 회의 알림 설정해줘")은 Week 3 reminder(kind=reminder)이므로 save_structured_request/search_saved_requests 대상이지만, 날짜/시간 없이 사용자의 일반적인 선호나 행동 규칙을 남기는 요청(예: "저녁 9시 이후엔 알림 보내지 말라고 기억해줘")은 일정/할 일이 아니라 개인 참고자료이므로 add_personal_reference/search_personal_references 대상이다.
         - "우리가 아까/예전에 무슨 얘기 했었지?", "내가 전에 뭐라고 말했지?"처럼 저장된 일정이 아니라 과거 채팅 발화 자체를 찾는 질문에는 search_conversation_messages를 사용한다. 이 tool은 기본적으로 현재 진행 중인 대화를 검색 대상에서 제외하므로, 방금 사용자가 한 말을 "예전 기록"인 것처럼 인용하지 않는다.
         - 하나의 질문이 여러 출처에 걸쳐 있으면(예: "내가 저장한 회의 일정이랑 그때 나눈 대화 같이 보여줘") 관련된 검색 tool을 각각 호출하고, 답변에서 어떤 내용이 어느 출처에서 나왔는지 구분해서 보여준다.
         - [금지] 검색 질문에는 personal_create_schedule, save_structured_request, personal_update_saved_schedule, personal_delete_saved_schedules 같은 생성/수정/삭제 tool을 호출하지 않는다.
