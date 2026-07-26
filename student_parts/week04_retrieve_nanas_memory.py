@@ -308,6 +308,7 @@ def search_conversation_messages_dict(
     )
     return {
         "ok": True,
+        "tool_name": "search_conversation_messages",
         "hits": hits,
         "rows": hits,
         "context": conversation_rag_store.context_from_hits(hits),
