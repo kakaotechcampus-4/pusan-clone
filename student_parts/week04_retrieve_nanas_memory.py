@@ -65,6 +65,14 @@ def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
     return max(1, min(value, maximum))
 
 
+def _normalize_tags(raw: Any) -> list[str]:
+    """저장 경로(list)와 검색 경로(콤마 문자열)의 tags 표현을 항상 list[str]로 통일합니다."""
+
+    if isinstance(raw, list):
+        return [str(tag) for tag in raw]
+    return [tag for tag in str(raw or "").split(",") if tag]
+
+
 class AddPersonalReferenceInput(BaseModel):
     """개인 참고자료 추가 입력입니다."""
 
@@ -137,7 +145,7 @@ def search_personal_reference_hits(
             "distance": hit.get("distance"),
             "metadata": {
                 "title": hit.get("title", ""),
-                "tags": hit.get("tags", ""),
+                "tags": _normalize_tags(hit.get("tags")),   # 저장 경로와 동일하게 list[str]로 통일
             },
         }
         for hit in raw_hits
@@ -166,7 +174,13 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     sync = conversation_rag_store.sync_from_sqlite(sqlite_store)          # lazy sync
-    exclude = None if conversation_id else current_session_scope()        # 현재 대화 제외
+    # conversation_id를 명시(빈 문자열 포함)하면 그 대화를 그대로 쓰고, 미지정(None)일 때만 현재 대화를 제외한다.
+    # 단, 대화 밖 호출로 기본 scope가 잡히면 그 기본 scope는 제외하지 않는다(정상 대화들이 통째로 빠지는 것 방지).
+    if conversation_id is not None:
+        exclude = None
+    else:
+        current_scope = current_session_scope()
+        exclude = current_scope if current_scope != DEFAULT_SESSION_SCOPE else None
     hits = conversation_rag_store.search(
         query=query,
         top_k=top_k,
