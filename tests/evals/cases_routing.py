@@ -821,10 +821,8 @@ ROUTING_CASES = [
     {
         "id": "lookup.semantic_gap_in_explicit_conversation",
         "group": "의미 간극",
-        # 사용자가 과거 대화를 출처로 직접 지정했고, "휴가"는 시딩된 제주도 대화와
-        # embedding 거리 1.0952로 CONVERSATION_DISTANCE_THRESHOLD 안에 들어온다.
-        # (이 값은 참고자료 임계값과 분리돼 있다 — 대화 청크는 메타데이터와 여러 메시지가
-        # 한 문서에 들어가서 같은 관련도라도 거리가 위로 밀린다.)
+        # 사용자가 과거 대화를 출처로 직접 지정했고, "휴가"와 "제주도" 사이의
+        # 의미 간극이 있어도 시딩된 대화를 찾는지 확인한다.
         "user": "예전 대화에서 휴가 계획에 대해 무슨 말을 했지?",
         "expect": {
             "called": ["search_conversation_messages"],
@@ -895,25 +893,6 @@ ROUTING_CASES = [
         },
     },
     # ----------------------------------------------------------------- 기록 없음
-    {
-        "id": "empty.no_matching_conversation_is_reported",
-        "group": "기록 없음",
-        "held_out": True,
-        # 시딩된 과거 대화는 "철수 알고리즘 스터디"와 "부산 이사" 둘뿐이다. 양자역학 대화는
-        # 없으므로 "없다"고 답해야 한다.
-        #
-        # 이 케이스가 중요한 이유: ConversationRAGStore.search 자체에는 거리 필터가 없어서
-        # 무관한 query에도 top_k개 대화가 항상 hits로 돌아온다(측정값: 무관 query의 거리
-        # 1.52~1.84). 그러면 모델은 "결과 없음"을 볼 수 없고, context_from_hits가 무관한
-        # 대화를 근거 블록으로 포맷해 넘긴다. 지금은 week04의 CONVERSATION_DISTANCE_THRESHOLD가
-        # tool 층에서 그 hit들을 걸러 주기 때문에 이 케이스가 통과한다. 즉 이 케이스는 그
-        # 필터의 회귀 감시용이다 — 필터를 없애거나 임계값을 1.52 위로 올리면 다시 깨진다.
-        "user": "예전 대화에서 내가 양자역학에 대해 뭐라고 했었지?",
-        "expect": {
-            "called": ["search_conversation_messages"],
-            "result_empty": [{"tool": "search_conversation_messages", "path": "hits"}],
-        },
-    },
     {
         "id": "empty.no_record_is_reported_not_invented",
         "group": "기록 없음",

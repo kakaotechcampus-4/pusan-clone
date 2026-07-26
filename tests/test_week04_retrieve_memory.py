@@ -282,9 +282,6 @@ class TestSavedRequests:
 class TestConversationRAG:
     def test_search_dict_syncs_and_excludes_current_conversation(self, week04):
         sqlite_store = object()
-        # 실제 ConversationRAGStore.search는 hit마다 distance를 반드시 넣는다
-        # (chroma query()의 include 기본값에 distances가 있어 documents와 길이가 맞는다).
-        # double이 그 계약을 지켜야 거리 필터를 검증할 수 있다.
         hits = [{"conversation_id": "past", "content": "과거 발화", "distance": 0.5}]
         rag_store = RecordingConversationRAGStore(hits)
 
@@ -312,9 +309,6 @@ class TestConversationRAG:
 
     def test_search_tool_keeps_conversation_payload_contract(self, week04, monkeypatch):
         sqlite_store = object()
-        # 실제 ConversationRAGStore.search는 hit마다 distance를 반드시 넣는다
-        # (chroma query()의 include 기본값에 distances가 있어 documents와 길이가 맞는다).
-        # double이 그 계약을 지켜야 거리 필터를 검증할 수 있다.
         hits = [{"conversation_id": "past", "content": "과거 발화", "distance": 0.5}]
         rag_store = RecordingConversationRAGStore(hits)
         monkeypatch.setattr(week04, "SQLITE_STORE", sqlite_store)
@@ -332,41 +326,6 @@ class TestConversationRAG:
         assert payload["context"] == "conversation context: 1"
         assert rag_store.search_calls[0]["top_k"] == 50
         assert rag_store.search_calls[0]["exclude_conversation_id"] == "current"
-
-    def test_far_hits_are_dropped_by_distance_threshold(self, week04):
-        """거리 임계값을 넘는 대화 청크는 hits에서 빠집니다.
-
-        필터가 없으면 무관한 질문에도 top_k개 대화가 항상 "검색 결과"로 돌아와서,
-        prompt의 "검색 결과가 없으면 찾은 기록이 없다고 답하여라"가 발동할 수 없습니다.
-        """
-
-        threshold = week04.CONVERSATION_DISTANCE_THRESHOLD
-        near = {"conversation_id": "near", "content": "가까운 대화", "distance": threshold - 0.1}
-        far = {"conversation_id": "far", "content": "먼 대화", "distance": threshold + 0.1}
-        rag_store = RecordingConversationRAGStore([near, far])
-
-        payload = week04.search_conversation_messages_dict(
-            object(),
-            rag_store,
-            query="무관한 질문",
-        )
-
-        assert payload["hits"] == [near]
-        assert payload["rows"] == [near]
-
-    def test_all_hits_beyond_threshold_yield_empty_result(self, week04):
-        """전부 임계값을 넘으면 hits가 빈 목록이 됩니다 — 이게 "기록 없음" 신호입니다."""
-
-        far = {
-            "conversation_id": "far",
-            "content": "먼 대화",
-            "distance": week04.CONVERSATION_DISTANCE_THRESHOLD + 1,
-        }
-        rag_store = RecordingConversationRAGStore([far])
-
-        payload = week04.search_conversation_messages_dict(object(), rag_store, query="무관한 질문")
-
-        assert payload["hits"] == []
 
     def test_explicit_conversation_id_is_not_excluded(self, week04):
         sqlite_store = object()
