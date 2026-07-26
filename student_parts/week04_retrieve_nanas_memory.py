@@ -274,7 +274,10 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     sync_stats = conversation_rag_store.sync_from_sqlite(sqlite_store)
-    exclude_conversation_id = None if conversation_id else current_session_scope()
+    current_scope = current_session_scope()
+    exclude_conversation_id = (
+        None if conversation_id or current_scope == DEFAULT_SESSION_SCOPE else current_scope
+    )
     hits = conversation_rag_store.search(
         query=query,
         top_k=top_k,
