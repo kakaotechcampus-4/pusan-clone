@@ -418,7 +418,6 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     # 단어는 저장량에 비례해 매치가 늘고, created_at DESC로 잘리면 오래된 기록이 사라집니다.
     # 잘린 걸 알리지 않으면 모델이 "그 날짜엔 없다"고 확신에 차서 잘못 답합니다. truncated를
     # 함께 주면 top_k를 올려 다시 부르거나 범위를 좁혀 달라고 할 수 있습니다.
-    # (top_k=50에서는 상한 때문에 한 건 더 받을 수 없어 잘림을 감지하지 못합니다.)
     limit = safe_limit(top_k, default=3, maximum=50)
     probed = search_saved_request_rows(
         sqlite_store=SQLITE_STORE,
