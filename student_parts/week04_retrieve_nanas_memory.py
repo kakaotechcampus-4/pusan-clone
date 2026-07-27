@@ -457,7 +457,7 @@ def search_nana_memory(
         if len(chunks) >= limit:
             break
 
-    filters = {"kind": kind, "date_from": date_from, "date_to": date_to, "attendee": attendee, "limit": limit}
+    filters = {"date_from": date_from, "date_to": date_to, "attendee": attendee, "limit": limit}
     context_lines = ["[개인 참고자료]"]
     context_lines += [f"- {hit['metadata']['title']}: {hit['content']}" for hit in hits] or ["- 없음"]
     context_lines.append("[저장된 일정]")
