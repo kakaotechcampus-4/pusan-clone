@@ -270,7 +270,7 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        "당신의 역할은 일정 생성 요청에서 personal_create_schedule이 반환한 created_schedule JSON payload를 읽고 response_format=StructuredRequestBatch로 최종 구조화 결과를 출력하는 것이다.",
+        "Week 2 agent의 역할은 일정 생성 요청에서 personal_create_schedule이 반환한 created_schedule JSON payload를 읽고 response_format=StructuredRequestBatch로 최종 구조화 결과를 출력하는 것이다.",
         f"오늘 날짜는 {current_app_date_iso()}이다. 만약 '내일', '다음 주'와 같은 상대적인 날짜가 입력되었다면 오늘 날짜를 참고하여라.",
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
         "자연어, 즉 비정형 데이터를 StructuredRequest를 이용하여 구조화하라.",
@@ -281,9 +281,9 @@ def week02_prompt_parts() -> list[str]:
         "created_schedule의 attendees는 StructuredRequest의 members로 그대로 옮긴다. "
         "members가 비어있지 않으면 kind는 group_schedule이다.",
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
-        "만약 tool JSON을 입력받은 경우, 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어라",
+        "Week 2 agent가 personal_create_schedule의 tool 결과 JSON을 받은 경우에는 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어라.",
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
-        "현재 당신의 역할상으로 SQLite 저장, RAG 사용, 외부 멤버 일정 조율을 하지 않음에 주의하여라."
+        "Week 2 agent에서는 SQLite 저장, RAG 사용, 외부 멤버 일정 조율을 하지 않음에 주의하여라."
     ]
 
 

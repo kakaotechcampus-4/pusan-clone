@@ -199,6 +199,12 @@ class TestPromptAndTools:
         for kind in RequestKind.__args__:
             assert kind in joined
 
+    def test_week02_only_restrictions_are_scoped_to_week02_agent(self):
+        joined = "\n".join(week02_prompt_parts())
+        assert "Week 2 agent의 역할" in joined
+        assert "Week 2 agent가 personal_create_schedule의 tool 결과 JSON을 받은 경우" in joined
+        assert "Week 2 agent에서는 SQLite 저장, RAG 사용" in joined
+
     def test_system_prompt_is_str_with_batch_rules(self):
         prompt = week02_system_prompt()
         assert isinstance(prompt, str)

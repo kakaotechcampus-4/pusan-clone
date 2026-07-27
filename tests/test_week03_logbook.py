@@ -1003,6 +1003,8 @@ class TestPromptAndTools:
         assert "save_structured_request" in joined
         assert "personal_list_saved_schedules" in joined
         assert current_app_date_iso() in joined
+        assert "Week 3의 일정 저장, 조회, 수정, 삭제 요청에서는" in joined
+        assert "위 도구 외의 나머지 도구는 우선적으로 고려하지 말아야 한다" not in joined
 
     def test_system_prompt_is_joined_string(self):
         prompt = week03_system_prompt()

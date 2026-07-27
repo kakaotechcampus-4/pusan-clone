@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from fixed.session_scope import current_session_scope
 from student_parts.week01_wake_up_nana import (
@@ -53,8 +52,13 @@ WEEK03_TOOL_CALL_PROMPT = """
 3. 해당 필드를 save_structured_request에 전달하여 SQLite에 저장하여라.
 4. 저장 결과를 확인한 뒤 사용자에게 저장 성공 여부를 알려라.
 
-일정 조회 요청은 personal_list_saved_schedules를 사용하여라.
+저장된 기록을 날짜로 조회할 때는 list_saved_requests를 사용하여라.
 조회 날짜가 명확하면 date_from과 date_to를 사용하여 범위를 좁혀라.
+kind는 넘기지 말고 한 번만 호출하여라. 그래야 개인 일정, 그룹 일정, 할 일, 알림이
+한 번에 들어온다. 종류를 좁혀 조회한 뒤 저장된 것이 없다고 답하지 말아라.
+
+personal_list_saved_schedules는 사용자가 개인 일정 또는 그룹 일정으로 종류를 분명히
+한정했을 때, 그리고 수정·삭제 대상을 찾을 때 사용하여라.
 
 저장 일정 수정 요청에서 schedule_id를 모르면 먼저 personal_list_saved_schedules로 후보를 조회하여라.
 그 다음 personal_update_saved_schedule에 실제로 변경할 필드만 전달하여라.
@@ -83,17 +87,8 @@ deleted_count가 1 이상인지 확인하여 판단하여라.
 삭제 후 같은 조건으로 personal_list_saved_schedules를 다시 호출하고,
 해당 schedule_id가 목록에서 사라진 것을 확인한 뒤 사용자에게 성공을 알려라.
 
-사용자가 "내 일정", "내일 일정"처럼 일정 종류를 한정하지 않고 조회하면
-personal_list_saved_schedules를 다음 두 종류로 각각 호출하여 결과를 합쳐라.
-
-1. kind="personal_schedule"
-2. kind="group_schedule"
-
-한쪽 결과가 비어 있더라도 다른 종류를 조회하기 전에는
-저장된 일정이 없다고 답하지 말아라.
-
-사용자가 개인 일정이나 그룹 일정을 명시한 경우에는
-해당 kind만 조회하여라.
+조회 대상 종류를 사용자가 한정하지 않았다면 어떤 종류로도 좁히지 말아라.
+사용자가 쓴 표현이 일정처럼 들리는지 여부로 종류를 짐작하지 말아라.
 """.strip()
 
 
@@ -624,7 +619,12 @@ def list_saved_requests(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
+    """저장된 일정·할 일·알림 목록을 날짜 범위로 조회합니다.
+
+    개인 일정, 그룹 일정, 할 일, 알림이 모두 이 목록에 함께 들어 있습니다.
+    kind를 생략하면 네 종류를 한 번에 반환합니다.
+    date_from과 date_to는 YYYY-MM-DD 형태이며 저장된 date를 기준으로 거릅니다.
+    """
 
     # TODO: kind/date_from/date_to 필터로 저장 요청을 조회하고 rows를 JSON 문자열로 반환하세요.
     rows = _store().list_saved_requests(
@@ -797,20 +797,9 @@ def week03_prompt_parts() -> list[str]:
 
     return [
         *week02_prompt_parts(),
-        # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
-        "구조화된 요청 결과(StructuredRequest)는 save_structured_request 도구를 사용하여 저장하여라.",
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
-        # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
-        f"오늘 날짜는 {current_app_date_iso()}이다. 만약 '내일', '다음 주'와 같은 상대적인 날짜가 입력되었다면 오늘 날짜를 참고하여라.",
-        "아래에서는 현재 주로 사용할 툴에 대해 요약 설명힌다.: ",
-        "save_structured_request를 사용하면 데이터베이스에 원본 요청 row와 목적별 정규화 row가 저장된다.",
-        "저장 결과는 list_saved_requests, personal_list_saved_schedules 도구들을 이용해 조회할 수 있다.",
-        "사용자가 일정 등의 저장을 요청하는 경우 save_structured_request를 사용하여 저장하여라",
-        "사용자가 일정 조회를 요청하는 경우 personal_list_saved_schedules를 사용하여라",
-        "사용자가 일정 수정을 요청하는 경우 personal_update_saved_schedule를 사용하여라",
-        "사용자가 일정 삭제를 요청하는 경우 personal_delete_saved_schedules를 사용하여라",
-        "위 도구 외의 나머지 도구는 우선적으로 고려하지 말아야 한다."
+        "Week 3의 일정 저장, 조회, 수정, 삭제 요청에서는 위 안내에 명시된 SQLite 도구를 우선적으로 고려하여라."
     ]   
 
 
