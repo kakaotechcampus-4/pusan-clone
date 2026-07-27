@@ -196,6 +196,9 @@ class SearchSavedRequestsInput(BaseModel):
 
     query: str
     top_k: int = Field(default=3, ge=1, le=50)
+    date_from: str | None = None
+    date_to: str | None = None
+    attendee: str | None = None
 
 
 class SearchConversationMessagesInput(BaseModel):
@@ -270,7 +273,7 @@ def search_saved_request_rows(
     query: str,
     top_k: int = 3,
 ) -> list[dict[str, Any]]:
-    """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
+    """SQLite 저장 요청을 검색합니다. (search_conversation_messages에서만 사용)"""
 
     return sqlite_store.search_saved_requests(
         query=query,
@@ -336,14 +339,47 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
 
 
 @tool(args_schema=SearchSavedRequestsInput)
-def search_saved_requests(query: str, top_k: int = 3) -> str:
-    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
+def search_saved_requests(
+    query: str,
+    top_k: int = 3,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    attendee: str | None = None,
+) -> str:
+    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다.
 
-    result = search_saved_request_rows(
-        SQLITE_STORE, 
-        query = query , 
-        top_k = safe_limit(top_k, default = 3, maximum = 50),)
-    return json_payload({"rows" : result } )
+    date_from/date_to로 날짜 범위를, attendee로 참석자를 필터할 수 있습니다.
+    """
+
+    # SQLite에서 대량 조회
+    all_rows = SQLITE_STORE.search_saved_requests(
+        query=query,
+        limit=safe_limit(top_k, default=3, maximum=50) * 5,  # 필터링 전 충분한 데이터
+    )
+
+    # Python 메모리에서 date/attendee 필터링
+    filtered_rows = []
+    for row in all_rows:
+        row_date = str(row.get("date") or "")
+        row_members_json = str(row.get("members_json") or "[]")
+
+        # date 범위 체크
+        if date_from and row_date < date_from:
+            continue
+        if date_to and row_date > date_to:
+            continue
+
+        # attendee 체크
+        if attendee:
+            attendee_stripped = str(attendee or "").strip()
+            if attendee_stripped and attendee_stripped not in row_members_json:
+                continue
+
+        filtered_rows.append(row)
+        if len(filtered_rows) >= safe_limit(top_k, default=3, maximum=50):
+            break
+
+    return json_payload({"rows": filtered_rows})
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -373,65 +409,37 @@ def search_nana_memory(
     attendee: str | None = None,
     limit: int = 5,
 ) -> str:
-    """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다.
+    """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하는 호환성 tool입니다.
 
-    date_from/date_to로 날짜 범위를, attendee로 참석자를 먼저 좁힌 뒤
-    query로 텍스트 검색을 수행합니다. 개인 참고자료(ChromaDB)는 날짜/참석자
-    개념이 없으므로 query만 사용합니다.
+    search_personal_references와 search_saved_requests를 각각 호출해 결과를 통합합니다.
+    date_from/date_to/attendee는 저장 일정 조회에만 사용됩니다.
     """
 
     safe_top_k = safe_limit(limit, default=5, maximum=20)
     query_text = str(query or "").strip()
 
-    # 참고자료: 벡터 검색 — query가 없으면 건너뜀 (빈 문자열은 embedding API 오류 발생)
-    # 날짜/참석자 필터는 ChromaDB 개념에 없으므로 query만 사용
-    hits = (
-        search_personal_reference_hits(REFERENCE_STORE, query=query_text, top_k=safe_top_k)
-        if query_text
-        else []
-    )
+    # 1. search_personal_references 호출 (참고자료)
+    personal_result_json = search_personal_references(query_text, safe_top_k) if query_text else json_payload({"hits": []})
+    personal_result = json.loads(personal_result_json)
+    hits = personal_result.get("hits", [])
 
-    # 일정/할일: SQLite에서 대량 조회 후 Python 메모리에서 필터링
-    # date_from/date_to/attendee는 fixed가 아니라 student 코드에서만 처리
-    all_rows = search_saved_request_rows(
-        SQLITE_STORE,
-        query=query_text,
-        top_k=safe_top_k * 5,  # 필터링 전 더 많이 조회
-    )
+    # 2. search_saved_requests 호출 (저장 일정) — date_from/date_to/attendee 필터링 포함
+    saved_result_json = search_saved_requests(query_text, safe_top_k, date_from, date_to, attendee)
+    saved_result = json.loads(saved_result_json)
+    rows = saved_result.get("rows", [])
 
-    # Python 메모리에서 date/attendee 필터링
-    filtered_rows = []
-    for row in all_rows:
-        row_date = str(row.get("date") or "")
-        row_members_json = str(row.get("members_json") or "[]")
-
-        # date 범위 체크
-        if date_from and row_date < date_from:
-            continue
-        if date_to and row_date > date_to:
-            continue
-
-        # attendee 체크
-        if attendee:
-            attendee_stripped = str(attendee or "").strip()
-            if attendee_stripped and attendee_stripped not in row_members_json:
-                continue
-
-        filtered_rows.append(row)
-        if len(filtered_rows) >= safe_top_k:
-            break
-
+    # 3. 결과 통합
     lines = []
     for hit in hits:
         lines.append(f"[참고자료] {hit.get('content', '')}")
-    for row in filtered_rows:
+    for row in rows:
         lines.append(f"[일정] {row.get('title', '')} - {row.get('date', '')}")
     context = "\n".join(lines) if lines else "검색 결과가 없습니다."
 
     return json_payload({
         "reference_backend": REFERENCE_STORE.backend_info(),
         "hits": hits,
-        "rows": filtered_rows,
+        "rows": rows,
         "context": context,
     })
 
