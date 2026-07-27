@@ -269,21 +269,12 @@ def search_saved_request_rows(
     *,
     query: str,
     top_k: int = 3,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    attendee: str | None = None,
 ) -> list[dict[str, Any]]:
-    """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다.
-
-    date_from/date_to/attendee가 주어지면 먼저 검색 공간을 좁힌 뒤 query로 텍스트 검색합니다.
-    """
+    """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     return sqlite_store.search_saved_requests(
         query=query,
         limit=top_k,
-        date_from=date_from,
-        date_to=date_to,
-        attendee=attendee,
     )
 
 def search_conversation_messages_dict(
@@ -400,28 +391,47 @@ def search_nana_memory(
         else []
     )
 
-    # 일정/할일: 날짜·참석자로 검색 공간을 먼저 좁히고, 그 안에서 query 검색
-    # query가 없으면 날짜/참석자 조건만으로 조회 (키워드 조건 없이 필터만 적용)
-    rows = search_saved_request_rows(
+    # 일정/할일: SQLite에서 대량 조회 후 Python 메모리에서 필터링
+    # date_from/date_to/attendee는 fixed가 아니라 student 코드에서만 처리
+    all_rows = search_saved_request_rows(
         SQLITE_STORE,
         query=query_text,
-        top_k=safe_top_k,
-        date_from=date_from,
-        date_to=date_to,
-        attendee=attendee,
+        top_k=safe_top_k * 5,  # 필터링 전 더 많이 조회
     )
+
+    # Python 메모리에서 date/attendee 필터링
+    filtered_rows = []
+    for row in all_rows:
+        row_date = str(row.get("date") or "")
+        row_members_json = str(row.get("members_json") or "[]")
+
+        # date 범위 체크
+        if date_from and row_date < date_from:
+            continue
+        if date_to and row_date > date_to:
+            continue
+
+        # attendee 체크
+        if attendee:
+            attendee_stripped = str(attendee or "").strip()
+            if attendee_stripped and attendee_stripped not in row_members_json:
+                continue
+
+        filtered_rows.append(row)
+        if len(filtered_rows) >= safe_top_k:
+            break
 
     lines = []
     for hit in hits:
         lines.append(f"[참고자료] {hit.get('content', '')}")
-    for row in rows:
+    for row in filtered_rows:
         lines.append(f"[일정] {row.get('title', '')} - {row.get('date', '')}")
     context = "\n".join(lines) if lines else "검색 결과가 없습니다."
 
     return json_payload({
         "reference_backend": REFERENCE_STORE.backend_info(),
         "hits": hits,
-        "rows": rows,
+        "rows": filtered_rows,
         "context": context,
     })
 
