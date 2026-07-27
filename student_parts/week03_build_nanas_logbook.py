@@ -29,14 +29,18 @@ from student_parts.week02_structure_natural_language_requests import (
 _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = "일정은 SQLite에 영속적으로 저장되며, 새 대화에서도 조회/수정/삭제가 가능합니다. "
-"저장은 personal_create_schedule, save_structured_request를 통해 이루어집니다. "
-"조회는 personal_list_saved_schedules, list_saved_requests, get_saved_request를 통해 이루어집니다. "
-"수정은 personal_update_saved_schedule, 삭제는 personal_delete_saved_schedules를 통해 이루어집니다. "
+SQLITE_MEMORY_PROMPT = (
+    "일정은 SQLite에 영속적으로 저장되며, 새 대화에서도 조회/수정/삭제가 가능합니다. "
+    "저장은 personal_create_schedule, save_structured_request를 통해 이루어집니다. "
+    "조회는 personal_list_saved_schedules, list_saved_requests, get_saved_request를 통해 이루어집니다. "
+    "수정은 personal_update_saved_schedule, 삭제는 personal_delete_saved_schedules를 통해 이루어집니다. "
+)
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = "SQLite에 저장 시 SaveStructuredRequestInput 스키마에 따르는지 검증 후 저장합니다."
-"저장된 일정은 personal_list_saved_schedules로 조회하고, personal_update_saved_schedule로 수정하며, personal_delete_saved_schedules로 삭제합니다."
+WEEK03_TOOL_CALL_PROMPT = (
+    "SQLite에 저장 시 SaveStructuredRequestInput 스키마에 따르는지 검증 후 저장합니다."
+    "저장된 일정은 personal_list_saved_schedules로 조회하고, personal_update_saved_schedule로 수정하며, personal_delete_saved_schedules로 삭제합니다."
+)
 
 
 # [3주차 수강생 구현 가이드]
@@ -652,12 +656,6 @@ def week03_prompt_parts() -> list[str]:
         "Week 1 전용 임시 도구이므로 Week 3 조회/수정/삭제 흐름에서는 호출하지 않습니다.",
         "일정 생성 요청은 attendees가 있는 경우 personal_create_schedule을 직접 호출하지 않고, "
         "extract_schedule_request로 자연어를 구조화한 뒤 save_structured_request로 저장합니다. "
-        "현재 날짜는 current_app_date_iso()로 확인합니다.",
-        "{"
-        "name: 'current_app_date_iso',"
-        "description: '현재 날짜를 ISO 8601 형식으로 반환하는 함수입니다. 상대적인 날짜 표현(내일, 이번 주 등)을 해석할 때 기준일로 사용됩니다.',"
-        "parameters: []"
-        "}"
     ]
 
 
