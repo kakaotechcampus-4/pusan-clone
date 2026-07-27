@@ -224,9 +224,9 @@ def add_personal_reference_dict(
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
-
-    # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
+    reference = reference_store.add_personal_reference(title=title, content=content, tags=tags)
+    reference_backend = reference.pop("backend")
+    return {"reference_backend": reference_backend, "reference": reference}
 
 
 def search_personal_reference_hits(
@@ -236,9 +236,22 @@ def search_personal_reference_hits(
     top_k: int = 2,
 ) -> list[dict[str, Any]]:
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
+    hits = reference_store.search_personal_references(query=query, limit=top_k)
+    hit_list = []
+    for hit in hits:
+        raw_tags = hit.get("tags", "")
+        tags = raw_tags.split(",") if raw_tags else []
+        hit_list.append({
+            "id": hit.get("id", ""),
+            "content": hit.get("content", ""),
+            "distance": hit.get("distance", 0),
+            "metadata": {
+                "title": hit.get("title", ""),
+                "tags": tags,
+            },
+        })
+    return hit_list
 
-    # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-    ...
 
 
 def search_saved_request_rows(
@@ -248,9 +261,46 @@ def search_saved_request_rows(
     top_k: int = 3,
 ) -> list[dict[str, Any]]:
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
+    return sqlite_store.search_saved_requests(query=query, limit=top_k)
 
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    ...
+
+_SAVED_ROW_KIND_LABELS = {
+    "personal_schedule": "개인 일정",
+    "group_schedule": "그룹 일정",
+    "todo": "할 일",
+    "reminder": "알림",
+    "unknown": "미분류 기록",
+}
+
+
+def _passes_date_filter(row: dict[str, Any], date_from: str | None, date_to: str | None) -> bool:
+    """structured_requests row가 date_from/date_to 범위를 통과하는지 판정합니다.
+
+    date가 비어 있는 row(예: 마감일 없는 todo)는 필터와 무관하게 항상 통과시킨다.
+    그렇지 않으면 날짜 필터를 줄 때마다 할 일/알림이 다시 조용히 빠지게 된다.
+    """
+    row_date = row.get("date")
+    if not row_date:
+        return True
+    if date_from and row_date < date_from:
+        return False
+    if date_to and row_date > date_to:
+        return False
+    return True
+
+
+def _format_saved_row_line(row: dict[str, Any]) -> str:
+    """structured_requests row 하나를 context 문자열의 한 줄로 정리합니다."""
+    kind = row.get("kind") or "unknown"
+    kind_label = _SAVED_ROW_KIND_LABELS.get(kind, "저장 기록")
+    date_text = row.get("date") or "날짜 미정"
+    time_text = row.get("start_time") or ""
+    title_text = row.get("title") or "제목 없음"
+    members_text = ", ".join(_decode_attendees(row.get("members_json"))) or "없음"
+    return (
+        f"- [{kind_label}] {date_text} {time_text} | "
+        f"{title_text} | 참석자: {members_text}"
+    )
 
 
 def search_conversation_messages_dict(
@@ -262,9 +312,16 @@ def search_conversation_messages_dict(
     conversation_id: str | None = None,
 ) -> dict[str, Any]:
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
+    sync_result = conversation_rag_store.sync_from_sqlite(sqlite_store)
+    hits = conversation_rag_store.search(query=query, top_k=top_k, conversation_id=conversation_id, exclude_conversation_id=current_session_scope())
+    
+    return {
+        "hits": hits,
+        "context": conversation_rag_store.context_from_hits(hits),
+        "rag_backend": conversation_rag_store.backend_info(),
+        "sync": sync_result,
+    }
 
-    # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    ...
 
 
 def search_conversation_message_rows(
@@ -275,33 +332,37 @@ def search_conversation_message_rows(
     conversation_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
-
-    # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    ...
+    rag_result = search_conversation_messages_dict(
+        sqlite_store,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id
+    )
+    return rag_result.get("hits", [])
 
 
 @tool(args_schema=AddPersonalReferenceInput)
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
+    payload = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags or [])
+    return json_payload(payload)
 
-    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
+    payload = {"hits": search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)}
+    return json_payload(payload)
 
-    # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
-    ...
 
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
-
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
-    ...
+    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
+    return json_payload({"rows": rows})
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -312,8 +373,21 @@ def search_conversation_messages(
 ) -> str:
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
-    # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    ...
+    result = search_conversation_messages_dict(
+        SQLITE_STORE,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )
+    hits = result.get("hits", [])
+    return json_payload({
+        "hits": hits,
+        "rows": hits,
+        "context": result.get("context", ""),
+        "rag_backend": result.get("rag_backend", {}),
+        "sync": result.get("sync", {}),
+    })
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -324,10 +398,47 @@ def search_nana_memory(
     attendee: str | None = None,
     limit: int = 5,
 ) -> str:
-    """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
+    """개인 참고자료와 SQLite 저장 일정/할 일/알림을 query 기준으로 한 번에 검색하고 chunk를 반환합니다.
 
-    # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    query에는 LLM이 고른 짧은 핵심어 하나를 넣습니다(예: '보고서', '회의'). 문장을 통째로 넘기면
+    SQLite 쪽 검색은 raw_json/title/reason에 대한 부분 문자열(LIKE) 매칭이라 잘 안 잡힙니다.
+    """
+    reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=limit)
+
+    saved_rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=limit)
+    if date_from or date_to:
+        saved_rows = [r for r in saved_rows if _passes_date_filter(r, date_from, date_to)]
+    if attendee:
+        saved_rows = [r for r in saved_rows if attendee in _decode_attendees(r.get("members_json"))]
+
+    schedule_lines = []
+    if saved_rows:
+        for row in saved_rows:
+            schedule_lines.append(_format_saved_row_line(row))
+    else:
+        schedule_lines.append("- 조건에 맞는 저장된 일정/할 일/알림이 없습니다.")
+
+    reference_lines = []
+    if reference_hits:
+        for hit in reference_hits:
+            title = hit.get("metadata", {}).get("title", "")
+            reference_lines.append(f"- {title}: {hit.get('content', '')}")
+    else:
+        reference_lines.append("- 관련된 개인 참고자료가 없습니다.")
+
+    context = "\n".join([
+        "[저장된 일정/할 일/알림]",
+        *schedule_lines,
+        "[참고자료]",
+        *reference_lines,
+    ])
+
+    return json_payload({
+        "reference_backend": REFERENCE_STORE.backend_info(),
+        "hits": reference_hits,
+        "rows": saved_rows,
+        "context": context,
+    })
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
@@ -338,6 +449,7 @@ def week04_tools() -> list[Any]:
         search_personal_references,
         search_saved_requests,
         search_conversation_messages,
+        search_nana_memory,
     ]
 
 
@@ -352,7 +464,33 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        "이번 주차부터 Nana는 검색 도구 세 가지를 추가로 가진다: search_personal_references(개인 참고자료 검색), "
+        "search_saved_requests(SQLite에 저장된 일정/할 일/알림 검색), "
+        "search_conversation_messages(SQLite에 저장된 일반 채팅 발화 검색).",
+        "'내가 적어둔', '선호', '메모', '참고자료' 같은 개인 지식/선호에 대한 질문이면 search_personal_references를 호출한다.",
+        "'예전에 잡은 일정', '저장해둔 할 일', '전에 만든 알림'처럼 구조화 저장 기록에 대한 질문이면 search_saved_requests를 호출한다.",
+        "'예전에 나눈 대화', '저번에 뭐라고 했는지', '그때 내가/네가 말한 거'처럼 구조화 저장 기록이 아니라 "
+        "과거 채팅 발화 자체를 찾아야 하는 질문이면 search_conversation_messages를 호출한다.",
+        "'한 번에', '통합해서', '이전 방식대로'처럼 참고자료와 일정을 동시에 찾아달라는 요청이면 "
+        "search_personal_references와 search_saved_requests를 따로 부르는 대신 search_nana_memory 하나로 조회한다.",
+        "search_nana_memory의 date_from/date_to는 사용자가 기간을 명시적으로 언급했을 때만 채우고, "
+        "언급이 없으면 비워둔 채로 호출한다. 임의로 '이번 주' 같은 기본 범위를 채우면 실제로 관련 있는 "
+        "일정/할 일/알림이 범위 밖으로 걸러져 빠질 수 있다.",
+        "사용자가 새로운 개인 참고자료(선호, 메모, 규칙 등)를 알려주면 add_personal_reference로 저장한다. tags가 없으면 빈 list로 넘긴다.",
+        "search_personal_references의 결과는 hits 키, search_saved_requests의 결과는 rows 키에 들어있다. "
+        "두 검색 결과가 모두 비어 있으면 근거가 없다고 답하고, 대화 맥락이나 추측으로 내용을 지어내지 않는다.",
+        "search_conversation_messages 결과 chunk는 한 대화의 여러 발화를 시각 | role | 내용 형태로 함께 담고 있고, "
+        "그 안에는 Nana(assistant)가 과거에 추측이나 오답으로 답했던 내용도 섞여 있을 수 있다. "
+        "role이 assistant로 표시된 과거 발화는 그 자체로 사실 근거로 삼지 않고, 반드시 user 발화나 "
+        "search_personal_references/search_saved_requests 같은 원천 데이터로 다시 확인한 뒤에만 사실로 인정한다.",
+        "참고자료 검색 결과와 일정/할 일 검색 결과는 서로 다른 출처이므로 섞어서 하나의 근거처럼 말하지 않고, "
+        "어느 출처에서 찾았는지 구분해서 답한다.",
+        "사용자의 개인 참고자료나 저장된 일정/할 일/알림에 대해 물으면, 답하기 전에 반드시 먼저 "
+        "search_personal_references 또는 search_saved_requests를 호출해서 확인한다. 검색 없이 "
+        "'있다'/'없다'를 짐작해서 답하지 않는다.",
+        "사용자가 명시적으로 요청하지 않으면 저장된 일정/할 일/알림을 스스로 수정하거나 삭제하지 않는다. "
+        "다른 요청이나 선호를 이유로, 물어보지 않은 저장된 일정을 임의로 조정하지 않는다. "
+        "일정 조정이 필요해 보이면 먼저 사용자에게 확인을 구한다.",
     ]
 
 
