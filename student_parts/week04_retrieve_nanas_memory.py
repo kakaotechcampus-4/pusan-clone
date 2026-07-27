@@ -252,16 +252,36 @@ def search_personal_reference_hits(
     query: str,
     top_k: int = 2,
 ) -> list[dict[str, Any]]:
-    """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
+    """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다.
 
-    raws = reference_store.search_personal_references(query, limit = top_k)
+    query가 비어있으면 모든 참고자료를 반환합니다.
+    """
+
+    # query가 비어있으면 모든 참고자료 조회
+    query_text = str(query or "").strip()
+    if not query_text:
+        raws = reference_store.collection.get(limit=top_k)
+        hits = []
+        if raws and "ids" in raws:
+            for i, ref_id in enumerate(raws["ids"]):
+                hit = {
+                    "id": ref_id,
+                    "content": raws.get("documents", [None])[i] or "",
+                    "distance": 0,  # 거리 없음 (전체 조회)
+                    "metadata": raws.get("metadatas", [{}])[i] if raws.get("metadatas") else {}
+                }
+                hits.append(hit)
+        return hits
+
+    # query가 있으면 벡터 검색
+    raws = reference_store.search_personal_references(query_text, limit=top_k)
     hits = []
     for raw in raws:
         hit = {
-            "id" : raw["id"],
-            "content" : raw["content"],
-            "distance" : raw["distance"],
-            "metadata": {"title" : raw["title"], "tags" : raw["tags"]}
+            "id": raw["id"],
+            "content": raw["content"],
+            "distance": raw["distance"],
+            "metadata": {"title": raw["title"], "tags": raw["tags"]}
         }
         hits.append(hit)
     return hits
@@ -328,7 +348,10 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
-    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
+    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다.
+
+    query가 비어있으면 모든 참고자료를 반환합니다.
+    """
 
     hits = search_personal_reference_hits(
         REFERENCE_STORE,
@@ -411,35 +434,58 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하는 호환성 tool입니다.
 
-    search_personal_references와 search_saved_requests를 각각 호출해 결과를 통합합니다.
+    참고자료와 저장 일정을 각각 조회해 결과를 통합합니다.
     date_from/date_to/attendee는 저장 일정 조회에만 사용됩니다.
     """
 
     safe_top_k = safe_limit(limit, default=5, maximum=20)
     query_text = str(query or "").strip()
 
-    # 1. search_personal_references 호출 (참고자료)
-    personal_result_json = search_personal_references(query_text, safe_top_k) if query_text else json_payload({"hits": []})
-    personal_result = json.loads(personal_result_json)
-    hits = personal_result.get("hits", [])
+    # 1. 참고자료 조회 (헬퍼 함수 호출)
+    hits = (
+        search_personal_reference_hits(REFERENCE_STORE, query=query_text, top_k=safe_top_k)
+        if query_text
+        else []
+    )
 
-    # 2. search_saved_requests 호출 (저장 일정) — date_from/date_to/attendee 필터링 포함
-    saved_result_json = search_saved_requests(query_text, safe_top_k, date_from, date_to, attendee)
-    saved_result = json.loads(saved_result_json)
-    rows = saved_result.get("rows", [])
+    # 2. 저장 일정 조회 (헬퍼 함수 호출) — date_from/date_to/attendee 필터링 포함
+    all_rows = SQLITE_STORE.search_saved_requests(
+        query=query_text,
+        limit=safe_top_k * 5,
+    )
+
+    # Python 메모리에서 date/attendee 필터링
+    filtered_rows = []
+    for row in all_rows:
+        row_date = str(row.get("date") or "")
+        row_members_json = str(row.get("members_json") or "[]")
+
+        if date_from and row_date < date_from:
+            continue
+        if date_to and row_date > date_to:
+            continue
+
+        if attendee:
+            attendee_stripped = str(attendee or "").strip()
+            if attendee_stripped and attendee_stripped not in row_members_json:
+                continue
+
+        filtered_rows.append(row)
+        if len(filtered_rows) >= safe_top_k:
+            break
 
     # 3. 결과 통합
     lines = []
     for hit in hits:
         lines.append(f"[참고자료] {hit.get('content', '')}")
-    for row in rows:
+    for row in filtered_rows:
         lines.append(f"[일정] {row.get('title', '')} - {row.get('date', '')}")
     context = "\n".join(lines) if lines else "검색 결과가 없습니다."
 
     return json_payload({
         "reference_backend": REFERENCE_STORE.backend_info(),
         "hits": hits,
-        "rows": rows,
+        "rows": filtered_rows,
         "context": context,
     })
 
@@ -471,19 +517,18 @@ def week04_prompt_parts() -> list[str]:
         "[Week 4 도구 안내] 아래 도구가 새로 추가되었습니다. 기존 week03 도구와 함께 질문 성격에 따라 적절한 도구를 선택하세요. ",
         "add_personal_reference: 사용자가 참고자료/선호/정책을 기억해달라고 하면 사용, ",
         "search_personal_references: 사용자의 선호/정책/참고자료에 관련된 질문에 사용 (ChromaDB 벡터 검색) ",
-        "search_saved_requests: 저장된 일정/할일/알림을 키워드로 검색할 때 사용 (SQLite 텍스트 검색), ",
+        "search_saved_requests: 저장된 일정/할일/알림을 키워드/날짜/참석자로 검색 (week04 신기능) ",
         "search_conversation_messages: 이전 대화에서 나눈 내용을 검색할 때 사용 (SQLite → ChromaDB lazy sync 후 벡터 검색), ",
-        "search_nana_memory: 참고자료와 저장된 일정을 한 번에 통합 검색할 때 사용. "
-        "date_from/date_to로 날짜 범위를, attendee로 특정 참석자를 SQL 필터로 먼저 좁힌 뒤 query로 키워드 검색한다. ",
-        "[도구 선택 기준] ",
-        "일정을 키워드로 '찾아줘/검색해줘' → search_saved_requests ",
-        "특정 날짜 범위의 일정 '목록 보여줘/알려줘' (참석자 조건 없음) → personal_list_saved_schedules ",
-        "선호/정책/참고자료 질문 → search_personal_references, ",
-        "'지난번에 뭐 얘기했지?', '예전에 뭐라고 했었지?' 같은 과거 대화 검색 → search_conversation_messages, ",
-        "참고자료와 일정을 동시에 검색하고 싶을 때 → search_nana_memory, ",
-        "'~랑', '~와 잡힌', '~이 참석한' 처럼 특정 참석자 조건이 포함된 일정 검색 → search_nana_memory (attendee 파라미터 사용), ",
-        "날짜 범위 + 참석자 조건을 함께 쓸 때 → search_nana_memory (date_from/date_to + attendee 파라미터 함께 사용), ",
-        "참고자료 관련 질문은 대화 기억에 의존하지 말고 반드시 search_personal_references를 호출해서 응답해"
+        "search_nana_memory: 참고자료와 저장된 일정을 한 번에 통합 검색할 때 사용 ",
+        "[중요: Week 4 도구 선택 기준 - 기존 방식 변경] ",
+        "week03에서 '이전 데이터 조회는 personal_list_saved_schedules'라고 했지만, week04에서는 다음과 같이 변경됩니다: ",
+        "• 날짜만 필터 (예: '다음주', '이번주') → personal_list_saved_schedules (기존처럼) ",
+        "• 키워드 검색 (예: '회의', '코드') → search_saved_requests ★ NEW ",
+        "• 날짜 범위 검색 (예: '7월 29일만', '이 달 일정') → search_saved_requests ★ NEW ",
+        "• 참석자 필터 (예: '김철수랑', '박지수 일정') → search_saved_requests ★ NEW (attendee 파라미터) ",
+        "• 키워드 + 참석자 조합 → search_saved_requests 또는 search_nana_memory ",
+        "• 참고자료와 일정 동시 검색 → search_nana_memory ",
+        "선호/정책/참고자료 질문은 반드시 search_personal_references를 호출해서 응답해"
     ]
 
 
