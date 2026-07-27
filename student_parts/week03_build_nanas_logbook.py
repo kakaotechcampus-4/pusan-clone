@@ -30,7 +30,8 @@ _WEEK03_AGENT: Any | None = None
 SQLITE_MEMORY_PROMPT = (
     "week3 부터 데이터는 SQLite에 영구 저장된다. " 
     "새 대화에서도 이전 데이터를 유지한다. "
-    "이전 데이터를 조회할 때는 personal_list_saved_schedules 도구를 이용해서 조회한다."
+    "이전 데이터를 조회할 때는 personal_list_saved_schedules 도구를 이용해서 조회한다. "
+    "사용자가 종류를 명시하지 않으면 kind를 지정하지 않고 전체 일정을 조회한다."
 )
 
 WEEK03_TOOL_CALL_PROMPT = (
@@ -497,7 +498,7 @@ def personal_list_saved_schedules(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다. kind를 지정하지 않으면 personal_schedule, group_schedule 등 모든 종류의 일정을 조회합니다. 사용자가 '개인 일정만', '그룹 일정만'처럼 종류를 명시한 경우에만 kind를 지정하세요."""
 
     schedules = _store().list_schedules(limit, kind, date_from, date_to)
     

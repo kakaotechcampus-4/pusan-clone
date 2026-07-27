@@ -451,10 +451,22 @@ class AppSQLiteStore(SQLiteFileStore):
             row = cur.fetchone()
             return dict(row) if row else None
 
-    def search_saved_requests(self, query: str, kind: str | None = None, limit: int = 5) -> list[dict[str, Any]]:
+    def search_saved_requests(
+        self,
+        query: str,
+        kind: str | None = None,
+        limit: int = 5,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        attendee: str | None = None,
+    ) -> list[dict[str, Any]]:
         """저장된 요청 원문/제목/근거를 단순 LIKE 검색으로 찾습니다.
 
         Week 4의 RAG 보조 도구가 SQLite 기록에서 일정/할 일/알림 근거를 찾을 때 사용합니다.
+
+        date_from/date_to는 date 컬럼 범위 필터로 검색 공간을 먼저 좁히고,
+        attendee는 members_json LIKE 필터로 참석자를 제한합니다.
+        query 조건은 AND로 덧붙여져 좁혀진 공간 안에서만 텍스트 검색을 수행합니다.
         """
 
         query_text = str(query or "").strip()
@@ -463,6 +475,15 @@ class AppSQLiteStore(SQLiteFileStore):
         if kind:
             clauses.append("kind = ?")
             params.append(kind)
+        if date_from:
+            clauses.append("date >= ?")
+            params.append(date_from)
+        if date_to:
+            clauses.append("date <= ?")
+            params.append(date_to)
+        if attendee:
+            clauses.append("members_json LIKE ?")
+            params.append(f"%{attendee}%")
         if query_text:
             clauses.append("(raw_json LIKE ? OR title LIKE ? OR reason LIKE ?)")
             token = f"%{query_text}%"
