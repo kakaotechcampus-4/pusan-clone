@@ -445,8 +445,7 @@ def search_nana_memory(
     limit = safe_limit(limit, default=5, maximum=20)
     hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=limit)
 
-    kind = "personal_schedule"
-    schedules = SQLITE_STORE.list_schedules(limit=100, kind=kind, date_from=date_from, date_to=date_to)
+    schedules = SQLITE_STORE.list_schedules(limit=100, date_from=date_from, date_to=date_to)
     chunks: list[dict[str, Any]] = []
     for schedule in schedules:
         attendees = schedule.get("attendees") or []
