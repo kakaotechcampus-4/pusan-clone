@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 from typing import Any
 
-from student_parts.week04_retrieve_nanas_memory import (
-    REFERENCE_STORE,
-    SQLITE_STORE,
-    search_nana_memory,
-)
+import student_parts.week04_retrieve_nanas_memory as memory
+from fixed.app_store import AppSQLiteStore
+from fixed.reference_store import PersonalReferenceStore
+
+def use_temp_stores() -> None:
+    # 전역 저장소 싱글턴을 임시 temp 인스턴스로 교체해 실제 db 오염 방지
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="nana_test_"))
+    memory.SQLITE_STORE = AppSQLiteStore(temp_dir / "app.db")
+    memory.REFERENCE_STORE = PersonalReferenceStore(temp_dir / "chroma")
+    print(f"[temp-store] {temp_dir}")
 
 
 def seed_personal_references() -> None:
@@ -31,7 +39,7 @@ def seed_personal_references() -> None:
         },
     ]
     for ref in references:
-        saved = REFERENCE_STORE.add_personal_reference(
+        saved = memory.REFERENCE_STORE.add_personal_reference(
             title=ref["title"],
             content=ref["content"],
             tags=ref["tags"],
@@ -78,7 +86,7 @@ def seed_schedules() -> None:
     ]
     for payload in payloads:
         try:
-            result = SQLITE_STORE.save_structured_request(payload)
+            result = memory.SQLITE_STORE.save_structured_request(payload)
             saved_ids = [row.get("id") for row in result.get("saved_rows", [])]
             print(f"[seed:schedule] {payload['title']} -> {saved_ids}")
         except Exception as error:  # 외부 MCP 동기화 실패 등은 테스트에 치명적이지 않음
@@ -88,7 +96,7 @@ def seed_schedules() -> None:
 def call_search_nana_memory(**kwargs: Any) -> dict[str, Any]:
     """@tool인 search_nana_memory를 dict 입력으로 invoke 하고 payload를 파싱합니다."""
 
-    raw = search_nana_memory.invoke(kwargs)
+    raw = memory.search_nana_memory.invoke(kwargs)
     return json.loads(raw)
 
 
@@ -112,10 +120,9 @@ def print_payload(label: str, payload: dict[str, Any]) -> None:
     chunks = payload.get("chunks", [])
     print(f"\nschedule_chunks ({len(chunks)}건):")
     for chunk in chunks:
-        # 현재 구현은 chunk에 text 키를, 청크 구조 버전은 content 키를 씁니다. 둘 다 대응.
-        line = chunk.get("text") or chunk.get("content") or ""
+        line = chunk.get("content") or ""
         first_line = str(line).splitlines()[0] if line else ""
-        print(f"  - {chunk.get('title')} | {first_line}")
+        print(f"  - {chunk.get('metadata', {}).get('title')} | {first_line}")
 
     print("\ncontext:")
     print(payload.get("context", ""))
@@ -123,6 +130,7 @@ def print_payload(label: str, payload: dict[str, Any]) -> None:
 
 
 def main() -> None:
+    use_temp_stores()
     print("검색 출처 생성 중...\n")
     seed_personal_references()
     seed_schedules()
