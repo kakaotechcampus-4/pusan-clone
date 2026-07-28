@@ -392,7 +392,7 @@ def search_conversation_messages(
         conversation_id=conversation_id
     )
 
-    return json_payload({"ok": True, "tool_name": "search_conversation_messages", **sqlite_list})
+    return json_payload(sqlite_list)
 
 
 @tool(args_schema=SearchNanaMemoryInput)
