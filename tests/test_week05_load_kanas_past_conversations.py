@@ -477,5 +477,200 @@ class CollectMemberSchedulesHelperTest(Week05IsolatedTestCase):
                 )
 
 
+class Week05McpWrapperContractTest(Week05IsolatedTestCase):
+    def test_search_previous_conversations_keeps_none_and_exact_result(self) -> None:
+        exact_result = '{"ok":true,"rows":[]}\n'
+        with patch.object(
+            week05,
+            "call_mcp_tool_sync",
+            return_value=exact_result,
+        ) as mocked:
+            result = week05.search_previous_conversations.invoke(
+                {"query": "API", "member_names": None, "limit": 7}
+            )
+
+        self.assertEqual(result, exact_result)
+        mocked.assert_called_once_with(
+            "search_previous_conversations",
+            {"query": "API", "member_names": None, "limit": 7},
+        )
+
+    def test_load_conversation_messages_wraps_unmodified_payload(self) -> None:
+        payload = {
+            "ok": True,
+            "tool_name": "load_conversation_messages",
+            "rows": [
+                {"sender": "철수", "content": "첫 메시지", "created_at": "1"},
+                {"sender": "영희", "content": "둘째 메시지", "created_at": "2"},
+            ],
+        }
+        with patch.object(
+            week05,
+            "call_external_tool_payload",
+            return_value=payload,
+        ) as mocked:
+            result = invoke_json(
+                week05.load_conversation_messages,
+                {"conversation_id": "conv-1"},
+            )
+
+        self.assertEqual(result, payload)
+        mocked.assert_called_once_with(
+            "load_conversation_messages",
+            {"conversation_id": "conv-1"},
+        )
+
+    def test_extract_create_and_list_are_exact_pass_through_wrappers(self) -> None:
+        exact_result = "EXACT MCP RESULT"
+        cases = [
+            (
+                week05.extract_schedules_from_history,
+                {
+                    "member_names": ["철수"],
+                    "date_from": "2026-07-07",
+                    "date_to": "2026-07-17",
+                },
+                "extract_schedules_from_history",
+                {
+                    "member_names": ["철수"],
+                    "date_from": "2026-07-07",
+                    "date_to": "2026-07-17",
+                },
+            ),
+            (
+                week05.create_shared_schedule,
+                {
+                    "member_name": "철수",
+                    "title": "회의",
+                    "date": "2026-07-07",
+                    "start_time": "10:00",
+                },
+                "create_shared_schedule",
+                {
+                    "member_name": "철수",
+                    "title": "회의",
+                    "date": "2026-07-07",
+                    "start_time": "10:00",
+                    "end_time": "미정",
+                    "notes": None,
+                    "source_conversation_id": None,
+                    "schedule_id": None,
+                },
+            ),
+            (
+                week05.list_shared_schedules,
+                {
+                    "member_names": ["철수"],
+                    "date_from": "2026-07-07",
+                    "date_to": "2026-07-17",
+                    "source_conversation_id": "conv-1",
+                    "limit": 25,
+                },
+                "list_shared_schedules",
+                {
+                    "member_names": ["철수"],
+                    "date_from": "2026-07-07",
+                    "date_to": "2026-07-17",
+                    "source_conversation_id": "conv-1",
+                    "limit": 25,
+                },
+            ),
+        ]
+
+        for tool, arguments, tool_name, expected_args in cases:
+            with self.subTest(tool=tool_name), patch.object(
+                week05,
+                "call_mcp_tool_sync",
+                return_value=exact_result,
+            ) as mocked:
+                self.assertEqual(tool.invoke(arguments), exact_result)
+                mocked.assert_called_once_with(tool_name, expected_args)
+
+    def test_no_argument_list_shared_schedules_passes_all_five_keys(self) -> None:
+        with patch.object(
+            week05,
+            "call_mcp_tool_sync",
+            return_value='{"ok":true}',
+        ) as mocked:
+            week05.list_shared_schedules.invoke({})
+
+        mocked.assert_called_once_with(
+            "list_shared_schedules",
+            {
+                "member_names": None,
+                "date_from": None,
+                "date_to": None,
+                "source_conversation_id": None,
+                "limit": 50,
+            },
+        )
+
+
+class DeleteSharedScheduleGuardTest(Week05IsolatedTestCase):
+    def test_no_filters_returns_failure_without_mcp_call(self) -> None:
+        payload = invoke_json(week05.delete_shared_schedule, {})
+
+        self.mcp_mock.assert_not_called()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["deleted_count"], 0)
+        self.assertEqual(payload["deleted"], [])
+        self.assertEqual(
+            payload["filters"],
+            {"schedule_id": None, "source_conversation_id": None},
+        )
+
+    def test_two_filters_return_failure_without_mcp_call(self) -> None:
+        payload = invoke_json(
+            week05.delete_shared_schedule,
+            {
+                "schedule_id": "schedule-1",
+                "source_conversation_id": "conversation-1",
+            },
+        )
+
+        self.mcp_mock.assert_not_called()
+        self.assertFalse(payload["ok"])
+        self.assertIn("하나만", payload["error"])
+        self.assertEqual(payload["deleted_count"], 0)
+        self.assertEqual(payload["deleted"], [])
+        self.assertEqual(
+            payload["filters"],
+            {
+                "schedule_id": "schedule-1",
+                "source_conversation_id": "conversation-1",
+            },
+        )
+
+    def test_exactly_one_filter_is_passed_through(self) -> None:
+        exact_result = '{"ok":true,"deleted_count":1,"deleted":[{"schedule_id":"s-1"}]}'
+        cases = [
+            (
+                {"schedule_id": "s-1"},
+                {"schedule_id": "s-1", "source_conversation_id": None},
+            ),
+            (
+                {"source_conversation_id": "conversation-1"},
+                {
+                    "schedule_id": None,
+                    "source_conversation_id": "conversation-1",
+                },
+            ),
+        ]
+
+        for arguments, expected_filters in cases:
+            with self.subTest(arguments=arguments), patch.object(
+                week05,
+                "call_mcp_tool_sync",
+                return_value=exact_result,
+            ) as mocked:
+                result = week05.delete_shared_schedule.invoke(arguments)
+
+                self.assertEqual(result, exact_result)
+                mocked.assert_called_once_with(
+                    "delete_shared_schedule",
+                    expected_filters,
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
