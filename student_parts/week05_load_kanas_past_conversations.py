@@ -24,7 +24,11 @@ from fixed.mcp_client import (
 )
 from fixed.runtime_clock import current_app_date_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
-from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, join_system_prompt
+from student_parts.week01_wake_up_nana import (
+    PERSONAL_SCHEDULES,
+    _current_session_schedules,
+    join_system_prompt,
+)
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
 from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
 
@@ -188,7 +192,10 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
-
+    sqlite_rows = AppSQLiteStore(CONFIG.app_db_path).list_schedules(kind="personal_schedule")
+    saved_ids = {row.get("schedule_id") for row in sqlite_rows}
+    pending = [s for s in  _current_session_schedules() if s.get("id") not in saved_ids]
+    return sqlite_rows+pending
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
     ...
 
