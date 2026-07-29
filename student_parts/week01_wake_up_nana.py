@@ -28,7 +28,7 @@ _WEEK01_AGENT: Any | None = None
 
 CHAT_MEMORY_PROMPT = (
     "이번 대화에서 만든 개인 일정은 현재 채팅 안에서만 유지되는 임시 메모리다. "
-    "다른 대화의 일정은 보이지 않으니, 일정을 조회하거나 삭제할 때는 이번 대화에서 만든 것만 대상으로 삼는다. "
+    "다른 대화의 임시 일정은 보이지 않으니, 이 임시 일정을 조회하거나 삭제할 때는 이번 대화에서 만든 것만 대상으로 삼는다. "
     "방금 만든 일정의 id를 기억해 두었다가 사용자가 '방금 그거 지워줘'처럼 말하면 그 id로 삭제한다."
 )
 
@@ -239,8 +239,8 @@ def week01_prompt_parts() -> list[str]:
         ),
         (
             "일정 관련 요청은 반드시 제공된 tool로 처리한다. "
-            "새 일정을 만들 땐 personal_create_schedule, 일정을 보여줄 땐 personal_list_schedules, "
-            "일정을 지울 땐 personal_delete_schedule을 호출한다. "
+            "현재 대화의 임시 일정은 personal_create_schedule로 만들고, personal_list_schedules로 보여주고, "
+            "personal_delete_schedule로 지운다. "
             "tool 없이 추측으로 일정을 지어내지 말고, 결과는 자연스러운 한국어로 요약해 안내한다."
         ),
         CHAT_MEMORY_PROMPT,

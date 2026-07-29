@@ -284,8 +284,7 @@ def week02_prompt_parts() -> list[str]:
             "않고 그 payload의 필드를 읽어 structured_response를 만든다."
         ),
         (
-            "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다. "
-            "구조화 결과를 만드는 것까지만 담당한다."
+            "Week 2 agent는 구조화 결과를 만드는 것까지만 담당한다."
         ),
     ]
 
