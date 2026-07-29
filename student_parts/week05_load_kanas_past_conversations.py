@@ -397,8 +397,12 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    result = call_mcp_tool_sync("delete_shared_schedule",               
+                                    {                                       
+                                        "schedule_id": schedule_id,         
+                                        "source_conversation_id": source_conversation_id                                                  
+                                    })
+    return json_payload(result)  
 
 
 @tool(args_schema=ListSharedSchedulesInput)
