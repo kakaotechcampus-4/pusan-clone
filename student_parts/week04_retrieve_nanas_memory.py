@@ -382,8 +382,6 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     ## 설명
     개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다.
     개인 참고자료에 저장된 선호, 규칙, 정책을 확인하기 위해 사용할 수 있습니다.
-    특정 대화를 지정하지 않은 경우 search_conversation_messages의 conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 해야 합니다.
-    대화 검색에서는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고 user 발화를 근거로 우선 사용해야 합니다.
 
     ## 예시
     사용자: '내가 저장해 둔 점심시간 회의 선호가 뭐였지?' 
@@ -449,6 +447,11 @@ def search_conversation_messages(
 
     검색 대상은 **나와 Nana가 이 앱에서 주고받은 대화**입니다. 다른 사람의 이름이 나와도
     그 사람이 화제였을 뿐이며, 그 사람이 참여한 대화를 찾는 것이 아닙니다.
+
+    특정 대화를 지정하지 않은 경우 conversation_id를 생략하여 현재 대화가 과거 검색 결과에
+    섞이지 않게 해야 합니다.
+    검색 결과를 읽을 때는 assistant 발화만으로 사용자에 관한 사실을 확정하지 말고
+    user 발화를 근거로 우선 사용해야 합니다.
 
     ## 예시
     사용자: '예전 대화에서 철수에 대해 무슨 말을 했지?'
@@ -651,7 +654,7 @@ def week04_prompt_parts(active_week: int = 4) -> list[str]:
         [추출 결과에 빠진 필드가 없으면 검색하지 않고 바로 저장한다]
         사용자: "다음 주 화요일 14시부터 15시까지 팀 회의 잡아줘."
         -> extract_schedule_request(...)
-        생각: kind=personal_schedule, date와 start_time이 모두 채워져 있다. 보완할 필드가 없다.
+        생각: date와 start_time이 모두 채워져 있다. 보완할 필드가 없다.
         -> 검색 tool 없이 save_structured_request로 저장한다.
         personal_create_schedule로 한 번에 저장하지 말고 두 tool을 순서대로 호출한다.
         """,
@@ -665,7 +668,8 @@ def week04_prompt_parts(active_week: int = 4) -> list[str]:
         -> hit에 "팀 회의는 오전 10시에 시작한다"가 있으면 저장하지 않고 먼저 확인한다.
         답변: "저장해 둔 선호에 팀 회의는 오전 10시 시작이라고 되어 있어요. 10:00으로 저장할까요?"
         -> 사용자가 승인한 뒤에 save_structured_request로 저장한다.
-           hit이 없거나 현재 요청과 무관하면 시간 미정으로 저장한다.
+           hit이 없거나 현재 요청과 무관하면 저장하지 말고, 선호를 찾지 못했다고 알린 뒤
+           빠진 필드를 물어보아라.
         """,
 
         """

@@ -362,8 +362,11 @@ def search_previous_conversations(
     query는 대화 본문과 글자가 겹치는지만 보는 부분 문자열 검색입니다. 뜻이 같아도 글자가
     다르면 걸리지 않으므로, 본문에 그대로 나올 법한 짧은 명사나 구 하나만 넣으세요.
 
-    사람 이름은 query에 넣지 말고 member_names로 넘기세요. 이름과 주제어를 한 문자열로
-    붙이면("하린 온보딩") 본문에 그런 연속된 글자가 없어 검색이 비게 됩니다.
+    member_names는 그 대화를 **나눈 사람**을 거릅니다. 본문에 이름만 언급된 대화를 찾을 때는
+    그 이름을 query에 넣으세요. 두 인자는 거르는 대상이 다릅니다.
+
+    이름과 주제어를 한 문자열로 붙이면("하린 온보딩") 본문에 그런 연속된 글자가 없어
+    결과가 비게 됩니다. 대화 상대는 member_names로, 찾을 낱말은 query로 나눠 넘기세요.
     """
 
     # TODO: call_mcp_tool_sync("search_previous_conversations", args)를 호출하고 결과 문자열을 반환하세요.
@@ -407,7 +410,16 @@ def create_shared_schedule(
     source_conversation_id: str | None = None,
     schedule_id: str | None = None,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
+    """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다.
+
+    member_name에 넣은 사람의 공유 저장소 row 하나만 만듭니다. 앱 SQLite에는 아무것도 남지
+    않으므로 앱 기록 도구(list_saved_requests, personal_*)로는 보이지 않습니다.
+    공유 저장소 도구(list_shared_schedules, extract_schedules_from_history,
+    collect_member_schedules)로는 보입니다.
+
+    앱에 기록이 남아야 하는 일정이면 save_structured_request를 쓰세요. 그쪽은 앱 원본을
+    만들고 공유본까지 함께 만들어 주므로, 나중에 앱에서 조회·수정·삭제할 수 있습니다.
+    """
 
     # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
     return call_mcp_tool_sync("create_shared_schedule", {
@@ -434,6 +446,10 @@ def delete_shared_schedule(
     두 저장소가 어긋납니다.
 
     이 도구는 앱 기록 없이 공유 저장소에만 있는 row를 직접 정리할 때 씁니다.
+
+    schedule_id와 source_conversation_id 중 최소 하나는 넘겨야 합니다. 둘 다 비우면 오류 없이
+    아무것도 지우지 않고 deleted가 빈 목록으로 돌아옵니다. 어느 row를 지울지 모르면
+    list_shared_schedules로 먼저 확인하세요.
     """
 
     # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
@@ -453,14 +469,20 @@ def list_shared_schedules(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다.
 
+    member_names에는 저장소 row의 정확한 member_name을 넣으세요. "철수가 바쁜 시간",
+    "영희의 일정"에서 `가`, `의`는 이름이 아니라 조사이므로 각각 "철수", "영희"입니다.
+
     필터를 하나도 주지 않으면 실습용 기본 멤버와 기간의 row가 돌아옵니다. 그래서 어떤
     멤버가 등록돼 있는지, 일정이 어느 기간에 몰려 있는지 훑어볼 때 쓸 수 있습니다.
     반환 row의 member_name과 date를 보면 됩니다.
 
+    같은 대화에서 방금 만든 일정이 외부 저장소에도 저장됐는지 확인할 때는 앞선 요청의
+    참석자와 날짜로 조회하세요. 결과가 비면 저장 실패로 단정하기 전에 이름 필터를 빼고
+    같은 날짜를 다시 조회해, 조사나 표기 차이 때문에 놓친 것인지 확인하세요.
+
     누가 언제 바쁜지를 계산하는 용도는 아닙니다. 그건 collect_member_schedules입니다.
     """
 
-    # TODO: call_mcp_tool_sync("list_shared_schedules", args)로 공유 일정 저장소 rows를 조회하세요.
     return call_mcp_tool_sync("list_shared_schedules", {
         "member_names" : member_names,
         "date_from" : date_from,
@@ -478,7 +500,8 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
 
     사용자가 기간을 말했으면 그 기간을 그대로 넣으세요. 기간을 말하지 않았을 때 오늘 날짜를
     채워 넣으면 거의 항상 빈 결과가 됩니다. 그럴 때는 이 도구를 부르기 전에
-    list_shared_schedules를 필터 없이 호출해 등록된 row의 date로 조회할 범위를 정하세요.
+    list_shared_schedules에 넉넉한 date_from/date_to를 주어 일정이 실제로 어느 기간에
+    등록돼 있는지 먼저 확인하세요. 필터를 하나도 주지 않으면 실습용 기본 기간만 돌아옵니다.
 
     결과가 비었다는 것은 "그 기간에 없다"는 뜻이지 "그 멤버에게 일정이 없다"는 뜻이 아닙니다.
     """
@@ -552,12 +575,15 @@ def week05_prompt_parts(active_week: int = 5) -> list[str]:
         """,
 
         """
-        list_shared_schedules는 공유 일정 저장소에 실제로 등록된 row를 확인할 때만 사용하여라.
-        누가 언제 바쁜지를 알아보는 용도로는 쓰지 말아라. 그것은 collect_member_schedules가 한다.
+        두 조회 도구는 읽는 저장소가 다르다. **내 일정이 답에 들어가야 하는지**로 고른다.
+        - collect_member_schedules: 앱에 있는 내 일정과 외부 멤버 일정을 합쳐서 준다.
+          "언제 만날까", "누가 언제 바쁜가"처럼 나를 포함해 시간을 맞추는 질문은 전부 이쪽이다.
+          내 일정이 빠지면 답이 틀리므로 멤버 이름만 나열된 요청이어도 이쪽을 쓴다.
+        - list_shared_schedules: 공유 저장소에 등록된 row만 읽는다. 앱에 있는 내 일정은
+          들어오지 않는다. 누가 등록돼 있는지, 어떤 row가 올라가 있는지 확인할 때만 쓴다.
 
-        어떤 외부 멤버가 있는지 물으면 사용자에게 명단을 되묻지 말아라.
-        list_shared_schedules를 필터 없이 호출하면 등록된 row가 오므로 그 member_name으로
-        누가 있는지 답할 수 있다.
+        어떤 외부 멤버가 있는지 물으면 사용자에게 명단을 되묻지 말고
+        list_shared_schedules로 확인하여라.
         """,
 
         """

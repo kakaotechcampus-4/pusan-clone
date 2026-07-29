@@ -203,7 +203,11 @@ def _create_personal_schedule_dict(
 
 @tool(
     "personal_create_schedule", 
-    description="개인 일정을 생성한다. date는 YYYY-MM-DD, start_time, end_time은 HH:MM 형식이다."
+    description=(
+        "개인 일정을 생성한다. date는 YYYY-MM-DD, start_time은 HH:MM 형식이다. "
+        "end_time도 HH:MM 형식이지만 종료 시각을 모르면 생략한다 — 기본값 \"미정\"이 들어간다. "
+        "모르는 값을 지어내지 말아라."
+    )
 )
 def personal_create_schedule(
     title: str,

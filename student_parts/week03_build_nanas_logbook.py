@@ -78,8 +78,9 @@ personal_list_saved_schedules는 사용자가 개인 일정 또는 그룹 일정
 저장 일정을 수정하거나 삭제할 때 schedule_id를 모르면
 먼저 personal_list_saved_schedules로 후보를 조회하여라.
 
-삭제 후 같은 조건으로 personal_list_saved_schedules를 다시 호출하고,
-해당 schedule_id가 목록에서 사라진 것을 확인한 뒤 사용자에게 성공을 알려라.
+삭제 성공 여부는 personal_delete_saved_schedules 결과의 deleted_count로 판단하여라.
+목록을 다시 조회해 확인할 필요는 없다. 목록 도구는 날짜와 종류만 받으므로 제목이나 시간으로
+삭제한 경우에는 같은 조건으로 되짚을 수도 없다.
 
 조회 대상 종류를 사용자가 한정하지 않았다면 어떤 종류로도 좁히지 말아라.
 사용자가 쓴 표현이 일정처럼 들리는지 여부로 종류를 짐작하지 말아라.
@@ -624,7 +625,8 @@ def list_saved_requests(
     """저장된 일정·할 일·알림 목록을 날짜 범위로 조회합니다.
 
     개인 일정, 그룹 일정, 할 일, 알림이 모두 이 목록에 함께 들어 있습니다.
-    kind를 생략하면 네 종류를 한 번에 반환합니다.
+    kind를 생략하면 종류를 가리지 않고 반환합니다. 분류가 애매해 unknown으로 저장된 요청도
+    함께 나올 수 있습니다.
     date_from과 date_to는 YYYY-MM-DD 형태이며 저장된 date를 기준으로 거릅니다.
 
     키워드 인자가 없습니다. 제목이나 주제어로 찾으려면 search_saved_requests의 query를
