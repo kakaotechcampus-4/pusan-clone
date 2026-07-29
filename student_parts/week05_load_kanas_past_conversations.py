@@ -11,6 +11,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
+    PERSONAL_SHARED_MEMBER_NAME,
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
@@ -210,6 +211,20 @@ def json_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _missing_date_range_fields(date_from: str, date_to: str) -> list[str]:
+    """비어 있는 날짜 범위 인자 이름을 모읍니다.
+
+    빈 날짜를 store로 넘기면 SQL 필터가 풀려 조용히 0건이 되고, LLM이 그것을
+    "일정이 없다"로 잘못 읽습니다. 그래서 호출 전에 이름을 집어 되돌려 줍니다.
+    """
+
+    return [
+        field_name
+        for field_name, value in (("date_from", date_from), ("date_to", date_to))
+        if not str(value or "").strip()
+    ]
+
+
 class SearchPreviousConversationsInput(BaseModel):
     """외부 이전 대화 검색 입력입니다."""
 
@@ -294,7 +309,72 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    ...
+    # 이름/날짜 정규화는 외부 store helper를 그대로 쓴다. 여기서 다시 구현하면 규칙이 두 개가 된다.
+    normalized_members = normalize_external_member_names(member_names)
+    normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
+        member_names, date_from, date_to
+    )
+
+    # 내 일정은 Week 2 StructuredRequest로 읽어 외부 row와 같은 필드만 남긴다.
+    personal_rows: list[dict[str, Any]] = []
+    for schedule in personal_schedules:
+        request = _structured_request_from_schedule_row(schedule)
+        if not request.date:
+            continue
+        if normalized_date_from and request.date < normalized_date_from:
+            continue
+        if normalized_date_to and request.date > normalized_date_to:
+            continue
+        personal_rows.append(
+            {
+                "member_name": PERSONAL_SHARED_MEMBER_NAME,
+                "title": request.title or "제목 없음",
+                "date": request.date,
+                "start_time": request.start_time or "미정",
+                "end_time": request.end_time or "미정",
+                "notes": "앱에 저장된 내 일정" if schedule.get("schedule_id") else "현재 대화의 임시 일정",
+            }
+        )
+
+    # 외부 멤버 일정은 MCP tool 결과 rows를 가공하지 않고 그대로 쓴다.
+    external_rows: list[dict[str, Any]] = []
+    external_error: str | None = None
+    if normalized_members:
+        try:
+            payload = call_external_tool_payload(
+                "extract_schedules_from_history",
+                {
+                    "member_names": normalized_members,
+                    "date_from": normalized_date_from,
+                    "date_to": normalized_date_to,
+                },
+            )
+            external_rows = payload.get("rows") or []
+        except Exception as error:
+            # 외부 조회만 실패해도 내 일정은 근거로 남기고, 불완전하다는 사실을 payload에 남긴다.
+            external_error = f"외부 멤버 일정 조회에 실패했습니다: {error}"
+
+    # 날짜·시간순으로 합쳐 두면 schedule_summary가 그대로 읽을 수 있는 busy-time 목록이 된다.
+    rows = sorted(
+        [*personal_rows, *external_rows],
+        key=lambda row: (
+            str(row.get("date") or ""),
+            str(row.get("start_time") or ""),
+            str(row.get("member_name") or ""),
+        ),
+    )
+    result: dict[str, Any] = {
+        "ok": external_error is None,
+        "tool_name": "collect_member_schedules",
+        "member_names": normalized_members,
+        "date_from": normalized_date_from,
+        "date_to": normalized_date_to,
+        "rows": rows,
+        "schedule_summary": external_schedule_summary(rows),
+    }
+    if external_error is not None:
+        result["error"] = external_error
+    return result
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
@@ -378,11 +458,7 @@ def extract_schedules_from_history(member_names: list[str], date_from: str, date
 
     # TODO: call_mcp_tool_sync("extract_schedules_from_history", args)를 호출해 외부 멤버 busy-time rows를 반환하세요.
     # 날짜가 비면 store SQL이 조용히 0건을 돌려주므로, 빈 범위는 미리 걸러 이유를 알려준다.
-    missing_fields = [
-        field_name
-        for field_name, value in (("date_from", date_from), ("date_to", date_to))
-        if not str(value or "").strip()
-    ]
+    missing_fields = _missing_date_range_fields(date_from, date_to)
     if missing_fields:
         return json_payload(
             {
@@ -479,7 +555,49 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
     # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
-    ...
+    # 날짜 범위가 비면 내 일정 필터와 외부 SQL 필터가 동시에 풀려 결과를 신뢰할 수 없다.
+    missing_fields = _missing_date_range_fields(date_from, date_to)
+    if missing_fields:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "collect_member_schedules",
+                "rows": [],
+                "error": "일정을 모을 날짜 범위(date_from, date_to)가 필요합니다.",
+                "fields": missing_fields,
+            }
+        )
+
+    # helper가 던진 앱 SQLite 예외를 tool 경계인 여기서 처음 잡는다.
+    try:
+        personal_schedules = _personal_schedules_for_current_scope()
+    except Exception as error:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "collect_member_schedules",
+                "rows": [],
+                "error": f"내 일정을 읽지 못했습니다: {error}",
+            }
+        )
+
+    try:
+        result = _collect_member_schedules(
+            member_names=member_names,
+            date_from=date_from,
+            date_to=date_to,
+            personal_schedules=personal_schedules,
+        )
+    except Exception as error:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "collect_member_schedules",
+                "rows": [],
+                "error": f"일정 수집에 실패했습니다: {error}",
+            }
+        )
+    return json_payload(result)
 
 
 def week05_tools() -> list[Any]:
