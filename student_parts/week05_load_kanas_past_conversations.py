@@ -349,13 +349,20 @@ def load_conversation_messages(conversation_id: str) -> str:
 
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
-def extract_schedules_from_history(
+def extract_schedules_from_history(  # 특정 사람의 과거 기록에서 바쁜 시간을 찾을 떄 사용
     member_names: list[str], date_from: str, date_to: str
 ) -> str:
     """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
 
     # TODO: call_mcp_tool_sync("extract_schedules_from_history", args)를 호출해 외부 멤버 busy-time rows를 반환하세요.
-    ...
+    return call_mcp_tool_sync(
+        "extract_schedules_from_history",
+        {
+            "member_names": member_names,
+            "date_from": date_from,
+            "date_to": date_to,
+        },
+    )
 
 
 @tool(args_schema=CreateSharedScheduleInput)
@@ -387,7 +394,7 @@ def delete_shared_schedule(
 
 
 @tool(args_schema=ListSharedSchedulesInput)
-def list_shared_schedules(
+def list_shared_schedules(  # 외부 공유 저장소에 실제로 등록된 row를 확인할 떄 사용
     member_names: list[str] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
@@ -397,7 +404,16 @@ def list_shared_schedules(
     """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다. 필터가 없으면 기본 공유 일정을 반환합니다."""
 
     # TODO: call_mcp_tool_sync("list_shared_schedules", args)로 공유 일정 저장소 rows를 조회하세요.
-    ...
+    return call_mcp_tool_sync(
+        "list_shared_schedules",
+        {
+            "member_names": member_names,
+            "date_from": date_from,
+            "date_to": date_to,
+            "source_conversation_id": source_conversation_id,
+            "limit": limit,
+        },
+    )
 
 
 @tool(args_schema=CollectMemberSchedulesInput)
