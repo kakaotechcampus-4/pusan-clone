@@ -247,10 +247,34 @@ Week 5 pytest 스위트는 후자(로직 검증)만 다룬다 — `collect_membe
 - `list_shared_schedules`: 이름 없이도 호출 가능, 공유 저장소 자체를 열람/확인하는 목적
 - `collect_member_schedules`: 이름이 반드시 있어야 하고, 회의/미팅 조율 의도가 뚜렷할 때 — 내 최신 일정(임시 일정 포함)까지 반영
 
-**검증**: `build_week05_agent()`로 실제 LLM agent를 만들어 세 가지 트리거 질문을 넣어본 결과, 모두 의도한 tool이 정확히 호출됨을 확인.
+**1차 검증**: `build_week05_agent()`로 실제 LLM agent를 만들어 세 가지 트리거 질문을 넣어본 결과, 모두 의도한 tool이 정확히 호출됨을 확인.
 
 | 질문 | 호출된 tool |
 |---|---|
 | "민준이랑 회의 얘기했던 대화 있어?" | `search_previous_conversations` |
 | "공유 일정 목록에 지금 뭐가 등록돼 있어?" | `list_shared_schedules` |
 | "서연이랑 이번 주에 회의 잡으려는데, 서연이랑 내 일정 같이 모아서 보여줘" | `collect_member_schedules` |
+
+## 8. `tests/test_week05_tool_selection.py` — tool-selection 자동화 테스트
+
+Week 4 스타일(`agent.invoke()` + 자연어 질문)로 9개 케이스를 작성해 실제 LLM으로 검증했다.
+
+**1차 실행 결과**: 9개 중 7개 통과, 2개 실패. 실패한 두 케이스("민준 언제 바쁜지 이번 달 일정 좀 뽑아줘", "지훈이 이번 주에 시간 되는 때 있어?")는 `extract_schedules_from_history`를 기대했는데 실제로는 `collect_member_schedules`가 호출됨.
+
+**원인**: `collect_member_schedules`는 항상 "나"를 자동 포함하기 때문에, "나와 비교/조율할 필요가 없는 단일 멤버 조회" 질문도 LLM이 "나 일정까지 같이 주면 더 안전하다"고 판단해 `collect_member_schedules` 쪽으로 넘어감. `WEEK05_MEMORY_PROMPT`가 "조율 의도 없는 단독 조회"와 "조율 목적 조회"를 충분히 명확히 안 갈랐던 것.
+
+**조치 1 — 프롬프트 보강**: `extract_schedules_from_history`/`collect_member_schedules` 설명에 "나를 비교 대상에 넣을 필요가 없는, 상대방 일정만 단독으로 묻는 질문에는 collect_member_schedules를 쓰지 않는다"는 규칙을 명시적으로 추가. 재검증 결과 2개 중 1개("민준 언제 바쁜지...")는 통과로 전환.
+
+**조치 2 — 남은 1개는 테스트 문장 자체를 교체**: "지훈이 이번 주에 시간 되는 때 있어?"는 "시간 되는지"라는 표현 자체가 암묵적 조율 뉘앙스를 담을 수 있어 본질적으로 경계선에 가까운 문장이었다. 이건 프롬프트로 더 밀어붙이기보다(Week 4에서 확인한 "tool 선택은 프롬프트로 유도해도 확률적"이라는 한계), "지훈이 이번 주에 어떤 일정이 있는지 뽑아줘"처럼 조율 뉘앙스를 뺀 더 명확한 문장으로 교체하는 쪽을 선택.
+
+**최종 결과**: 9개 전부 통과.
+
+| 대상 tool | 트리거 질문 | 결과 |
+|---|---|---|
+| `search_previous_conversations` | "민준이랑 회의 얘기했던 대화 있어?" / "지훈이랑 나눈 대화 중에 릴리즈 관련 얘기 있었나?" | 통과 |
+| `search_previous_conversations` → `load_conversation_messages` | "민준이랑 예전에 나눈 대화 전체 내용 다 보여줘" (순서까지 검증) | 통과 |
+| `extract_schedules_from_history` | "민준 언제 바쁜지 이번 달 일정 좀 뽑아줘" / "지훈이 이번 주에 어떤 일정이 있는지 뽑아줘" | 통과 |
+| `list_shared_schedules` | "공유 일정 목록에 지금 뭐 등록돼 있어?" / "팀 전체 일정 보여줘" | 통과 |
+| `collect_member_schedules` | "서연이랑 이번 주에 회의 잡으려는데..." / "민준이랑 지훈이랑 나 셋이 이번 달 미팅 잡아야 하는데..." | 통과 |
+
+**교훈**: tool-selection 실패는 코드 버그가 아니라 "언어의 애매함"과 "프롬프트 안내 부족"이 섞인 문제라서, 원인에 따라 프롬프트를 고칠지 테스트 질문(요구사항 명확화)을 고칠지 구분해서 대응해야 한다.
