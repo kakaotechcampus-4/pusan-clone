@@ -672,5 +672,134 @@ class DeleteSharedScheduleGuardTest(Week05IsolatedTestCase):
                 )
 
 
+class ToolRegistryAndSchemaContractTest(Week05IsolatedTestCase):
+    def test_week05_tools_accumulate_week04_without_duplicate_names(self) -> None:
+        week05_names = [
+            getattr(tool, "name", getattr(tool, "__name__", ""))
+            for tool in week05.week05_tools()
+        ]
+        week04_names = {
+            getattr(tool, "name", getattr(tool, "__name__", ""))
+            for tool in week04.week04_tools()
+        }
+
+        self.assertTrue(week04_names.issubset(set(week05_names)))
+        self.assertEqual(len(week05_names), len(set(week05_names)))
+        for expected in {
+            "search_previous_conversations",
+            "load_conversation_messages",
+            "extract_schedules_from_history",
+            "create_shared_schedule",
+            "delete_shared_schedule",
+            "list_shared_schedules",
+            "collect_member_schedules",
+        }:
+            self.assertIn(expected, week05_names)
+
+    def test_conversation_id_is_required_by_schema(self) -> None:
+        field = week05.LoadConversationMessagesInput.model_fields["conversation_id"]
+        self.assertTrue(field.is_required())
+
+    def test_prompt_contains_override_probe_retry_and_week6_boundary(self) -> None:
+        prompt = week05.week05_system_prompt()
+
+        self.assertIn('Week 2·3의 "외부 멤버 일정 조회 금지"는 Week 5에서', prompt)
+        self.assertIn("외부 멤버 이름이 나온 과거 대화 질문", prompt)
+        self.assertIn("무인자 `list_shared_schedules()`를 첫 도구로", prompt)
+        self.assertIn("정보 부족 질문으로 처리하지 않는다", prompt)
+        self.assertIn("범위 확인용 probe일 뿐", prompt)
+        self.assertIn("1~2회 재검색", prompt)
+        self.assertIn("같은 멤버와 같은 날짜 범위", prompt)
+        self.assertIn("schedule_id` 또는 `source_conversation_id` 중 하나만", prompt)
+        self.assertIn("OR로 삭제 범위를 넓히므로", prompt)
+        self.assertIn("Week 6 범위", prompt)
+        self.assertIn("최종 회의 시간을 확정하지 않는다", prompt)
+
+
+class Week05LiveLLMTest(Week05IsolatedTestCase):
+    """실제 LLM은 답변 문구가 아니라 Week 5 tool 선택만 검증합니다."""
+
+    def setUp(self) -> None:
+        if os.getenv("KANANA_LIVE_LLM_TESTS") != "1":
+            self.skipTest("실제 LLM 호출 테스트는 KANANA_LIVE_LLM_TESTS=1일 때만 실행")
+        if not week05.CONFIG.has_openai_key:
+            self.skipTest("실제 LLM 호출에는 .env의 PROXY_TOKEN이 필요")
+        super().setUp()
+
+        self.mcp_calls: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_mcp_call(tool_name: str, args: dict[str, Any]) -> str:
+            self.mcp_calls.append((tool_name, args))
+            rows = [
+                {
+                    "member_name": "철수",
+                    "title": "API 연동 실습",
+                    "date": "2026-07-07",
+                    "start_time": "10:00",
+                    "end_time": "11:00",
+                    "notes": "외부 대화",
+                    "conversation_id": "ext-cs",
+                }
+            ]
+            return json.dumps(
+                {
+                    "ok": True,
+                    "tool_name": tool_name,
+                    "rows": rows,
+                    "schedule_summary": external_schedule_summary(rows),
+                },
+                ensure_ascii=False,
+            )
+
+        live_mcp_patcher = patch.object(
+            week05,
+            "call_mcp_tool_sync",
+            side_effect=fake_mcp_call,
+        )
+        live_mcp_patcher.start()
+        self.addCleanup(live_mcp_patcher.stop)
+        live_payload_patcher = patch.object(
+            week05,
+            "call_external_tool_payload",
+            return_value={
+                "ok": True,
+                "tool_name": "load_conversation_messages",
+                "rows": [],
+            },
+        )
+        live_payload_patcher.start()
+        self.addCleanup(live_payload_patcher.stop)
+
+    def _tool_names(self, question: str) -> list[str]:
+        result = week05.build_week05_agent().invoke(
+            {"messages": [{"role": "user", "content": question}]}
+        )
+        return [
+            event["tool_name"]
+            for event in extract_agent_events(result)
+            if event["event"] == "tool_call"
+        ]
+
+    def test_member_busy_time_question_selects_collect_tool(self) -> None:
+        tools = self._tool_names(
+            "철수와 영희의 2026-07-07부터 2026-07-17까지 일정에 내 일정도 함께 모아 줘. "
+            "회의 시간은 아직 확정하지 마."
+        )
+
+        self.assertIn("collect_member_schedules", tools)
+
+    def test_external_conversation_question_selects_previous_conversation_search(self) -> None:
+        tools = self._tool_names("철수가 이전 대화에서 API 연동에 대해 뭐라고 했는지 찾아줘.")
+
+        self.assertIn("search_previous_conversations", tools)
+
+    def test_missing_scope_question_probes_shared_schedules_first(self) -> None:
+        tools = self._tool_names("팀원들 일정 모아줘. 최종 시간은 확정하지 마.")
+
+        self.assertGreaterEqual(len(tools), 2)
+        self.assertEqual(tools[0], "list_shared_schedules")
+        self.assertIn("collect_member_schedules", tools)
+
+
 if __name__ == "__main__":
     unittest.main()
