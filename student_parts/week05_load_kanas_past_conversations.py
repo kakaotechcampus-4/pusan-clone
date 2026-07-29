@@ -321,11 +321,11 @@ def _collect_member_schedules(
         {
             "member_names":normalized_members,
             "date_from" : norm_from,
-            "date_to" : norm_to,     
+            "date_to" : norm_to,
         }
     )
 
-    external_rows = json.loads(external_result)
+    external_rows = json.loads(external_result)["rows"]
 
     rows = [*my_rows, *external_rows]
     summary = external_schedule_summary(rows)
