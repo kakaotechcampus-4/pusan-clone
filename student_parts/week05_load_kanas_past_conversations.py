@@ -176,10 +176,10 @@ _WEEK05_AGENT: Any | None = None
 #     Week 1~5 tool을 가진 agent를 한 번만 만들고 재사용합니다.
 
 
-call_mcp_tool = call_local_mcp_tool
-call_mcp_tool_sync = call_local_mcp_tool_sync
-load_langchain_mcp_tools = load_local_mcp_tools
-load_langchain_mcp_tools_sync = load_local_mcp_tools_sync
+call_mcp_tool = call_local_mcp_tool # 이름으로 MCP tool 하나를 찾아 실행하고 결과를 문자열로 반환
+call_mcp_tool_sync = call_local_mcp_tool_sync # 동기 코드에서 MCP tool 하나를 호출하는 wrapper
+load_langchain_mcp_tools = load_local_mcp_tools # 로컬 SQLite MCP 서버의 tool 목록을 LangChain tool 객체로 불러
+load_langchain_mcp_tools_sync = load_local_mcp_tools_sync # 동기 코드에서 MCP tool 목록을 불러오는 wrapper
 
 
 def _schedule_scope(schedule: dict[str, Any]) -> str:
@@ -189,8 +189,18 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
-    # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
-    ...
+    # 내 일정 수집
+    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(kind="personal_schedule")
+    saved_schedule_ids = {row.get("schedule_id") for row in saved_schedules if row.get("schedule_id")}
+
+    session_scope = current_session_scope()
+    temp_schedules = [
+        schedule for schedule in PERSONAL_SCHEDULES
+        if _schedule_scope(schedule) == session_scope and schedule.get("id") not in saved_schedule_ids
+    ]
+
+    return [*saved_schedules, *temp_schedules]
+
 
 
 def json_payload(payload: dict[str, Any]) -> str:
@@ -283,7 +293,31 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    ...
+    external_member_name = normalize_external_member_names(member_names)
+    external_schedule_date = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
+    external_dict = {
+        "member_names": external_member_name,
+        "date_from": external_schedule_date[0],
+        "date_to": external_schedule_date[1]
+    }
+
+    external_schedules = call_mcp_tool_sync(
+        tool_name="extract_schedules_from_history",
+        args=external_dict,
+        db_path=CONFIG.app_db_path
+    )["rows"]
+    # member_name/title/date/start_time/end_time/notes
+
+    my_schedules = _personal_schedules_for_current_scope()
+
+    total_rows = external_schedules + my_schedules
+
+    return {
+        "rows": total_rows,
+        "schedule_summary": external_schedule_summary(total_rows)
+    }
+
+
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
@@ -328,7 +362,7 @@ def create_shared_schedule(
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
     # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    # 추가
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -339,7 +373,7 @@ def delete_shared_schedule(
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
     # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    # 추가
 
 
 @tool(args_schema=ListSharedSchedulesInput)
