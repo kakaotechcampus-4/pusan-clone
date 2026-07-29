@@ -35,16 +35,16 @@ from student_parts.week04_retrieve_nanas_memory import (
 SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
 _WEEK05_AGENT: Any | None = None
 
-# 날짜로 먼저 거른 뒤 기본 12건보다 넉넉히 읽어 범위 내 바쁜 시간이 잘리지 않게 한다.
+# 날짜 선필터 뒤에도 범위 내 일정이 기본 12건에서 잘리지 않도록 후보 상한을 500건으로 둔다.
 PERSONAL_SCHEDULE_CANDIDATE_LIMIT = 500
 
-# 같은 구조로 병합된 내 일정도 trace에서 실제 저장 출처를 구분할 수 있도록 notes를 고정한다.
+# 병합 결과만으로 내 일정의 저장 위치를 추적할 수 있도록 출처별 notes를 고정한다.
 MY_SCHEDULE_NOTES = {
     "app_sqlite": "내 일정 · 앱 SQLite 저장",
     "session_memory": "내 일정 · 현재 대화 임시",
 }
 
-# 앞선 주차의 외부 조회 금지를 Week 5 범위로 명시적으로 대체해 누적 prompt의 충돌을 없앤다.
+# 이전 주차의 외부 조회 금지와 충돌하지 않도록 Week 5의 허용 범위를 명시한다.
 WEEK05_EXTERNAL_SOURCE_PROMPT = """
 # Week 5 외부 데이터 범위
 Week 2·3의 "외부 멤버 일정 조회 금지"는 Week 5에서 다음 지시로 대체된다.
@@ -63,7 +63,7 @@ Week 5의 산출물은 조회 근거와 멤버별 busy-time `rows`를 정리하�
 여러 사람의 공통 가능 시간을 계산하거나 최종 회의 시간을 확정하지 않는다. 그 결정은 Week 6 범위다.
 """
 
-# 같은 외부 데이터를 중복 조회하거나 빈 결과를 사실로 오인하지 않도록 MCP 호출 절차를 뒤 지시로 고정한다.
+# 중복 조회와 거짓 빈 결과를 줄이도록 도구 선택·재검색 순서를 마지막 지시로 둔다.
 WEEK05_MCP_TOOL_CALL_PROMPT = """
 # Week 5 MCP 도구 선택
 1. `search_previous_conversations`
@@ -550,8 +550,8 @@ def delete_shared_schedule(
         "schedule_id": schedule_id,
         "source_conversation_id": source_conversation_id,
     }
+    # 조건 누락과 OR 확대 삭제를 함께 막도록 외부 호출에는 식별자를 정확히 하나만 허용한다.
     if not schedule_id and not source_conversation_id:
-        # ok=True인 빈 삭제가 조건 없음과 대상 없음의 차이를 숨기지 않도록 외부 호출 전에 차단한다.
         return json_payload(
             {
                 "ok": False,
@@ -563,7 +563,6 @@ def delete_shared_schedule(
             }
         )
     if schedule_id and source_conversation_id:
-        # 외부 store의 OR 조건이 의도보다 넓은 삭제로 번지지 않도록 식별자를 하나로 제한한다.
         return json_payload(
             {
                 "ok": False,
@@ -604,6 +603,7 @@ def list_shared_schedules(
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
+    # SQLite와 MCP가 같은 날짜 경계를 보도록 내 일정 조회 전에 fixed helper로 정규화한다.
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
         member_names,
         date_from,
@@ -646,11 +646,11 @@ def week05_prompt_parts() -> list[str]:
     """1~5주차 system prompt 조각을 누적합니다."""
 
     return [
-        # Week 1~4의 개인 저장·검색 규칙을 보존한 뒤 Week 5의 대체 선언을 적용한다.
+        # 이전 주차의 개인 데이터 규칙을 버리지 않도록 먼저 누적한다.
         *week04_prompt_parts(),
-        # 외부 데이터의 허용 범위와 Week 6 경계를 먼저 선언해 도구 역할의 범위를 고정한다.
+        # 외부 조회를 허용해도 Week 6 역할까지 침범하지 않도록 범위를 먼저 제한한다.
         WEEK05_EXTERNAL_SOURCE_PROMPT,
-        # 실제 호출 순서를 가장 뒤에 두어 기간 probe·재검색·삭제 확인 절차를 우선 적용한다.
+        # 도구 선택 절차가 누적 prompt 충돌에서 우선하도록 마지막에 둔다.
         WEEK05_MCP_TOOL_CALL_PROMPT,
     ]
 
