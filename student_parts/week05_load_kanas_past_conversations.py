@@ -334,7 +334,7 @@ def _collect_member_schedules(
             "start_time" : schedule.start_time,
             "end_time" : schedule.end_time,
             "notes" : None,
-            "soruce_conversation_id" : None
+            "source_conversation_id" : None
         } 
         for schedule in normalized_personal_schedules
     ]
