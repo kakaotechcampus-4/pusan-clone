@@ -379,7 +379,96 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
-    ...
+    normalized_limit = safe_limit(limit, default=5, maximum=20)
+    reference_hits = REFERENCE_STORE.search_personal_references(
+        query=query, limit=min(normalized_limit, 5)
+    )
+
+    # 통합 검색은 날짜/참석자 조건까지 함께 걸어야 해서 schedules 테이블을 직접 조회한다.
+    clauses: list[str] = []
+    params: list[Any] = []
+    if query.strip():
+        clauses.append(
+            "(title LIKE ? OR date LIKE ? OR start_time LIKE ? OR end_time LIKE ? OR attendees_json LIKE ?)"
+        )
+        token = f"%{query.strip()}%"
+        params.extend([token, token, token, token, token])
+    if date_from:
+        clauses.append("date >= ?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("date <= ?")
+        params.append(date_to)
+    if attendee:
+        clauses.append("attendees_json LIKE ?")
+        params.append(f"%{attendee}%")
+
+    sql = """
+        SELECT schedule_id, request_id, owner, title, date, start_time, end_time,
+               attendees_json, source, created_at
+        FROM schedules
+    """
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += """
+        ORDER BY (date IS NULL), date ASC, (start_time IS NULL), start_time ASC, created_at DESC
+        LIMIT ?
+    """
+    params.append(normalized_limit)
+
+    with SQLITE_STORE.connect() as conn:
+        rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    schedule_chunks: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        attendees = _decode_attendees(row.pop("attendees_json", "[]"))
+        schedule_id = row.get("schedule_id") or f"schedule_{index}"
+        start_time = row.get("start_time") or "시간 미정"
+        end_time = row.get("end_time")
+        time_range = f"{start_time}-{end_time}" if end_time else start_time
+        attendee_text = ", ".join(attendees) if attendees else "참석자 미정"
+        date = row.get("date") or "날짜 미정"
+        title = row.get("title") or "제목 없음"
+        schedule_chunks.append(
+            {
+                "chunk_id": f"schedule:{schedule_id}:0",
+                "schedule_id": schedule_id,
+                "title": title,
+                "date": row.get("date"),
+                "time_range": time_range,
+                "attendees": attendees,
+                "content": f"{date} {time_range} | {title} | 참석자: {attendee_text}",
+                "metadata": {
+                    "request_id": row.get("request_id"),
+                    "owner": row.get("owner"),
+                    "source": row.get("source"),
+                    "created_at": row.get("created_at"),
+                },
+            }
+        )
+
+    lines = ["[개인 참고자료]"]
+    for hit in reference_hits:
+        lines.append(f"- {hit.get('title', '참고자료')}: {hit.get('content')}")
+    lines.append("[SQLite 일정 chunk]")
+    if not schedule_chunks:
+        lines.append("- 검색된 저장 일정이 없습니다.")
+    for chunk in schedule_chunks:
+        source = (chunk.get("metadata") or {}).get("source") or "unknown"
+        lines.append(
+            f"- {chunk.get('chunk_id')} | {chunk.get('content')} | source={source}"
+        )
+
+    return json_payload(
+        {
+            "ok": True,
+            "tool_name": "search_nana_memory",
+            "reference_backend": REFERENCE_STORE.backend_info(),
+            "reference_hits": reference_hits,
+            "schedule_chunks": schedule_chunks,
+            "context": "\n".join(lines),
+        }
+    )
 
 
 def week04_tools() -> list[Any]:
