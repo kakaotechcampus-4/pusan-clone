@@ -635,7 +635,12 @@ def create_shared_schedule(
     source_conversation_id: str | None = None,
     schedule_id: str | None = None,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
+    """공유 일정 저장소에 일정 row 를 직접 등록하거나 갱신합니다.
+
+    내 개인 일정은 앱에 저장할 때 "나" 복사본이 자동으로 동기화되므로 이 tool 이 필요 없습니다.
+    다른 사람 이름으로 공유 일정을 직접 넣거나, 동기화가 어긋난 row 를 바로잡을 때 씁니다.
+    같은 schedule_id 로 다시 부르면 새로 만들지 않고 그 row 를 갱신합니다.
+    """
 
     # schedule_id 는 멱등 키(같은 id 면 갱신), source_conversation_id 는 앱 원본으로 되돌아가는
     # 역참조 키다. 둘 다 그대로 넘겨야 나중에 수정/삭제 동기화가 가능하다.
@@ -659,7 +664,11 @@ def delete_shared_schedule(
     schedule_id: str | None = None,
     source_conversation_id: str | None = None,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
+    """공유 일정 저장소에서 일정 row 를 직접 삭제합니다.
+
+    schedule_id 또는 source_conversation_id 중 최소 하나로 대상을 지정해야 합니다.
+    어느 row 를 지울지 모르면 먼저 list_shared_schedules 로 확인하고 schedule_id 를 받아 오세요.
+    """
 
     # 삭제 대상 미지정은 DeleteSharedScheduleInput 스키마에서 막는다(그래야 모델이
     # 이유를 읽고 다시 부를 수 있다). 여기부터는 가공 없는 passthrough 다.
@@ -756,10 +765,15 @@ def week05_system_prompt() -> str:
 WEEK05_EXTERNAL_MEMBER_PROMPT = (
     "[5주차 외부 멤버 대화·일정]\n"
     "다른 사람(철수·영희·민준·서연·지훈·하린 등)의 일정과 지난 대화는 앱 안에 없고 "
-    "외부 SQLite/MCP 서버에 있다. 지어내지 말고 5주차 외부 tool로 조회한다.\n"
+    "외부 SQLite/MCP 서버에 있다. 지어내지 말고 5주차 외부 tool로 조회한다. "
+    "공유 일정 저장소에 row를 직접 등록하거나 삭제해 달라는 요청도 5주차 tool로 처리한다.\n"
     "출처를 섞지 않는다: 내가 적어 둔 메모·선호는 search_personal_references, "
     "내가 앱에 등록한 일정/할 일은 search_saved_requests, 앱 안의 지난 대화는 search_conversation_messages 다. "
     "'다른 사람'이 주어일 때만 5주차 외부 tool을 쓴다.\n"
+    "공유 일정 저장소의 row를 등록·수정·삭제해 달라는 요청은 5주차 tool로만 처리한다. "
+    "삭제는 list_shared_schedules로 schedule_id를 먼저 찾은 뒤 delete_shared_schedule에 넘긴다. "
+    "personal_list_saved_schedules·personal_delete_saved_schedules는 앱에 저장된 내 일정 전용이라 "
+    "공유 저장소 row는 찾지도 지우지도 못한다.\n"
     "지난 대화는 search_previous_conversations로 찾고, 전문이 필요할 때만 "
     "그 conversation_id로 load_conversation_messages를 부른다.\n"
     "일정 조회의 날짜 범위는 YYYY-MM-DD로 넘긴다. 사용자가 범위를 말하지 않았으면 "
