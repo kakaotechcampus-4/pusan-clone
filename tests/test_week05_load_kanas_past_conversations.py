@@ -13,6 +13,13 @@ import fixed.app_store as app_store_module
 import fixed.conversation_rag_store as conversation_rag_store_module
 import fixed.reference_store as reference_store_module
 from fixed.session_scope import conversation_session_scope
+from student_parts.week02_structure_natural_language_requests import (
+    WEEK02_ONLY_PROMPT_PARTS,
+)
+from student_parts.week03_build_nanas_logbook import (
+    WEEK03_ONLY_PROMPT,
+    WEEK03_TOOL_CALL_PROMPT,
+)
 
 
 @pytest.fixture(scope="module")
@@ -618,6 +625,54 @@ class TestCollectMemberSchedulesTool:
 
 
 class TestToolsAndAgent:
+    def test_week05_prompt_excludes_lower_week_only_parts(self, week05):
+        """Week 2·3 전용 조각이 Week 5 프롬프트에 새지 않는지 확인합니다.
+
+        문구가 아니라 조각 객체와 대조하므로 프롬프트를 다듬어도 깨지지 않습니다.
+        """
+
+        parts = week05.week05_prompt_parts()
+
+        assert WEEK03_ONLY_PROMPT not in parts
+        for week02_only in WEEK02_ONLY_PROMPT_PARTS:
+            assert week02_only not in parts
+        assert WEEK03_TOOL_CALL_PROMPT in parts
+
+    def test_week05_prompt_mentions_week05_tools(self, week05):
+        """Week 5 규칙이 어느 tool을 다루는지만 확인합니다.
+
+        규칙 문장의 표현이 아니라 tool 이름(코드 식별자)을 봅니다. 실제로 그 규칙을
+        LLM이 따르는지는 tests/evals의 week05 routing eval이 판정합니다.
+        """
+
+        prompt = "\n".join(week05.week05_prompt_parts())
+
+        for tool_name in (
+            "search_previous_conversations",
+            "load_conversation_messages",
+            "collect_member_schedules",
+            "extract_schedules_from_history",
+            "list_shared_schedules",
+        ):
+            assert tool_name in prompt
+
+        # 검색으로 conversation_id를 얻은 뒤 로드하라는 순서
+        assert prompt.index("search_previous_conversations") < prompt.index(
+            "load_conversation_messages"
+        )
+
+    def test_week05_system_prompt_uses_default_week05_parts(self, week05, monkeypatch):
+        calls = []
+
+        def fake_prompt_parts():
+            calls.append("called")
+            return ["week05-default-parts"]
+
+        monkeypatch.setattr(week05, "week05_prompt_parts", fake_prompt_parts)
+
+        assert "week05-default-parts" in week05.week05_system_prompt()
+        assert calls == ["called"]
+
     def test_week05_tools_append_seven_tools(self, week05, monkeypatch):
         """Week04 tool 목록 뒤에 Week05의 일곱 tool을 순서대로 누적합니다."""
 

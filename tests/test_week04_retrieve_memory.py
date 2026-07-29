@@ -13,6 +13,13 @@ import fixed.app_store as app_store_module
 import fixed.conversation_rag_store as conversation_rag_store_module
 import fixed.reference_store as reference_store_module
 from fixed.session_scope import conversation_session_scope
+from student_parts.week02_structure_natural_language_requests import (
+    WEEK02_ONLY_PROMPT_PARTS,
+)
+from student_parts.week03_build_nanas_logbook import (
+    WEEK03_ONLY_PROMPT,
+    WEEK03_TOOL_CALL_PROMPT,
+)
 
 
 @pytest.fixture(scope="module")
@@ -437,6 +444,34 @@ class TestPromptToolsAndAgent:
             "search_conversation_messages",
         ]
         assert "search_nana_memory" not in names
+
+    def test_week04_prompt_excludes_lower_week_only_parts(self, week04):
+        """Week 2·3 전용 조각이 Week 4 프롬프트에 새지 않는지 확인합니다.
+
+        문구가 아니라 조각 객체와 대조하므로 프롬프트를 다듬어도 깨지지 않습니다.
+        이 게이트가 깨지면 Week 4가 뒤집어야 할 옛 지시가 되살아납니다.
+        """
+
+        parts = week04.week04_prompt_parts()
+
+        assert WEEK03_ONLY_PROMPT not in parts
+        for week02_only in WEEK02_ONLY_PROMPT_PARTS:
+            assert week02_only not in parts
+
+        # 주차 무관 조각은 남아야 한다.
+        assert WEEK03_TOOL_CALL_PROMPT in parts
+
+    def test_week04_system_prompt_uses_default_week04_parts(self, week04, monkeypatch):
+        calls = []
+
+        def fake_prompt_parts():
+            calls.append("called")
+            return ["week04-default-parts"]
+
+        monkeypatch.setattr(week04, "week04_prompt_parts", fake_prompt_parts)
+
+        assert "week04-default-parts" in week04.week04_system_prompt()
+        assert calls == ["called"]
 
     # test_week04_prompt_explains_source_specific_search_tools는 삭제했습니다.
     #

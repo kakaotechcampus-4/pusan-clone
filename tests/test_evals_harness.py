@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 import fixed.runtime_clock as runtime_clock
-from tests.evals import cases_routing, predicates
+from tests.evals import cases_routing, cases_week05_routing, predicates
 from tests.evals.conftest import EVAL_TODAY, _freeze_eval_clock
 
 
@@ -373,6 +373,46 @@ class TestRoutingCaseDataset:
         ]
 
         assert len(held_out) >= 3
+
+
+class TestWeek05RoutingCaseDataset:
+    """Week 5 케이스의 ID와 held-out 규율을 오프라인에서 고정합니다."""
+
+    def test_case_ids_are_unique_across_routing_datasets(self):
+        week04_ids = {case["id"] for case in cases_routing.ROUTING_CASES}
+        week05_ids = [case["id"] for case in cases_week05_routing.WEEK05_ROUTING_CASES]
+
+        assert len(week05_ids) == len(set(week05_ids))
+        assert week04_ids.isdisjoint(week05_ids)
+
+    def test_every_case_has_a_rule_user_and_expectation(self):
+        for case in cases_week05_routing.WEEK05_ROUTING_CASES:
+            assert case.get("rule"), case["id"]
+            assert case.get("user"), case["id"]
+            assert case.get("expect"), case["id"]
+
+    def test_expect_keys_are_supported_by_the_predicate_checker(self):
+        known = {
+            "called",
+            "called_any",
+            "not_called",
+            "max_calls",
+            "order",
+            "args",
+            "result_contains",
+            "result_contains_any",
+            "result_empty",
+            "result_equals",
+        }
+        for case in cases_week05_routing.WEEK05_ROUTING_CASES:
+            assert not (set(case["expect"]) - known), case["id"]
+
+    def test_every_week05_rule_has_a_held_out_surface_form(self):
+        cases = cases_week05_routing.WEEK05_ROUTING_CASES
+        rules = {case["rule"] for case in cases}
+        held_out_rules = {case["rule"] for case in cases if case.get("held_out")}
+
+        assert held_out_rules == rules
 
 
 class TestMultipleFailuresAreCollected:

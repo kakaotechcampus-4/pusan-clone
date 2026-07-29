@@ -16,6 +16,9 @@ import student_parts.week01_wake_up_nana as week01
 import student_parts.week03_build_nanas_logbook as week03
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
 from student_parts.week03_build_nanas_logbook import (
+    SQLITE_MEMORY_PROMPT,
+    WEEK03_ONLY_PROMPT,
+    WEEK03_TOOL_CALL_PROMPT,
     SaveStructuredRequestInput,
     SavedRequestGetInput,
     SavedRequestListInput,
@@ -521,7 +524,15 @@ class TestSavedRequestTools:
 
 
 class TestSavedScheduleTools:
-    def test_list_uses_personal_default_and_returns_schedules(self, monkeypatch):
+    def test_list_without_kind_does_not_narrow_to_personal(self, monkeypatch):
+        """kind를 생략하면 종류 필터 없이 조회한다.
+
+        예전에는 기본값이 "personal_schedule"이어서 생략이 "개인 일정만"을 뜻했다. 그러면
+        참석자가 있는 일정을 찾을 때 kind를 명시하지 않으면 조용히 빈 결과가 오고, 삭제에
+        필요한 schedule_id를 얻을 수 없다. 같은 앱의 list_saved_requests가 생략 시 네 종류를
+        모두 주는 것과도 어긋났다. 자세한 배경은 week03의 personal_list_saved_schedules 주석.
+        """
+
         store = RecordingStore()
         store.schedule_rows = [{"schedule_id": "sch_1"}]
         monkeypatch.setattr(week03, "_store", lambda: store)
@@ -530,13 +541,24 @@ class TestSavedScheduleTools:
 
         _, filters = store.calls[0]
         assert filters == {
-            "kind": "personal_schedule",
+            "kind": None,
             "date_from": None,
             "date_to": None,
             "limit": 50,
         }
         assert payload["filters"] == filters
         assert payload["schedules"] == store.schedule_rows
+
+    def test_list_still_narrows_when_kind_is_given(self, monkeypatch):
+        """kind를 명시하면 그 종류로 좁힌다."""
+
+        store = RecordingStore()
+        monkeypatch.setattr(week03, "_store", lambda: store)
+
+        personal_list_saved_schedules.invoke({"kind": "group_schedule"})
+
+        _, filters = store.calls[0]
+        assert filters["kind"] == "group_schedule"
 
     def test_update_forwards_only_non_none_fields(self, monkeypatch):
         store = RecordingStore()
@@ -1003,8 +1025,82 @@ class TestPromptAndTools:
         assert "save_structured_request" in joined
         assert "personal_list_saved_schedules" in joined
         assert current_app_date_iso() in joined
-        assert "Week 3의 일정 저장, 조회, 수정, 삭제 요청에서는" in joined
+        # 이 문장은 Week 4·5 프롬프트에도 그대로 상속되므로 주차 접두어를 두지 않는다.
+        assert "일정 저장, 조회, 수정, 삭제 요청에서는" in joined
         assert "위 도구 외의 나머지 도구는 우선적으로 고려하지 말아야 한다" not in joined
+
+    def test_week03_only_save_sequence_is_scoped_to_week03_agent(self):
+        """Week 3 전용 조각이 상위 주차 프롬프트에 새지 않는지 확인합니다.
+
+        문구를 복사해 비교하지 않고 `WEEK03_ONLY_PROMPT` 상수와 대조하므로,
+        프롬프트 표현을 다듬어도 게이트만 살아 있으면 계속 통과합니다.
+        """
+
+        assert WEEK03_ONLY_PROMPT in week03_prompt_parts()
+
+        for active_week in (4, 5):
+            inherited = week03_prompt_parts(active_week)
+            assert WEEK03_ONLY_PROMPT not in inherited
+            # 주차 무관한 조각은 상위 주차에도 남아야 한다.
+            assert WEEK03_TOOL_CALL_PROMPT in inherited
+            assert SQLITE_MEMORY_PROMPT in inherited
+
+    @pytest.mark.parametrize(
+        ("tool", "snippets"),
+        [
+            (
+                personal_list_saved_schedules,
+                ("schedules 테이블", "todo", "reminder"),
+            ),
+            (
+                personal_update_saved_schedule,
+                ("바꿀 필드만", "None", "수정하지 않음"),
+            ),
+            (
+                personal_delete_saved_schedules,
+                ("반드시 넘겨야", "delete_all", "deleted_count"),
+            ),
+            (
+                week01.personal_delete_schedule,
+                ("임시 메모리", "SQLite", "personal_delete_saved_schedules"),
+            ),
+            (
+                list_saved_requests,
+                ("키워드 인자가 없습니다", "search_saved_requests", "query"),
+            ),
+        ],
+        ids=[
+            "list-schedules-table-scope",
+            "update-only-changed-fields",
+            "delete-safety-and-success",
+            "temporary-delete-scope",
+            "list-has-no-keyword",
+        ],
+    )
+    def test_operational_constraints_are_in_tool_descriptions(self, tool, snippets):
+        for snippet in snippets:
+            assert snippet in tool.description
+
+    def test_week01_and_week03_system_prompts_use_their_default_parts(
+        self,
+        monkeypatch,
+    ):
+        calls = []
+
+        def fake_week01_parts():
+            calls.append(1)
+            return ["week01-default-parts"]
+
+        def fake_week03_parts():
+            calls.append(3)
+            return ["week03-default-parts"]
+
+        monkeypatch.setattr(week01, "week01_prompt_parts", fake_week01_parts)
+        monkeypatch.setattr(week03, "week03_prompt_parts", fake_week03_parts)
+
+        assert "week01-default-parts" in week01.week01_system_prompt()
+        assert "week03-default-parts" in week03_system_prompt()
+        assert calls == [1, 3]
 
     def test_system_prompt_is_joined_string(self):
         prompt = week03_system_prompt()

@@ -69,6 +69,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     run_eval = bool(config.getoption("--eval"))
     run_answer_eval = bool(config.getoption("--eval-answers"))
     selecting_eval = run_eval or run_answer_eval
+    # collection-only는 API를 호출하지 않으므로 eval 케이스 목록 자체를 점검할 수 있게 둡니다.
+    if config.option.collectonly and not selecting_eval:
+        return
+
     selected: list[pytest.Item] = []
     deselected: list[pytest.Item] = []
     for item in items:
