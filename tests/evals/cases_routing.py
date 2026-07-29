@@ -264,6 +264,42 @@ ROUTING_CASES = [
             "result_equals": successful_save_results("personal_schedule"),
         },
     },
+    # 근거: "검색한 hit은 현재 요청의 kind와 대상에 직접 적용되는 경우에만 사용하여라.
+    # 직접적인 근거가 없으면 ... 선호를 찾지 못했다고 알리고 빠진 필드만 물어보아라."
+    #
+    # 이 분기를 밟는 케이스가 없어서 오래 비어 있었다. 기존 save.missing_* 케이스들은
+    # 시딩된 "팀 회의는 오전 10시" 선호에 hit이 걸리는 경로만 지나가고,
+    # todo.unrelated_preference_is_not_applied는 todo라 저장이 정상이다. 그 공백 안에서
+    # Examples의 마지막 줄이 "hit이 없거나 무관하면 시간 미정으로 저장한다"로 상위 규칙과
+    # 정반대였다(지금은 정렬함). 이 케이스가 그 회귀를 잡는다.
+    #
+    # 시딩된 선호는 회의·운동·가족 저녁·코드 리뷰·출장·점심 도메인이므로 미용실을 쓴다.
+    #
+    # [측정] Examples를 옛 문장("시간 미정으로 저장한다")으로 되돌려도 이 케이스는 통과한다.
+    # 즉 현재 동작은 상위 규칙을 따르고 있고 Examples의 그 줄에 의존하지 않았다 —
+    # 모순은 활성 버그가 아니라 잠재 지뢰였다. 그래도 케이스를 남기는 이유는 이것이
+    # **문서가 아니라 동작**을 고정하기 때문이다. 어떤 이유로든 모델이 이 분기에서 저장을
+    # 시작하면 여기서 잡힌다(오늘 여러 번 봤듯 description 분량 변화만으로도 동작이 흔들린다).
+    {
+        "id": "save.no_relevant_hit_asks_instead_of_saving",
+        "group": "저장 순서",
+        "user": "다음 주 목요일에 미용실 예약 잡아줘.",
+        "expect": {
+            "order": ["extract_schedule_request", "search_personal_references"],
+            "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
+        },
+    },
+    {
+        "id": "save.unseen_no_hit_domain_still_asks",
+        "group": "저장 순서",
+        "held_out": True,
+        # 같은 규칙을 prompt에 없는 도메인·어투로 묻는다.
+        "user": "수요일에 자동차 정비소 예약 하나 넣어줘.",
+        "expect": {
+            "order": ["extract_schedule_request", "search_personal_references"],
+            "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
+        },
+    },
     {
         "id": "todo.undated_todo_searches_first",
         "group": "저장 순서",

@@ -6,9 +6,10 @@ from __future__ import annotations
 근거 prompt 조각을 남깁니다. 규칙별로 `held_out: True` 케이스를 하나 이상 두고, 그
 문장과 가까운 표현은 prompt의 Instructions/Examples에 넣지 않습니다.
 
-모든 케이스×반복은 한 pool에서 동시에 실행됩니다. 이 파일에는 저장 케이스가 없고,
-조회는 외부 MCP의 7월 실습 시드(2026-07-07~2026-07-17)만 사용합니다. 이후 저장
-케이스를 추가한다면 이 조회 날짜와 겹치지 않게 해야 합니다.
+모든 케이스×반복은 한 pool에서 동시에 실행됩니다. 조회 케이스는 외부 MCP의 7월 실습
+시드(2026-07-07~2026-07-17)만 사용하고, 저장 케이스는 상대 날짜("다음 주 …")를 써서 그
+창 밖에 떨어지게 둡니다. 저장 케이스가 만든 공유본이 조회 케이스 결과에 섞이면 엉뚱한
+이유로 실패하므로, 케이스를 추가할 때 이 분리를 지켜야 합니다.
 """
 
 
@@ -32,6 +33,12 @@ def external_row_result(
     }
 
 
+EVAL_EXTERNAL_THREAD_ID = "eval_ext_hr_thread"
+EVAL_EXTERNAL_EARLY_MESSAGE = "하린: 온보딩 참가자 명단은 오전에 먼저 확인했어요."
+EVAL_EXTERNAL_SEARCH_MESSAGE = "하린: 리허설 체크리스트는 오후에 다시 검토했어요."
+EVAL_SYNCED_SCHEDULE_SOURCE_ID = "group:req_eval_synced:지훈"
+
+
 WEEK05_ROUTING_CASES = [
     # 근거: "여러 사람이 언제 시간이 되는지 묻는 요청은
     # collect_member_schedules 하나로 처리하여라" +
@@ -39,15 +46,19 @@ WEEK05_ROUTING_CASES = [
     {
         "id": "week05.collect.multi_member_availability",
         "group": "여러 사람 일정 수집",
-        "rule": "collect-member-schedules",
+        "rule": "availability-rows",
         "user": "7월 7일부터 10일까지 철수랑 영희랑 내가 언제 시간 되는지 확인해줘.",
         "expect": {
             "called": ["collect_member_schedules"],
             "not_called": [
                 "extract_schedules_from_history",
-                "list_shared_schedules",
             ],
-            "max_calls": {"collect_member_schedules": 1},
+            # 공유 저장소 범위를 한 번 확인한 뒤 핵심 수집 도구를 호출하는 것은 결과를
+            # 바꾸지 않는 확인 단계이므로 허용한다. collect를 대체하는 것은 허용하지 않는다.
+            "max_calls": {
+                "collect_member_schedules": 1,
+                "list_shared_schedules": 1,
+            },
             "result_contains": [
                 external_row_result(
                     "collect_member_schedules",
@@ -61,35 +72,34 @@ WEEK05_ROUTING_CASES = [
     {
         "id": "week05.collect.unseen_overlap_wording",
         "group": "여러 사람 일정 수집",
-        "rule": "collect-member-schedules",
+        "rule": "availability-rows",
         "held_out": True,
-        # prompt에 없는 "약속이 안 겹치는 구간" 표현과 다른 멤버 조합으로 같은 규칙을 검사한다.
+        # "나" 없이 외부 멤버들만 지정한 요청이다. 이 범위에서는 list_shared_schedules와
+        # collect_member_schedules가 같은 external_schedules row를 반환하므로 둘 다 정당하다.
+        # 특정 구현 경로가 아니라 요청한 멤버·기간의 실제 근거를 얻었는지 검사한다.
         #
-        # list_shared_schedules를 not_called에서 max_calls로 낮춘 이유:
-        # collect_member_schedules description에 "기간을 모를 때는 먼저 list_shared_schedules로
-        # 등록 기간을 확인하라"를 넣어 실사용 버그(기간 미지정 시 오늘로 좁혀 '일정이 없다'고
-        # 답하던 것)를 고쳤는데, 그 뒤로 이 표현에서는 날짜가 명시돼 있어도 확인 호출을
-        # 앞에 한 번 붙인다(3/3 재현). 붙인 뒤에는 올바른 날짜로 collect_member_schedules를
-        # 부르고 답변도 정확하다 — 오답이 아니라 낭비 호출 하나다.
-        #
-        # 규칙의 핵심인 "busy-time을 list_shared_schedules로 대신 처리하지 말 것"은
-        # target 케이스(week05.shared.busy_time_avoids_list)가 not_called로 계속 지킨다.
-        # 여기서는 collect_member_schedules가 실제로 불렸는지와 확인 호출이 1회를 넘지
-        # 않는지만 본다. 프리앰블이 사라지면 이 max_calls는 not_called로 되돌려도 된다.
+        # 내 앱 일정까지 반드시 합쳐야 하는 경로는 위 multi_member_availability처럼 사용자가
+        # 자신을 포함한 요청에서 별도로 고정한다.
         "user": "7월 8일부터 10일 사이 민준, 서연, 하린의 약속이 안 겹치는 구간을 찾아줘.",
         "expect": {
-            "called": ["collect_member_schedules"],
+            "called_any": [
+                "collect_member_schedules",
+                "list_shared_schedules",
+            ],
             "not_called": ["extract_schedules_from_history"],
             "max_calls": {
                 "collect_member_schedules": 1,
                 "list_shared_schedules": 1,
             },
-            "result_contains": [
-                external_row_result(
-                    "collect_member_schedules",
-                    member_name="민준",
-                    title="데이터 정리",
-                    date="2026-07-08",
+            "result_contains_any": [
+                *(
+                    external_row_result(
+                        tool,
+                        member_name="민준",
+                        title="데이터 정리",
+                        date="2026-07-08",
+                    )
+                    for tool in ("collect_member_schedules", "list_shared_schedules")
                 )
             ],
         },
@@ -129,15 +139,10 @@ WEEK05_ROUTING_CASES = [
         "held_out": True,
         # prompt에 없는 "대화방을 펼치다"라는 표면형으로 검색 뒤 상세 로드를 요구한다.
         #
-        # 검색어를 본문에 그대로 있는 구로 고정한 이유:
-        # search_previous_conversations는 `content LIKE '%query%'` 부분 문자열 검색이라
-        # 멤버 이름과 주제어를 붙인 질의("하린 회고")는 본문에 연속으로 없어서 0건이 된다.
-        # 그렇게 되면 검색이 비어 로드까지 못 가고, 이 케이스는 "검색 -> 로드 순서" 대신
-        # 검색 엔진의 매칭 한계를 재게 된다. 규칙만 남기려고 질의를 따옴표로 고정했다.
-        # 상대(하린)를 남겨 둔 이유: 상대가 없으면 "예전 대화방"이 앱 안의 내 대화로 읽혀
-        # search_conversation_messages로 새어 나간다. 이 케이스가 검증하는 것은
-        # 외부 대화에서의 검색 -> 로드 순서이므로 외부 상대임이 드러나야 한다.
-        "user": "하린이 말한 '온보딩 세션' 예전 대화방을 찾아서 처음부터 펼쳐 보여줘.",
+        # fixture의 외부 대화는 검색어가 있는 두 번째 메시지와 그보다 앞선 첫 메시지로
+        # 구성된다. 검색 결과만으로는 첫 메시지를 볼 수 없으므로, 아래 content 검사는
+        # load_conversation_messages가 실제로 필요한 동작임을 보장한다.
+        "user": "하린이 말한 '리허설 체크리스트' 외부 대화방을 찾아서 처음부터 펼쳐 보여줘.",
         "expect": {
             "order": [
                 "search_previous_conversations",
@@ -146,37 +151,44 @@ WEEK05_ROUTING_CASES = [
             "not_called": ["search_conversation_messages"],
             "args": {
                 "load_conversation_messages": {
-                    "conversation_id": {"equals": "ext_hr"},
+                    "conversation_id": {"equals": EVAL_EXTERNAL_THREAD_ID},
                 }
             },
             "result_contains": [
                 {
                     "tool": "load_conversation_messages",
                     "path": "rows",
-                    "row": {"sender": "하린"},
+                    "row": {
+                        "sender": "하린",
+                        "content": EVAL_EXTERNAL_EARLY_MESSAGE,
+                    },
                 }
             ],
         },
     },
-    # 근거: "list_shared_schedules는 공유 일정 저장소에 실제로 등록된 row를 확인할 때만" 쓰고,
-    # "누가 언제 바쁜지"는 collect_member_schedules로 조회한다.
+    # 외부 멤버들만 지정한 busy-time 조회는 list_shared_schedules와
+    # collect_member_schedules가 같은 external_schedules 근거를 반환할 수 있다.
+    # 특정 tool이 아니라 요청한 멤버·기간의 실제 row를 얻었는지 검사한다.
     {
         "id": "week05.shared.busy_time_avoids_list",
         "group": "공유 목록 용도 한정",
         "rule": "shared-list-scope",
         "user": "7월 14일부터 16일까지 철수와 지훈이 바쁜 시간을 모아줘.",
         "expect": {
-            "called": ["collect_member_schedules"],
-            "not_called": [
+            "called_any": [
+                "collect_member_schedules",
                 "list_shared_schedules",
-                "extract_schedules_from_history",
             ],
-            "result_contains": [
-                external_row_result(
-                    "collect_member_schedules",
-                    member_name="지훈",
-                    title="보안 점검",
-                    date="2026-07-14",
+            "not_called": ["extract_schedules_from_history"],
+            "result_contains_any": [
+                *(
+                    external_row_result(
+                        tool,
+                        member_name="지훈",
+                        title="보안 점검",
+                        date="2026-07-14",
+                    )
+                    for tool in ("collect_member_schedules", "list_shared_schedules")
                 )
             ],
         },
@@ -189,17 +201,24 @@ WEEK05_ROUTING_CASES = [
         # "busy-time"이나 "바쁘다" 대신 prompt에 없는 "캘린더가 막힌 구간"을 사용한다.
         "user": "7월 10일 영희와 하린 캘린더가 막힌 구간을 확인해줘.",
         "expect": {
-            "called": ["collect_member_schedules"],
-            "not_called": [
+            "called_any": [
+                "collect_member_schedules",
                 "list_shared_schedules",
-                "extract_schedules_from_history",
             ],
-            "result_contains": [
-                external_row_result(
-                    "collect_member_schedules",
-                    member_name="영희",
-                    title="콘텐츠 점검",
-                    date="2026-07-10",
+            "not_called": ["extract_schedules_from_history"],
+            "max_calls": {
+                "collect_member_schedules": 1,
+                "list_shared_schedules": 1,
+            },
+            "result_contains_any": [
+                *(
+                    external_row_result(
+                        tool,
+                        member_name="영희",
+                        title="콘텐츠 점검",
+                        date="2026-07-10",
+                    )
+                    for tool in ("collect_member_schedules", "list_shared_schedules")
                 )
             ],
         },
@@ -244,27 +263,50 @@ WEEK05_ROUTING_CASES = [
             ],
         },
     },
-    # 근거: "외부 일정 조회에 기간이 필요한데 사용자가 말하지 않았으면 오늘 하루로 좁히지
-    # 말아라. 오늘 날짜만 넣으면 대개 빈 결과가 나와 있는 일정을 없다고 답하게 된다."
-    #
-    # 실제 앱 트레이스에서 나온 결함이다. 예전에는
-    # collect_member_schedules(member_names=['철수'], date_from=오늘, date_to=오늘)로
-    # 조회해 rows=[]를 받고 "조회된 것이 없습니다"라고 답했다.
-    #
-    # 어느 tool로 가는지는 고정하지 않는다. 규칙이 요구하는 것은 "오늘 하루로 좁혀서 빈
-    # 결과를 받고 없다고 답하지 않는 것"이고, 거기에 이르는 경로가 여러 개다.
+    # 저장 직후 같은 대화에서 외부 동기화 여부를 확인하는 실제 회귀 케이스다.
+    # "지훈이 일정"의 `이`를 이름 일부로 넘기면 정확히 저장된 row도 조회되지 않는다.
+    # 인자 형태는 고정하지 않고, 외부 저장소의 방금 저장된 row를 실제로 얻었는지만 본다.
+    {
+        "id": "week05.shared.just_created_schedule_confirmation",
+        "group": "공유 일정 저장 확인",
+        "rule": "follow-up-shared-confirmation",
+        "held_out": True,
+        "history": [
+            {
+                "role": "user",
+                "content": "지훈이 일정 추가 내일 회의 10시-11시",
+            },
+            {
+                "role": "assistant",
+                "content": "지훈이 내일 10시부터 11시까지 회의 일정을 추가했습니다.",
+            },
+        ],
+        "user": "외부 저장소에 지훈이 일정 저장됐어?",
+        "expect": {
+            "called": ["list_shared_schedules"],
+            # 정확한 이름으로 한 번에 찾거나, 빈 결과 뒤 이름 필터를 빼고 재확인할 수 있다.
+            "max_calls": {"list_shared_schedules": 2},
+            "result_contains": [
+                external_row_result(
+                    "list_shared_schedules",
+                    member_name="지훈",
+                    title="회의",
+                    date="2026-07-27",
+                )
+            ],
+        },
+    },
+    # 사용자가 기간을 말하지 않은 경우 특정 하루로 좁히지 않는다. "외부 팀원"은 어느
+    # 저장소를 조회할지만 명확히 하며, 조회 기간은 의도적으로 생략한다.
+    # 어느 tool로 가는지는 고정하지 않고 실제 근거를 찾았는지만 검사한다.
     #   1. list_shared_schedules로 등록 기간을 먼저 파악
     #   2. 파악한 범위로 collect_member_schedules 조회
     #   3. search_previous_conversations -> load_conversation_messages로 대화 본문에서 읽기
-    # 3번은 실측에서 실제로 나온 경로다(week5의 "외부 대화에서 일정 추출"에 정확히 부합).
-    # 어느 쪽이든 실제 근거가 결과에 있어야 통과하므로, 오늘 하루로 좁히면 전부 비어 실패한다.
-    #
-    # 시드 기간(2026-07-07~07-17)은 이미 지난 날짜라 "오늘"이 그 안에 들 일이 없다.
     {
         "id": "week05.collect.no_date_range_still_finds_rows",
         "group": "기간 미지정 조회",
         "rule": "no-date-range",
-        "user": "철수 일정 조회해봐줘.",
+        "user": "외부 팀원 철수의 일정을 조회해봐줘.",
         "expect": {
             "result_contains_any": [
                 *(
@@ -276,6 +318,17 @@ WEEK05_ROUTING_CASES = [
                     )
                     for tool in ("collect_member_schedules", "list_shared_schedules")
                 ),
+                {
+                    "tool": "search_previous_conversations",
+                    "path": "rows",
+                    "row": {
+                        "member_name": "철수",
+                        "content": (
+                            "철수: 7월 7일 10시는 API 연동 실습, 7월 9일 14시는 고객 인터뷰, "
+                            "7월 15일 16시는 QA 리뷰가 있어요."
+                        ),
+                    },
+                },
                 {
                     "tool": "load_conversation_messages",
                     "path": "rows",
@@ -289,21 +342,8 @@ WEEK05_ROUTING_CASES = [
         "group": "기간 미지정 조회",
         "rule": "no-date-range",
         "held_out": True,
-        # prompt에 없는 "언제 뭐 하는지" 표면형이고 멤버도 다르다.
-        "known_limitation": (
-            "기간 미지정 규칙이 이 표면형으로 전이되지 않는다. "
-            "target(no_date_range_still_finds_rows, '철수 일정 조회해봐줘')은 11/12인데 "
-            "이 케이스는 0/12로 collect_member_schedules(date_from=오늘, date_to=오늘)를 부른다. "
-            "규칙을 프롬프트 조회 규칙에 넣어 보니 이 케이스는 통과했지만 날짜가 명시된 "
-            "unseen_overlap_wording이 100%->0%, unseen_calendar_blocks가 80%로 무너졌다 — "
-            "조회 규칙에 조건이 늘면 모델이 분류 단계로 되돌아가는 현상으로, "
-            "cases_routing.py의 holdout_date_only_skips_keyword_search와 같은 실패다. "
-            "그래서 안내를 collect_member_schedules description으로 옮겼고 한동안 8/8이었으나, "
-            "다른 도구 description이 늘어난 뒤 다시 0/12가 됐다(설명 분량에 민감). "
-            "답변은 '없다'고 단정하지 않고 다른 기간을 되묻는 데까지는 규칙을 지키므로 "
-            "사용자가 한 번 더 말하면 복구된다. 그 비용을 남기고 날짜 명시 케이스를 지키는 쪽을 택한다."
-        ),
-        "user": "지훈이 언제 뭐 하는지 알려줘.",
+        # prompt에 없는 "언제 뭐 하는지" 표현과 다른 멤버로 같은 규칙을 검사한다.
+        "user": "외부 팀원 지훈이 언제 뭐 하는지 알려줘.",
         "expect": {
             "result_contains_any": [
                 *(
@@ -316,11 +356,72 @@ WEEK05_ROUTING_CASES = [
                     for tool in ("collect_member_schedules", "list_shared_schedules")
                 ),
                 {
+                    "tool": "search_previous_conversations",
+                    "path": "rows",
+                    "row": {
+                        "member_name": "지훈",
+                        "content": (
+                            "지훈: 7월 7일 15시는 모델 평가, 7월 14일 10시는 보안 점검, "
+                            "7월 16일 13시는 릴리즈 회의가 있습니다."
+                        ),
+                    },
+                },
+                {
                     "tool": "load_conversation_messages",
                     "path": "rows",
                     "row": {"sender": "지훈"},
                 },
             ],
+        },
+    },
+    # 근거: create_shared_schedule description의 "이 도구는 앱 SQLite에 원본을 만들지 않습니다.
+    # 사용자가 일정을 잡아 달라고 하면 '공유 일정으로'라고 말했더라도 save_structured_request로
+    # 저장하세요" + 상속된 week04의 "저장은 extract -> save 경로로만".
+    #
+    # 프롬프트는 create_shared_schedule을 한 번도 언급하지 않고, week04의 금지 문장은
+    # personal_create_schedule만 지목한다. "공유해줘"를 저장이 아닌 별개 동작으로 읽으면
+    # 규칙을 빠져나갈 수 있어서, 경계를 description에 넣고 이 케이스로 고정한다.
+    # 잘못 고르면 외부 row만 생기고 앱 조회·수정·삭제에서 영영 찾을 수 없다.
+    #
+    # [측정] create_shared_schedule description을 경계 설명이 없던 한 줄짜리로 되돌려도
+    # 이 케이스는 통과한다. 즉 현재 라우팅은 상속된 "저장은 extract -> save 경로로만" 규칙만으로
+    # 이미 올바르고, 경계 설명이 동작을 바꾼 것은 아니다. 그래도 남기는 이유는 이것이
+    # **문서가 아니라 동작**을 고정하기 때문이다. 이 경로가 무너지면 사용자 일정이 앱에서
+    # 사라지는 데이터 손실이라, 저렴한 회귀 가드를 두는 편이 낫다.
+    {
+        "id": "week05.create.shared_request_uses_app_save_path",
+        "group": "공유 일정 생성 경로",
+        "rule": "shared-create-path",
+        "user": "공유 일정으로 다음 주 수요일 14시부터 15시까지 스프린트 리뷰 잡아줘. 참석자는 나, 철수",
+        "expect": {
+            "order": ["extract_schedule_request", "save_structured_request"],
+            "not_called": ["create_shared_schedule"],
+        },
+    },
+    # 위 케이스의 반대편이다. description에 "보통의 생성 요청은 save_structured_request로"만
+    # 적었더니 사용자가 "앱 저장소 말고 외부 저장소에만"이라고 **명시**했는데도 앱에 저장하고
+    # "외부 저장소에 추가했습니다"라고 잘못 보고했다(실측). 경계를 한쪽으로만 고정하면
+    # 반대쪽이 무너지므로 두 케이스를 쌍으로 둔다.
+    {
+        "id": "week05.create.explicit_external_only_uses_shared_tool",
+        "group": "공유 일정 생성 경로",
+        "rule": "shared-create-path",
+        "user": "앱 저장소 말고 외부 저장소에만 서연의 8월 20일 15시 리뷰 일정을 추가해줘.",
+        "expect": {
+            "called": ["create_shared_schedule"],
+            "not_called": ["save_structured_request"],
+        },
+    },
+    {
+        "id": "week05.create.unseen_shared_calendar_wording",
+        "group": "공유 일정 생성 경로",
+        "rule": "shared-create-path",
+        "held_out": True,
+        # prompt에 없는 "팀 캘린더에도 올라가게" 표면형으로 같은 경계를 검사한다.
+        "user": "다음 주 목요일 11시 킥오프 미팅을 팀 캘린더에도 올라가게 잡아줘. 참석자는 나, 영희",
+        "expect": {
+            "order": ["extract_schedule_request", "save_structured_request"],
+            "not_called": ["create_shared_schedule"],
         },
     },
 ]

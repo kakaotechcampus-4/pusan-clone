@@ -28,10 +28,17 @@ import pytest
 
 import fixed.config as config_module
 import fixed.runtime_clock as runtime_clock
+from fixed.external_people_store import ExternalPeopleSQLiteStore
 from fixed.langchain_trace import extract_agent_events, extract_final_text
 from fixed.session_scope import conversation_session_scope
 from tests.evals.cases_routing import ROUTING_CASES
-from tests.evals.cases_week05_routing import WEEK05_ROUTING_CASES
+from tests.evals.cases_week05_routing import (
+    EVAL_EXTERNAL_EARLY_MESSAGE,
+    EVAL_EXTERNAL_SEARCH_MESSAGE,
+    EVAL_EXTERNAL_THREAD_ID,
+    EVAL_SYNCED_SCHEDULE_SOURCE_ID,
+    WEEK05_ROUTING_CASES,
+)
 
 
 WEEK03_MODULE = "student_parts.week03_build_nanas_logbook"
@@ -229,6 +236,7 @@ def eval_env() -> Any:
         )
         _seed_saved_requests(week04.SQLITE_STORE)
         _seed_conversations(week04.SQLITE_STORE)
+        _seed_external_conversation(patched_config.external_db_path)
         _assert_isolated(environment, patched_config)
         yield environment
     finally:
@@ -276,6 +284,47 @@ def _seed_conversations(sqlite_store: Any) -> None:
         created = sqlite_store.create_conversation(conversation["title"])
         for role, content in conversation["messages"]:
             sqlite_store.append_message(created["conversation_id"], role, content)
+
+
+def _seed_external_conversation(db_path: Path) -> None:
+    """검색 결과만으로 전체 내용을 알 수 없는 외부 대화를 시딩합니다."""
+
+    store = ExternalPeopleSQLiteStore(db_path)
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO external_conversations VALUES (?, ?, ?, ?)",
+            (EVAL_EXTERNAL_THREAD_ID, "하린", "하린의 온보딩 회고", "2026-07-18T09:00:00"),
+        )
+        conn.executemany(
+            "INSERT INTO external_messages VALUES (?, ?, 'user', '하린', ?, ?)",
+            [
+                (
+                    "eval_extmsg_hr_1",
+                    EVAL_EXTERNAL_THREAD_ID,
+                    EVAL_EXTERNAL_EARLY_MESSAGE,
+                    "2026-07-18T09:00:00",
+                ),
+                (
+                    "eval_extmsg_hr_2",
+                    EVAL_EXTERNAL_THREAD_ID,
+                    EVAL_EXTERNAL_SEARCH_MESSAGE,
+                    "2026-07-18T09:05:00",
+                ),
+            ],
+        )
+        conn.execute(
+            "INSERT INTO external_schedules VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "shared_eval_synced_jihun",
+                "지훈",
+                "회의",
+                "2026-07-27",
+                "10:00",
+                "11:00",
+                EVAL_SYNCED_SCHEDULE_SOURCE_ID,
+                "앱 그룹 일정 자동 동기화 · 참석자: 지훈",
+            ),
+        )
 
 
 def _assert_isolated(environment: EvalEnvironment, patched_config: Any) -> None:
