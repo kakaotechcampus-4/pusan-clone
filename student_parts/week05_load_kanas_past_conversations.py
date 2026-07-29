@@ -408,9 +408,9 @@ def _collect_member_schedules(
         "ok": external_error is None,
         "tool_name": "collect_member_schedules",
         "member_names": normalized_members,
-        # 내 일정을 앱 저장소에서 읽었다는 사실을 payload에도 남겨 LLM이 누락으로 읽지 않게 한다.
+        # 내 일정은 앱 저장소 기준으로 따로 모았으므로, 실제 MCP에 물어본 대상만 남긴다.
+        # 내 일정 각 row의 출처는 notes("앱에 저장된 내 일정" / "현재 대화의 임시 일정")로 구분한다.
         "external_member_names": external_member_names,
-        "personal_schedule_source": "app_store",
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
         "rows": rows,
