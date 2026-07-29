@@ -33,15 +33,6 @@ from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week
 APP_STORE = AppSQLiteStore(CONFIG.app_db_path)
 _WEEK05_AGENT: Any | None = None
 
-# collect_member_schedules 가 한 번에 돌려줄 수 있는 rows 상한입니다.
-# extract_schedules_from_history 에는 limit 인자가 없어(mcp_server/sqlite_mcp_server.py)
-# 범위를 넓게 잡으면 rows 가 그대로 다 옵니다. 실측하면 6명 기준
-#   7일 87건(약 18,000자) / 30일 378건(약 77,000자) / 90일 1,098건(약 224,000자)
-# 로, 넓은 범위는 컨텍스트를 그대로 밀어냅니다.
-# 넘칠 때 잘라내지 않고 실패시키는 이유: 조용히 자르면 바쁜 시간이 사라지고,
-# 그건 "그 시간에 비어 있다"는 정반대 결론으로 이어집니다.
-MAX_COLLECT_MEMBER_SCHEDULE_ROWS = 200
-
 
 # [5주차 수강생 구현 가이드]
 #
@@ -374,6 +365,10 @@ class CollectMemberSchedulesInput(BaseModel):
             "'내 일정이랑 겹치는지', '나도 되는 시간'처럼 사용자가 자기 일정을 언급하면 true다."
         )
     )
+    # extract_schedules_from_history 에는 limit 인자가 없어서(mcp_server/sqlite_mcp_server.py)
+    # 범위를 넓게 잡으면 rows 가 그대로 다 옵니다. 같은 일정 row 를 돌려주는 형제 tool
+    # list_shared_schedules 와 같은 기본값/상한을 써서 조회량을 스키마에서 정합니다.
+    limit: int = Field(default=50, ge=1, le=200, description="한 번에 모을 일정 row 수.")
 
     @model_validator(mode="after")
     def _require_ordered_dates(self) -> CollectMemberSchedulesInput:
@@ -504,6 +499,7 @@ def _collect_member_schedules(
     date_to: str,
     personal_schedules: list[dict[str, Any]],
     include_my_schedules: bool = True,
+    limit: int = 50,
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다.
 
@@ -551,27 +547,6 @@ def _collect_member_schedules(
         )
         rows.extend(row for row in payload.get("rows", []) if isinstance(row, dict))
 
-    if len(rows) > MAX_COLLECT_MEMBER_SCHEDULE_ROWS:
-        # 조회해 보기 전에는 알 수 없는 조건이라 스키마로 막을 수 없다. 그렇다고 본문에서
-        # raise 하면 agent 실행이 통째로 중단되므로, LLM 이 읽고 다시 부를 수 있도록
-        # 실패를 payload 로 돌려준다. rows/schedule_summary 는 아예 넣지 않는다 —
-        # 빈 배열을 실으면 "일정이 없다"로 오해될 수 있기 때문이다.
-        return {
-            "ok": False,
-            "tool_name": "collect_member_schedules",
-            "error": "too_many_rows",
-            "row_count": len(rows),
-            "max_rows": MAX_COLLECT_MEMBER_SCHEDULE_ROWS,
-            "date_from": normalized_date_from,
-            "date_to": normalized_date_to,
-            "message": (
-                f"조회 결과가 {len(rows)}건으로 한 번에 다루기에 너무 많습니다"
-                f"(상한 {MAX_COLLECT_MEMBER_SCHEDULE_ROWS}건). "
-                "날짜 범위를 좁히거나 멤버 수를 줄여 다시 조회하세요. "
-                "결과를 임의로 잘라내지 않았으므로 이 응답만으로 일정 유무를 판단하면 안 됩니다."
-            ),
-        }
-
     rows.sort(
         key=lambda row: (
             str(row.get("date") or ""),
@@ -579,6 +554,8 @@ def _collect_member_schedules(
             str(row.get("member_name") or ""),
         )
     )
+    # 정렬한 뒤에 자른다. 조율은 가까운 날짜부터 보므로 앞쪽이 남아야 한다.
+    rows = rows[:limit]
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
@@ -590,7 +567,6 @@ def _collect_member_schedules(
         "include_my_schedules": include_my_schedules,
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
-        "row_count": len(rows),
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
     }
@@ -730,6 +706,7 @@ def collect_member_schedules(
     date_from: str,
     date_to: str,
     include_my_schedules: bool = True,
+    limit: int = 50,
 ) -> str:
     """나와 다른 사람의 시간을 맞출 때 씁니다. 내 일정과 상대 일정을 같은 rows 구조로 함께 모읍니다.
 
@@ -737,7 +714,6 @@ def collect_member_schedules(
     묻는 것도 이 tool입니다. 상대 일정은 앱에 없으므로 내 일정만 보고 답하면 안 됩니다.
     include_my_schedules=true 면 내 일정이 결과에 포함됩니다.
     다른 사람 일정만 필요하면 extract_schedules_from_history 를 쓰세요.
-    한 번에 200건까지만 모을 수 있으니 회의를 잡을 만한 기간(보통 1~2주)으로 좁혀 부르세요.
     """
 
     payload = _collect_member_schedules(
@@ -748,6 +724,7 @@ def collect_member_schedules(
             _personal_schedules_for_current_scope() if include_my_schedules else []
         ),
         include_my_schedules=include_my_schedules,
+        limit=limit,
     )
     return json_payload(payload)
 

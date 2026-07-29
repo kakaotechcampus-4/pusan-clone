@@ -257,6 +257,24 @@ class CollectMemberSchedulesTest(unittest.TestCase):
         self.assertEqual(result["date_from"], "2026-07-14")
         self.assertEqual(len(result["rows"]), 1)
 
+    def test_limit으로_rows를_자른다(self):
+        # 조회량 상한은 형제 tool(list_shared_schedules)과 같은 방식으로 스키마 인자로 받는다.
+        schedules = [
+            {"title": f"일정{index}", "date": "2026-07-15", "start_time": f"{9 + index:02d}:00"}
+            for index in range(5)
+        ]
+        result = self._collect(personal_schedules=schedules, limit=3)
+        self.assertEqual(len(result["rows"]), 3)
+
+    def test_자르기는_정렬_뒤에_한다(self):
+        # 조율은 가까운 날짜부터 보므로, 잘린 뒤에도 앞쪽 날짜가 남아야 한다.
+        schedules = [
+            {"title": "늦은날", "date": "2026-07-18", "start_time": "10:00"},
+            {"title": "이른날", "date": "2026-07-14", "start_time": "10:00"},
+        ]
+        result = self._collect(personal_schedules=schedules, limit=1)
+        self.assertEqual([row["title"] for row in result["rows"]], ["이른날"])
+
     def test_같은_날짜는_시간_미정이_뒤로_간다(self):
         result = self._collect(
             personal_schedules=[
