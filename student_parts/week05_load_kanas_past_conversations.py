@@ -311,6 +311,8 @@ def _collect_member_schedules(
     my_rows = []
     for row in personal_schedules:
         request = _structured_request_from_schedule_row(row)
+        if not request.date or not (date_from <= request.date <= date_to):
+            continue
         my_rows.append({
             "member_name": PERSONAL_SHARED_MEMBER_NAME,
             "title": request.title,
