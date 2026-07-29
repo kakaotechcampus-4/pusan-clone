@@ -292,12 +292,17 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
     rows = []
     for s in personal_schedules:
+        # 날짜 범위로 필터링
+        schedule_date = s.get("date")
+        if not (date_from <= schedule_date <= date_to):
+            continue
+
         result = {
             "member_name" : "나",
             "title" : s.get("title"),
             "date" : s.get("date"),
             "start_time": s.get("start_time", "미정"),
-            "end_time": s.get("end_time", "미정"), 
+            "end_time": s.get("end_time", "미정"),
             "notes": s.get("notes", "")
         }
         rows.append(result)
@@ -307,14 +312,14 @@ def _collect_member_schedules(
                             "date_from" : date_from,
                             "date_to" : date_to
                         })
-    
+
     if isinstance(members_schedule, str):
         data = json.loads(members_schedule)
     else:
         data = members_schedule
     rows = [*rows, *data.get("rows", [])]
     summary = external_schedule_summary(rows)
-        
+
     return {"rows" : rows, "schedule_summary" : summary}
         
     
@@ -335,7 +340,7 @@ def search_previous_conversations(
                                     "member_names" : member_names,
                                     "limit" : limit
                                 })
-    return json_payload(result)
+    return result if isinstance(result, str) else json_payload(result)
 
 
 @tool(args_schema=LoadConversationMessagesInput)
@@ -352,13 +357,13 @@ def load_conversation_messages(conversation_id: str) -> str:
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
     """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
 
-    result = call_mcp_tool_sync("extract_schedules_from_history", 
+    result = call_mcp_tool_sync("extract_schedules_from_history",
                                 {
                                     "member_names" : member_names,
                                     "date_from" : date_from,
                                     "date_to" : date_to
                         })
-    return json_payload(result)
+    return result if isinstance(result, str) else json_payload(result)
 
 
 
@@ -376,18 +381,18 @@ def create_shared_schedule(
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
     # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    result = call_mcp_tool_sync("create_shared_schedule", 
-                                {                                                          
-                                    "member_name": member_name,                                         
-                                    "title": title,                                                     
+    result = call_mcp_tool_sync("create_shared_schedule",
+                                {
+                                    "member_name": member_name,
+                                    "title": title,
                                     "date": date,
-                                    "start_time": start_time,                                           
+                                    "start_time": start_time,
                                     "end_time": end_time,
-                                    "notes": notes,                                                     
+                                    "notes": notes,
                                     "source_conversation_id": source_conversation_id,
-                                    "schedule_id": schedule_id                                          
+                                    "schedule_id": schedule_id
                                 })
-    return json_payload(result)
+    return result if isinstance(result, str) else json_payload(result)
 
 @tool(args_schema=DeleteSharedScheduleInput)
 def delete_shared_schedule(
@@ -396,12 +401,12 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    result = call_mcp_tool_sync("delete_shared_schedule",               
-                                    {                                       
-                                        "schedule_id": schedule_id,         
-                                        "source_conversation_id": source_conversation_id                                                  
-                                    })
-    return json_payload(result)  
+    result = call_mcp_tool_sync("delete_shared_schedule",
+                                {
+                                    "schedule_id": schedule_id,
+                                    "source_conversation_id": source_conversation_id
+                                })
+    return result if isinstance(result, str) else json_payload(result)  
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -422,7 +427,7 @@ def list_shared_schedules(
                                     "source_conversation_id": source_conversation_id,
                                     "limit": limit
                                 })
-    return json_payload(result)
+    return result if isinstance(result, str) else json_payload(result)
 
 
 @tool(args_schema=CollectMemberSchedulesInput)
