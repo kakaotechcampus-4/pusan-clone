@@ -579,12 +579,34 @@ def week05_system_prompt() -> str:
     return join_system_prompt(week05_prompt_parts())
 
 
+WEEK05_EXTERNAL_MEMBER_PROMPT = (
+    "[5주차 외부 멤버 대화·일정]\n"
+    "다른 사람(철수·영희·민준·서연·지훈·하린 등)의 일정과 지난 대화는 앱 안에 없고 "
+    "외부 SQLite/MCP 서버에 있다. 지어내지 말고 아래 tool로 조회한다.\n"
+    "- 여러 사람과 시간을 맞추거나 '언제 다 되는지'를 물으면: collect_member_schedules 하나만 호출한다.\n"
+    "  이 tool이 내 일정과 상대방 일정을 같은 rows 구조로 한 번에 모아 준다. "
+    "search_previous_conversations와 extract_schedules_from_history를 손으로 조합하지 않는다.\n"
+    "- 특정 멤버의 일정/바쁜 시간만 필요하면: extract_schedules_from_history 를 쓴다(내 일정은 안 들어간다).\n"
+    "- 지난 대화에서 무슨 말이 오갔는지 궁금하면: search_previous_conversations 로 먼저 찾고, "
+    "특정 대화의 전문이 필요할 때만 그 conversation_id로 load_conversation_messages 를 부른다.\n"
+    "- 공유 일정 저장소에 어떤 row가 등록돼 있는지 확인하려면: list_shared_schedules 를 쓴다.\n"
+    "출처를 섞지 않는다: 내가 적어 둔 메모·선호는 search_personal_references, "
+    "내가 앱에 등록한 일정/할 일은 search_saved_requests, 앱 안의 지난 대화는 search_conversation_messages 다. "
+    "'다른 사람'이 주어일 때만 5주차 외부 tool을 쓴다.\n"
+    "날짜 범위(date_from·date_to)는 YYYY-MM-DD로 넘기고, 사용자가 범위를 말하지 않았으면 "
+    "임의로 넓히지 말고 어느 기간을 볼지 되묻는다.\n"
+    "조회 결과의 rows와 schedule_summary만 근거로 답하고, 비어 있으면 '기록이 없다'고 말한다. "
+    "여러 사람의 최종 회의 시간을 확정하는 것은 아직 이 단계의 일이 아니다. "
+    "겹치지 않는 시간대를 근거와 함께 제안하되 확정된 것처럼 단정하지 않는다."
+)
+
+
 def week05_prompt_parts() -> list[str]:
     """1~5주차 system prompt 조각을 누적합니다."""
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        WEEK05_EXTERNAL_MEMBER_PROMPT,
     ]
 
 
