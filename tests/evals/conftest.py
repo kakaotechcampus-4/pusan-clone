@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Week 4 LLM 동작 검증용 격리 환경과 반복 실행 러너입니다.
+"""Week 4·5 LLM 동작 검증용 격리 환경과 반복 실행 러너입니다.
 
 여기서 확인하는 것은 하나입니다 — **system prompt가 요구하는 대로 모델이 도구를 고르고
 순서를 지키는가.** 판정은 trace의 tool call 이름·인자·순서로 하고, 저장 기록을 찾거나
@@ -9,11 +9,10 @@ from __future__ import annotations
 이 디렉터리의 테스트는 실제 LLM API를 호출하므로 `--eval`을 줘야 수집됩니다
 (옵션과 마커 정의는 `tests/conftest.py`).
 
-**격리가 이 파일의 핵심입니다.** `student_parts/week04_retrieve_nanas_memory.py`는 import
-시점에 `CONFIG.chroma_dir`/`CONFIG.app_db_path`로 실제 저장소를 만들기 때문에, 평가가
-개발용 `data/`(실 대화·일정·임베딩)를 오염시키지 않도록 **CONFIG를 임시 경로로 갈아끼운
-뒤 모듈을 다시 import**합니다. `fixed/`의 파일을 수정하지 않고 monkeypatch로만 처리하며,
-이는 `tests/test_week04_retrieve_memory.py`가 이미 쓰는 방식과 같습니다.
+**격리가 이 파일의 핵심입니다.** Week 4 모듈은 import 시점에
+`CONFIG.chroma_dir`/`CONFIG.app_db_path`로 실제 저장소를 만들고, Week 5 MCP subprocess는
+`KANANA_EXTERNAL_DB_PATH`를 읽습니다. 평가가 개발용 `data/`를 오염시키지 않도록 CONFIG와
+외부 DB 환경 변수를 임시 경로로 바꾼 뒤 Week 3~5 모듈을 다시 import합니다.
 """
 
 import dataclasses
@@ -32,10 +31,12 @@ import fixed.runtime_clock as runtime_clock
 from fixed.langchain_trace import extract_agent_events, extract_final_text
 from fixed.session_scope import conversation_session_scope
 from tests.evals.cases_routing import ROUTING_CASES
+from tests.evals.cases_week05_routing import WEEK05_ROUTING_CASES
 
 
 WEEK03_MODULE = "student_parts.week03_build_nanas_logbook"
 WEEK04_MODULE = "student_parts.week04_retrieve_nanas_memory"
+WEEK05_MODULE = "student_parts.week05_load_kanas_past_conversations"
 
 # 케이스 하나가 통과로 인정되는 최소 비율입니다. 프록시는 temperature=0에서도
 # 비결정적이라(같은 케이스가 코드 변경 없이 60%↔100%로 흔들리는 것을 관측) 단일 실행
@@ -168,9 +169,10 @@ SEED_CONVERSATIONS = [
 
 @dataclasses.dataclass
 class EvalEnvironment:
-    """평가가 사용하는 격리된 Week 4 모듈과 저장소들입니다."""
+    """평가가 사용하는 격리된 Week 4·5 모듈과 저장소들입니다."""
 
     week04: Any
+    week05: Any
     sqlite_store: Any
     reference_store: Any
     reference_ids_by_title: dict[str, str]
@@ -184,7 +186,7 @@ class EvalEnvironment:
 
 @pytest.fixture(scope="session")
 def eval_env() -> Any:
-    """CONFIG를 임시 경로로 바꿔 Week 4 모듈을 다시 import하고 데이터를 시딩합니다."""
+    """CONFIG를 임시 경로로 바꿔 Week 3~5 모듈을 다시 import하고 데이터를 시딩합니다."""
 
     if not config_module.CONFIG.has_openai_key:
         pytest.skip(".env의 PROXY_TOKEN이 필요합니다 (평가는 실제 LLM/embedding을 호출합니다).")
@@ -210,14 +212,16 @@ def eval_env() -> Any:
 
     previous_modules = {
         name: sys.modules.pop(name)
-        for name in (WEEK04_MODULE, WEEK03_MODULE)
+        for name in (WEEK05_MODULE, WEEK04_MODULE, WEEK03_MODULE)
         if name in sys.modules
     }
 
     try:
+        week05 = importlib.import_module(WEEK05_MODULE)
         week04 = importlib.import_module(WEEK04_MODULE)
         environment = EvalEnvironment(
             week04=week04,
+            week05=week05,
             sqlite_store=week04.SQLITE_STORE,
             reference_store=week04.REFERENCE_STORE,
             reference_ids_by_title=_seed_references(week04.REFERENCE_STORE),
@@ -228,10 +232,17 @@ def eval_env() -> Any:
         _assert_isolated(environment, patched_config)
         yield environment
     finally:
-        for name in (WEEK04_MODULE, WEEK03_MODULE):
+        for name in (WEEK05_MODULE, WEEK04_MODULE, WEEK03_MODULE):
             sys.modules.pop(name, None)
         sys.modules.update(previous_modules)
         monkeypatch.undo()
+
+
+@pytest.fixture(scope="session")
+def week05_eval_env(eval_env: EvalEnvironment) -> EvalEnvironment:
+    """같은 임시 저장소에서 격리 import된 Week 5 agent environment를 제공합니다."""
+
+    return eval_env
 
 
 def _seed_references(reference_store: Any) -> dict[str, str]:
@@ -278,6 +289,10 @@ def _assert_isolated(environment: EvalEnvironment, patched_config: Any) -> None:
     )
     assert environment.reference_store.chroma_dir == patched_config.chroma_dir, (
         f"평가용 ChromaDB가 임시 경로를 쓰지 않습니다: {environment.reference_store.chroma_dir}"
+    )
+    assert environment.week05.CONFIG.external_db_path == patched_config.external_db_path, (
+        "평가용 Week 5 외부 DB가 임시 경로를 쓰지 않습니다: "
+        f"{environment.week05.CONFIG.external_db_path}"
     )
     assert str(environment.root) in str(environment.sqlite_store.path)
 
@@ -330,7 +345,43 @@ def case_results(
     }
 
 
-def _selected_cases(session: pytest.Session) -> list[dict[str, Any]]:
+@pytest.fixture(scope="session")
+def week05_case_results(
+    request: pytest.FixtureRequest,
+    week05_eval_env: EvalEnvironment,
+    eval_repeats: int,
+) -> dict[str, dict[str, Any]]:
+    """수집된 Week 5 케이스를 격리된 build_week05_agent로 반복 실행합니다."""
+
+    workers = max(1, int(request.config.getoption("eval_workers")))
+    cases = _selected_cases(request.session, WEEK05_ROUTING_CASES)
+    tasks = [(case, index) for case in cases for index in range(eval_repeats)]
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        outcomes = list(
+            pool.map(
+                lambda task: (
+                    task[0]["id"],
+                    _run_week05_once(week05_eval_env, *task),
+                ),
+                tasks,
+            )
+        )
+
+    outcomes_by_case: dict[str, list[RunOutcome]] = {case["id"]: [] for case in cases}
+    for case_id, outcome in outcomes:
+        outcomes_by_case[case_id].append(outcome)
+
+    return {
+        case_id: _tally(case_id, repeats=eval_repeats, outcomes=case_outcomes)
+        for case_id, case_outcomes in outcomes_by_case.items()
+    }
+
+
+def _selected_cases(
+    session: pytest.Session,
+    candidates: list[dict[str, Any]] = ROUTING_CASES,
+) -> list[dict[str, Any]]:
     """이번 실행에서 수집된 케이스만 골라냅니다 (`-k` 필터를 그대로 존중합니다)."""
 
     selected_ids = {
@@ -338,7 +389,7 @@ def _selected_cases(session: pytest.Session) -> list[dict[str, Any]]:
         for item in session.items
         if getattr(item, "callspec", None) and "case" in item.callspec.params
     }
-    return [case for case in ROUTING_CASES if case["id"] in selected_ids]
+    return [case for case in candidates if case["id"] in selected_ids]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -388,6 +439,34 @@ def _tally(case_id: str, *, repeats: int, outcomes: list[RunOutcome]) -> dict[st
 
 
 def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) -> RunOutcome:
+    """Week 4 케이스를 한 번 실행합니다."""
+
+    return _run_agent_once(
+        environment.week04.build_week04_agent,
+        case,
+        index,
+    )
+
+
+def _run_week05_once(
+    environment: EvalEnvironment,
+    case: dict[str, Any],
+    index: int,
+) -> RunOutcome:
+    """Week 5 케이스를 build_week05_agent로 한 번 실행합니다."""
+
+    return _run_agent_once(
+        environment.week05.build_week05_agent,
+        case,
+        index,
+    )
+
+
+def _run_agent_once(
+    build_agent: Any,
+    case: dict[str, Any],
+    index: int,
+) -> RunOutcome:
     """케이스를 한 번 실행해 채점 결과와 도구 호출 트레이스를 반환합니다.
 
     **`failures=None`은 "인프라 오류"** 를 뜻합니다(프록시 오류, 타임아웃 등). 동작 불일치와
@@ -397,13 +476,12 @@ def _run_once(environment: EvalEnvironment, case: dict[str, Any], index: int) ->
 
     from tests.evals import predicates
 
-    week04 = environment.week04
     messages = [*case.get("history", []), {"role": "user", "content": case["user"]}]
     # 반복마다 다른 대화 id를 써서 "현재 대화 제외" 규칙이 실제로 동작하게 합니다.
     conversation_id = f"eval-{case['id']}-{index}"
 
     try:
-        agent = week04.build_week04_agent()
+        agent = build_agent()
         with conversation_session_scope(conversation_id):
             result = agent.invoke({"messages": messages})
     except Exception as exc:  # 한 번의 오류가 전체 평가를 죽이지 않게 합니다.

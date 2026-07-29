@@ -50,8 +50,14 @@ Example에 적어 넣는 것**입니다. 그러면 통과율은 오르지만 모
 # 경로로만 처리하고 personal_create_schedule은 호출하지 말아라. Week 2의 ... 지시와
 # Week 3의 personal_create_schedule 호환 tool 안내는 Week 4에서 적용하지 않는다."
 #
-# 이 규칙은 Week 2·3 프롬프트 조각을 뒤집는 것이고, `join_system_prompt`은 앞선 지시를
-# 지우지 않고 이어붙이기만 하므로 모델이 옛 경로로 되돌아갈 여지가 늘 남아 있다.
+# 예전에는 이 규칙이 Week 2·3 프롬프트 조각을 **문장으로 뒤집는** 것이었다.
+# `join_system_prompt`은 앞선 지시를 지우지 않고 이어붙이기만 하므로, 옛 경로를 권하는
+# 문장이 프롬프트에 그대로 남아 있어서 모델이 되돌아갈 여지가 늘 있었다.
+#
+# 지금은 `weekN_prompt_parts(active_week)` 게이트가 Week 2·3 전용 조각을 Week 4 프롬프트에
+# 아예 넣지 않으므로 그 여지는 사라졌다. 그래도 이 가드를 남기는 이유는 Week 4가 여전히
+# "personal_create_schedule은 호출하지 말아라"를 명시하고 있고, 게이트가 깨지거나 누가
+# 그 조각을 되돌리면 여기서 먼저 드러나기 때문이다.
 FORBIDDEN_LEGACY_SAVE = ["personal_create_schedule"]
 
 
@@ -757,19 +763,23 @@ ROUTING_CASES = [
         # 보고 list_saved_requests만 부른다." 위 케이스들이 오른 게 규칙 이해가 아니라
         # "일단 둘 다 부르기" 습관이면 이 케이스가 내려갑니다.
         #
-        # 실제로 습관 쪽입니다 — 10회 모두 `search_saved_requests(query='할 일')`을 덧붙입니다.
-        # 종류 단어를 검색어로 쓰는 것이라 근거가 늘지 않습니다. 답변은 10회 모두 맞았습니다.
-        # 이 시드에서는 query='할 일'의 LIKE 결과가 빈 목록이라 손해가 호출 한 번뿐이지만,
-        # 실제 앱에서는 raw_json에 원문("할 일에 ... 추가해줘")이 들어가므로 날짜와 무관한
-        # 기록이 딸려 올 수 있습니다.
-        "known_limitation": (
-            "날짜 전용 조회에서도 키워드 도구를 덧붙인다(10/10, query='할 일'). "
-            "'종류 단어는 query에 넣지 말아라'를 규칙에 추가해 막아 보니 "
-            "holdout_month_range_with_keyword가 ≥80%에서 2/10으로 무너졌다 — 조회 규칙에 "
-            "조건이 늘면 모델이 분류 단계로 되돌아간다(cases_routing.py의 "
-            "narrow_date_with_generic_keyword 주석 1번과 같은 실패). 답변 정확성은 "
-            "유지되므로 합집합 규칙을 지키는 쪽을 택하고 이 비용을 남겨 둔다."
-        ),
+        # [해소됨] 예전에는 10/10으로 `search_saved_requests(query='할 일')`을 덧붙였다.
+        # 당시 known_limitation은 이렇게 적혀 있었다: "'종류 단어는 query에 넣지 말아라'를
+        # 규칙에 추가해 막아 보니 holdout_month_range_with_keyword가 ≥80%에서 2/10으로
+        # 무너졌다 — 조회 규칙에 조건이 늘면 모델이 분류 단계로 되돌아간다."
+        #
+        # 프롬프트 규칙을 늘리는 대신 **tool description**으로 옮겨서 해소했다.
+        # list_saved_requests description에 "키워드 인자가 없다. 넘겨도 무시되고 날짜 조건만
+        # 걸린 목록이 온다"를 넣고, week04 프롬프트의 같은 설명은 지웠다. 조회 규칙에 조건을
+        # 더한 것이 아니라 도구가 무엇을 받는지만 알려 준 것이라 분류 단계로 되돌아가지 않는다.
+        #
+        # 측정: 이 케이스 0% -> 10/12(83%). 합집합 규칙 케이스 5개
+        # (holdout_month_range_with_keyword, narrow_date_with_generic_keyword,
+        #  wide_range_with_selective_keyword, holdout_single_date_with_keyword,
+        #  date_and_keyword_calls_both_tools)는 모두 100% 유지.
+        #
+        # 83%는 하한 80%에 가깝다. 이따금 내려갈 수 있으며, 그때는 규칙이 흔들린 것이 아니라
+        # 표본 변동일 수 있으니 반복 수를 늘려 다시 재 보라.
         "user": "9월 14일에 할 일 뭐 있어?",
         "expect": {
             "called": ["list_saved_requests"],
