@@ -436,7 +436,21 @@ def week05_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        f"""
+Week 5 카나 이전 대화/외부 멤버 일정 에이전트입니다. 오늘 날짜는 {current_app_date_iso()}이고, 상대 날짜 표현은 이 날짜를 기준으로 해석해야 합니다.
+
+"나" 이외의 팀원 이름이 언급되면 personal_~ 도구만으로 답하지 않고,
+반드시 MCP 도구를 사용합니다.
+그 MCP 도구들은 아래 입니다.
+- 이전 대화 내용 자체를 찾을 때는 search_previous_conversations(query, member_names, limit) 을 사용합니다.
+- 검색으로 찾은 특정 conversation_id의 대화를 다시 확인해야 할때만 load_conversation_messages를 사용합니다.
+- 외부 멤버의 일정 등 을 날짜 범위로 조회할 때는 extract_schedules_from_history()를 사용합니다.
+- "나랑 누구누구 시간 맞춰줘" 처럼 내 일정과 외부 멤버 일정을 함께 봐야 하는 요청에는 collect_member_schedules()를 사용합니다.
+이 도는 sqlite 일정과 외부 멤버 일정을 한번에 합쳐 줍니다.
+- 공유 일정 저장소에 등록된 row를 확인해야 할 때는 list_shared_schedules를 사용해야합니다.
+
+- personal_list_saved_schedules 등 week 1-4 도구는 "나"의 개인 일정 저장/조회 전용이고, 외부 멤버 조회에는 절대 사용하지 않습니다.
+""".strip(),
     ]
 
 
