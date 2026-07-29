@@ -278,3 +278,39 @@ Week 4 스타일(`agent.invoke()` + 자연어 질문)로 9개 케이스를 작�
 | `collect_member_schedules` | "서연이랑 이번 주에 회의 잡으려는데..." / "민준이랑 지훈이랑 나 셋이 이번 달 미팅 잡아야 하는데..." | 통과 |
 
 **교훈**: tool-selection 실패는 코드 버그가 아니라 "언어의 애매함"과 "프롬프트 안내 부족"이 섞인 문제라서, 원인에 따라 프롬프트를 고칠지 테스트 질문(요구사항 명확화)을 고칠지 구분해서 대응해야 한다.
+
+## 9. 추가과제 — `create_shared_schedule` / `delete_shared_schedule`
+
+```python
+# create_shared_schedule
+args = {
+    "member_name": member_name, "title": title, "date": date,
+    "start_time": start_time, "end_time": end_time, "notes": notes,
+    "source_conversation_id": source_conversation_id, "schedule_id": schedule_id,
+}
+return call_mcp_tool_sync("create_shared_schedule", args)
+
+# delete_shared_schedule
+args = {"schedule_id": schedule_id, "source_conversation_id": source_conversation_id}
+return call_mcp_tool_sync("delete_shared_schedule", args)
+```
+
+메인과제와 동일한 순수 pass-through 패턴. `create_shared_schedule`은 `schedule_id`를 안 넘기면 MCP 서버가 새로 생성하고, 같은 `schedule_id`로 다시 호출하면 "생성"이 아니라 "갱신"(`sync_status: "updated"`) 처리된다. `source_conversation_id`/`schedule_id`를 보존해두면 나중에 `delete_shared_schedule`로 같은 row를 정확히 찾아 지울 수 있다.
+
+**검증**: `create_shared_schedule`로 테스트 멤버 일정을 등록 → `list_shared_schedules`로 등록된 row 확인 → `delete_shared_schedule`(`source_conversation_id` 기준)로 삭제 → `list_shared_schedules` 재조회 시 빈 리스트로 확인. 등록·조회·삭제 전체 사이클이 정상 동작함을 확인.
+
+### 9-1. `tests/test_week05_mcp_tools.py`에 로직 테스트 4개 추가
+
+메인과제 로직 테스트와 같은 파일, 같은 `external_db` fixture 패턴으로 추가:
+
+- `test_create_shared_schedule_registers_new_row` — 등록 후 `list_shared_schedules`에 반영되는지
+- `test_create_shared_schedule_with_same_schedule_id_updates_not_duplicates` — 같은 `schedule_id`로 재호출 시 "생성"이 아니라 "갱신"되며 row가 중복되지 않는지
+- `test_delete_shared_schedule_by_source_conversation_id_removes_row` — 삭제 후 조회 시 사라지는지
+- `test_delete_shared_schedule_no_match_returns_empty` — 대상이 없을 때의 동작 확인
+
+**테스트 작성 중 발견한, 내 가정이 틀렸던 두 지점(둘 다 wrapper 버그 아님)**:
+
+1. **제목에 괄호를 쓰면 안 됨**: `"점검 회의 (시간 변경)"`처럼 소괄호가 든 제목으로 테스트했더니 `"점검 회의"`로 저장됨. [fixed/external_people_store.py:88-94](fixed/external_people_store.py#L88-L94)의 `strip_parenthetical_text()`가 외부 데이터의 소괄호와 그 안 내용을 항상 제거하도록 설계돼 있기 때문 — 실제 tool 동작이 맞고, 괄호 없는 제목으로 테스트 문장을 바꿔서 해결.
+2. **`delete_shared_schedule`의 `ok`는 항상 `True`**: 지울 대상이 없어도 `ok: False`가 아니라 `ok: True` + `deleted_count: 0`으로 반환됨. [mcp_server/sqlite_mcp_server.py:113-132](mcp_server/sqlite_mcp_server.py#L113-L132)를 보면 `ok`는 "호출 자체가 성공했는가"를 뜻하고, "몇 건 지웠는가"는 별도 필드(`deleted_count`)로 분리돼 있음 — "실패"와 "0건 삭제"를 구분하는 설계.
+
+**최종 결과**: `tests/test_week05_mcp_tools.py` 총 14개(메인과제 10개 + 추가과제 4개) 전부 통과.

@@ -10,6 +10,8 @@ from student_parts.week01_wake_up_nana import personal_create_schedule as week01
 from student_parts.week03_build_nanas_logbook import personal_create_schedule as week03_create_schedule
 from student_parts.week05_load_kanas_past_conversations import (
     collect_member_schedules,
+    create_shared_schedule,
+    delete_shared_schedule,
     extract_schedules_from_history,
     list_shared_schedules,
     load_conversation_messages,
@@ -205,3 +207,93 @@ def test_collect_member_schedules_does_not_duplicate_synced_schedule(
         row for row in result["rows"] if row["member_name"] == "나" and row["title"] == "치과 예약"
     ]
     assert len(my_matching_rows) == 1
+
+
+# ── create_shared_schedule / delete_shared_schedule (추가과제) ─────────
+
+
+def test_create_shared_schedule_registers_new_row(external_db):
+    created = json.loads(
+        create_shared_schedule.invoke(
+            {
+                "member_name": "테스트유저",
+                "title": "점검 회의",
+                "date": "2026-08-10",
+                "start_time": "10:00",
+                "end_time": "11:00",
+                "source_conversation_id": "test_conv_create",
+            }
+        )
+    )
+
+    assert created["ok"] is True
+    assert created["shared_schedule"]["sync_status"] == "created"
+
+    listed = json.loads(list_shared_schedules.invoke({"member_names": ["테스트유저"]}))
+    assert len(listed["rows"]) == 1
+    assert listed["rows"][0]["title"] == "점검 회의"
+
+
+def test_create_shared_schedule_with_same_schedule_id_updates_not_duplicates(external_db):
+    first = json.loads(
+        create_shared_schedule.invoke(
+            {
+                "member_name": "테스트유저",
+                "title": "점검 회의",
+                "date": "2026-08-10",
+                "start_time": "10:00",
+                "end_time": "11:00",
+                "schedule_id": "shared_test_fixed_id",
+            }
+        )
+    )
+    assert first["shared_schedule"]["sync_status"] == "created"
+
+    second = json.loads(
+        create_shared_schedule.invoke(
+            {
+                "member_name": "테스트유저",
+                "title": "점검 회의 시간 변경",
+                "date": "2026-08-10",
+                "start_time": "14:00",
+                "end_time": "15:00",
+                "schedule_id": "shared_test_fixed_id",
+            }
+        )
+    )
+    assert second["shared_schedule"]["sync_status"] == "updated"
+
+    listed = json.loads(list_shared_schedules.invoke({"member_names": ["테스트유저"]}))
+    assert len(listed["rows"]) == 1
+    assert listed["rows"][0]["title"] == "점검 회의 시간 변경"
+    assert listed["rows"][0]["start_time"] == "14:00"
+
+
+def test_delete_shared_schedule_by_source_conversation_id_removes_row(external_db):
+    create_shared_schedule.invoke(
+        {
+            "member_name": "테스트유저",
+            "title": "점검 회의",
+            "date": "2026-08-10",
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "source_conversation_id": "test_conv_delete",
+        }
+    )
+
+    deleted = json.loads(delete_shared_schedule.invoke({"source_conversation_id": "test_conv_delete"}))
+    assert deleted["ok"] is True
+    assert deleted["deleted_count"] == 1
+
+    listed = json.loads(list_shared_schedules.invoke({"member_names": ["테스트유저"]}))
+    assert listed["rows"] == []
+
+
+def test_delete_shared_schedule_no_match_returns_empty(external_db):
+    """대상이 없어도 delete_shared_schedule 자체는 ok=True를 반환한다 (호출은 성공, 지운 것만 0건)."""
+
+    deleted = json.loads(delete_shared_schedule.invoke({"source_conversation_id": "no_such_conversation"}))
+
+    assert deleted["ok"] is True
+    assert deleted["deleted_count"] == 0
+    assert deleted["deleted"] == []
