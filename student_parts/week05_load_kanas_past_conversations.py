@@ -301,8 +301,7 @@ def _collect_member_schedules(
             "notes": s.get("notes", "")
         }
         rows.append(result)
-    members_schedule = 
-        call_mcp_tool_sync("extract_schedules_from_history",
+    members_schedule = call_mcp_tool_sync("extract_schedules_from_history",
                         {
                             "member_names" : member_names,
                             "date_from" : date_from,
@@ -415,29 +414,29 @@ def list_shared_schedules(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다. 필터가 없으면 기본 공유 일정을 반환합니다."""
 
-    result = call_mcp_tool_sync("list_shared_schedules",                
-                                    {
-                                        "member_names": member_names,
-                                        "date_from": date_from,             
-                                        "date_to": date_to,
-                                        "source_conversation_id":source_conversation_id,
-                                        "limit": limit                      
-                                    })                                      
-        return json_payload(result)
+    result = call_mcp_tool_sync("list_shared_schedules",
+                                {
+                                    "member_names": member_names,
+                                    "date_from": date_from,
+                                    "date_to": date_to,
+                                    "source_conversation_id": source_conversation_id,
+                                    "limit": limit
+                                })
+    return json_payload(result)
 
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
-    personal_schedules = _personal_schedules_for_current_scope()        
-        result = _collect_member_schedules(                                 
-            member_names=member_names,                                      
-            date_from=date_from,
-            date_to=date_to,                                                
-            personal_schedules=personal_schedules
-        )                                                                   
-        return json_payload(result)
+    personal_schedules = _personal_schedules_for_current_scope()
+    result = _collect_member_schedules(
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        personal_schedules=personal_schedules
+    )
+    return json_payload(result)
 
 
 def week05_tools() -> list[Any]:
@@ -466,7 +465,37 @@ def week05_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        """
+## Week 5: 팀 일정 조율 및 외부 기록 활용
+
+### 팀원 대화 기록 조회 (New)
+팀원들이 이전에 언급한 일정이나 바쁜 시간을 찾아야 할 때:
+
+1. **search_previous_conversations(query, member_names, limit)**
+   - "회의", "바쁜 시간", "일정" 같은 키워드로 이전 대화 검색
+   - member_names을 명시하면 특정 팀원의 대화만 검색
+   - 예: "김철수의 이전 대화에서 회의 일정 찾아줘"
+
+2. **load_conversation_messages(conversation_id)**
+   - 검색한 특정 대화의 전체 메시지 확인
+   - 일정의 정확한 시간, 참석자, 맥락 파악할 때 사용
+
+3. **extract_schedules_from_history(member_names, date_from, date_to)**
+   - 이전 대화에서 추출한 팀원의 일정 rows 조회
+   - 각 row: {member_name, title, date, start_time, end_time, notes}
+
+### 통합 조회 (Key Tool)
+**collect_member_schedules(member_names, date_from, date_to)**
+- 내 일정(DB 저장 + 현재 임시) + 팀원 일정(외부 기록)을 한 번에 조회
+- 반환: {rows: [...], schedule_summary: "모두의 일정 자연어 설명"}
+- "내일 모두 가능한 시간 있어?" 같은 회의 조율 질문에 사용
+
+### 공유 일정 저장소 (New)
+**list_shared_schedules(member_names, date_from, date_to, limit)**
+- 팀이 함께 등록한 공유 일정 조회
+- 필터 없으면 전체 공유 일정 반환
+- 날짜/팀원으로 필터링하면 해당 조건의 일정만 조회
+        """.strip()
     ]
 
 
