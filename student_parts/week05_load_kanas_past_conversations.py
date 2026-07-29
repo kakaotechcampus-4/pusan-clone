@@ -190,7 +190,9 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     store = AppSQLiteStore(CONFIG.app_db_path)
-    result = list(store.list_schedules(limit=100))
+    personal = store.list_schedules(kind="personal_schedule", limit=100)
+    group = store.list_schedules(kind="group_schedule", limit=100)
+    result = personal + group
     stored = {r.get("schedule_id") for r in result}
     scope = current_session_scope()
     return result + [s for s in PERSONAL_SCHEDULES if _schedule_scope(s) == scope and s.get("id") not in stored]
@@ -294,19 +296,15 @@ def _collect_member_schedules(
         if not structured.date or (norm_from and structured.date < norm_from) or (norm_to and structured.date > norm_to):
             continue
         rows.append({
-            "member_name": "나", "title": structured.title or "제목 없음",
-            "date": structured.date, "start_time": structured.start_time or "미정",
-            "end_time": structured.end_time or "미정", "notes": "내 일정",
+            "member_name": "나", "title": structured.title,
+            "date": structured.date, "start_time": structured.start_time,
+            "end_time": structured.end_time, "notes": "내 일정",
+            "schedule_id": s.get("schedule_id") or s.get("id"), "source_conversation_id": None,
         })
 
     # 외부 멤버 일정
-    mcp_result = json.loads(call_mcp_tool_sync("extract_schedules_from_history", {"member_names": member_names, "date_from": date_from, "date_to": date_to}))
-    for r in mcp_result.get("rows", []):
-        rows.append({
-            "member_name": r.get("member_name"), "title": r.get("title") or "제목 없음",
-            "date": r.get("date"), "start_time": r.get("start_time") or "미정",
-            "end_time": r.get("end_time") or "미정", "notes": r.get("notes") or ""
-        })
+    mcp_result = json.loads(call_mcp_tool_sync("extract_schedules_from_history", {"member_names": member_names, "date_from": norm_from, "date_to": norm_to}))
+    rows.extend(mcp_result.get("rows", []))
 
     return {
         "ok": True, "tool_name": "collect_member_schedules",
