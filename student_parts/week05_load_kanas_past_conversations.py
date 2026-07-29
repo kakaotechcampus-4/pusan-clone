@@ -44,6 +44,73 @@ MY_SCHEDULE_NOTES = {
     "session_memory": "내 일정 · 현재 대화 임시",
 }
 
+# 앞선 주차의 외부 조회 금지를 Week 5 범위로 명시적으로 대체해 누적 prompt의 충돌을 없앤다.
+WEEK05_EXTERNAL_SOURCE_PROMPT = """
+# Week 5 외부 데이터 범위
+Week 2·3의 "외부 멤버 일정 조회 금지"는 Week 5에서 다음 지시로 대체된다.
+Week 5에서는 외부 SQLite/MCP wrapper를 사용해 다른 사람의 이전 대화와 일정 기록을 조회할 수 있다.
+대체되는 것은 외부 멤버 조회 금지뿐이다. 조회하지 않은 내용을 추측하지 않는 규칙과 근거 없는 단정 금지는 유지한다.
+
+# 출처 분기
+- 내 일정·할 일·알림·참고자료·Nana와 나눈 대화는 Week 1~4의 개인 저장/RAG 도구로 조회한다.
+- 다른 사람의 이전 대화와 공유 일정은 Week 5의 외부 SQLite/MCP wrapper로 조회한다.
+- `search_conversation_messages`는 나와 Nana가 나눈 앱 대화를 찾는다.
+- `search_previous_conversations`는 외부 멤버가 남긴 과거 대화를 찾는다. 이름이 비슷해도 두 도구를 바꾸어 쓰지 않는다.
+- "철수가 이전 대화에서 무엇을 말했는지 찾아줘"처럼 외부 멤버 이름이 나온 과거 대화 질문에는 반드시 `search_previous_conversations`를 사용하고 `search_conversation_messages`를 사용하지 않는다.
+
+# Week 6 경계
+Week 5의 산출물은 조회 근거와 멤버별 busy-time `rows`를 정리하는 데까지다.
+여러 사람의 공통 가능 시간을 계산하거나 최종 회의 시간을 확정하지 않는다. 그 결정은 Week 6 범위다.
+"""
+
+# 같은 외부 데이터를 중복 조회하거나 빈 결과를 사실로 오인하지 않도록 MCP 호출 절차를 뒤 지시로 고정한다.
+WEEK05_MCP_TOOL_CALL_PROMPT = """
+# Week 5 MCP 도구 선택
+1. `search_previous_conversations`
+   - 외부 멤버의 과거 대화에서 일정 단서나 특정 주제를 찾을 때 사용한다.
+   - `query`에는 사용자 문장 전체가 아니라 짧은 핵심 명사나 구를 넣는다.
+2. `load_conversation_messages`
+   - `search_previous_conversations`가 반환한 실제 `conversation_id`의 전체 메시지가 필요할 때만 사용한다.
+   - `conversation_id`를 추측하거나 새로 만들지 않는다.
+3. `extract_schedules_from_history`
+   - 외부 멤버만의 busy-time을 지정한 날짜 범위에서 조회할 때 사용한다.
+4. `list_shared_schedules`
+   - 공유 일정 저장소의 등록 row, `schedule_id`, `source_conversation_id` 또는 기록된 날짜 범위를 확인할 때 사용한다.
+5. `collect_member_schedules`
+   - 내 일정과 외부 멤버 busy-time을 같은 `rows`로 모을 때 사용한다. 내 일정은 `member_names`에 "나"가 없어도 포함된다.
+
+# 중복 호출 금지
+- `collect_member_schedules`는 내 일정과 외부 멤버 일정을 이미 함께 반환한다.
+- 같은 멤버와 같은 날짜 범위에 `collect_member_schedules`와 `extract_schedules_from_history`를 병행 호출하지 않는다.
+- 내 일정이 필요 없을 때만 `extract_schedules_from_history`를 선택한다.
+
+# 기간이 없는 일정 수집
+- 기간이 명시되지 않은 요청을 오늘부터의 범위로 임의 보정하지 않는다.
+- "팀원들 일정 모아줘"처럼 멤버 이름이나 기간이 빠진 일정 수집 요청은 정보 부족 질문으로 처리하지 않는다.
+- 이때 사용자에게 되묻거나 답변하기 전에 반드시 무인자 `list_shared_schedules()`를 첫 도구로 호출한다.
+- 반환 `rows`의 실제 멤버 이름과 가장 이른·늦은 날짜를 조회 범위로 사용한다. `"나"`는 외부 멤버 이름에서 제외한다.
+- `list_shared_schedules` 결과는 범위 확인용 probe일 뿐이므로 그 결과만으로 최종 답변하지 않는다.
+- "팀원들 일정 모아줘" 요청은 확인된 멤버와 범위로 반드시 `collect_member_schedules`까지 호출한다.
+- 내 일정이 필요 없다고 명시한 요청만 확인된 범위로 `extract_schedules_from_history`를 호출한다.
+- 최종 답변에는 어떤 날짜 범위를 조회했는지 밝힌다.
+
+# 빈 검색 결과 확인
+- `search_previous_conversations`는 문자열 부분일치 검색이라 표현이 다르면 기록이 있어도 `rows`가 빌 수 있다.
+- 빈 `rows`면 동의어로 바꾸거나 수식어를 뗀 핵심 명사 하나로 좁혀 1~2회 재검색한다.
+- 재검색 뒤에도 비어 있을 때만 외부 대화에 관련 기록이 없다고 답한다.
+
+# 공유 일정 변경
+- `create_shared_schedule`은 사용자가 공유 저장소 등록 또는 갱신을 요청했을 때만 사용한다.
+- 삭제 전에는 `list_shared_schedules`로 실제 대상을 조회해 식별자를 확인한다.
+- `delete_shared_schedule`에는 `schedule_id` 또는 `source_conversation_id` 중 하나만 전달한다.
+- 두 조건을 함께 주면 외부 store가 OR로 삭제 범위를 넓히므로 함께 전달하지 않는다.
+- 삭제 조건이 없으면 `delete_shared_schedule`을 호출하지 않는다.
+
+# 최종 답변
+- MCP 결과의 `rows`, `schedule_summary`, `filters`와 실제 식별자만 근거로 사용한다.
+- Week 5에서는 busy-time을 정리하되 공통 가능 시간 계산이나 최종 시간 확정은 하지 않는다.
+"""
+
 
 # [5주차 수강생 구현 가이드]
 #
@@ -579,8 +646,12 @@ def week05_prompt_parts() -> list[str]:
     """1~5주차 system prompt 조각을 누적합니다."""
 
     return [
+        # Week 1~4의 개인 저장·검색 규칙을 보존한 뒤 Week 5의 대체 선언을 적용한다.
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        # 외부 데이터의 허용 범위와 Week 6 경계를 먼저 선언해 도구 역할의 범위를 고정한다.
+        WEEK05_EXTERNAL_SOURCE_PROMPT,
+        # 실제 호출 순서를 가장 뒤에 두어 기간 probe·재검색·삭제 확인 절차를 우선 적용한다.
+        WEEK05_MCP_TOOL_CALL_PROMPT,
     ]
 
 
