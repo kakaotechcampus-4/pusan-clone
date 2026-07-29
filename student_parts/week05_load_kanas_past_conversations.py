@@ -326,3 +326,79 @@ def list_shared_schedules(
     )
 
 
+@tool(args_schema=CollectMemberSchedulesInput)
+def collect_member_schedules(
+    member_names: list[str],
+    date_from: str,
+    date_to: str,
+) -> str:
+    """회의 조율을 위해 내 일정과 외부 멤버 busy-time을 한 번에 모읍니다."""
+
+    return json_payload(
+        _collect_member_schedules(
+            member_names=member_names,
+            date_from=date_from,
+            date_to=date_to,
+            personal_schedules=_personal_schedules_for_current_scope(),
+        )
+    )
+
+
+def week05_tools() -> list[Any]:
+    """4주차까지의 도구에 외부 SQLite/MCP 일정 도구를 누적합니다."""
+
+    return [
+        *week04_tools(),
+        search_previous_conversations,
+        load_conversation_messages,
+        extract_schedules_from_history,
+        create_shared_schedule,
+        delete_shared_schedule,
+        list_shared_schedules,
+        collect_member_schedules,
+    ]
+
+
+WEEK05_HISTORY_PROMPT = f"""Week 5에서는 외부 멤버의 과거 대화와 공유 일정을 직접 DB에서 읽지 않고 MCP tool로 조회한다.
+오늘 날짜는 {current_app_date_iso()}이다.
+외부 멤버와 나눈 과거 대화의 존재나 주제를 찾을 때는 search_previous_conversations를 먼저 호출한다.
+찾은 대화의 전체 원문이 필요할 때만 반환된 conversation_id로 load_conversation_messages를 호출한다.
+특정 외부 멤버의 일정이나 바쁜 시간만 필요하면 extract_schedules_from_history를 사용한다.
+공유 일정 저장소에 등록된 row 자체를 확인할 때는 list_shared_schedules를 사용한다.
+회의 조율을 위해 내 일정과 외부 멤버의 busy-time을 함께 비교할 때는 collect_member_schedules를 사용한다.
+공유 일정의 명시적인 등록·수정·삭제 요청에만 create_shared_schedule 또는 delete_shared_schedule을 사용한다.
+Week 5에서는 공통 가능 시간을 임의로 확정하지 않고 조회된 rows와 schedule_summary를 근거로 설명한다.
+tool 결과가 비어 있으면 기록이 없다고 말하고 과거 대화나 일정을 추측하지 않는다."""
+
+
+def week05_system_prompt() -> str:
+    """5주차 단일 agent가 따르는 시스템 프롬프트입니다."""
+
+    return join_system_prompt(week05_prompt_parts())
+
+
+def week05_prompt_parts() -> list[str]:
+    """1~5주차 system prompt 조각을 누적합니다."""
+
+    return [*week04_prompt_parts(), WEEK05_HISTORY_PROMPT]
+
+
+def build_week05_agent() -> object:
+    """Week 1-5 누적 tool 목록을 노출하는 단일 LangChain agent를 만듭니다."""
+
+    if not CONFIG.has_openai_key:
+        raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
+    global _WEEK05_AGENT
+    if _WEEK05_AGENT is None:
+        _WEEK05_AGENT = create_agent(
+            model=chat_model(),
+            tools=week05_tools(),
+            system_prompt=week05_system_prompt(),
+        )
+    return _WEEK05_AGENT
+
+
+def build_week_agent() -> object:
+    """active-week registry가 호출하는 표준 Week agent builder입니다."""
+
+    return build_week05_agent()
