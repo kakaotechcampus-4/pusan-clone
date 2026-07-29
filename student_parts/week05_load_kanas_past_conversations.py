@@ -317,7 +317,15 @@ def search_previous_conversations(
     """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
     # TODO: call_mcp_tool_sync("search_previous_conversations", args)를 호출하고 결과 문자열을 반환하세요.
-    ...
+
+    return call_mcp_tool_sync(
+        "search_previous_conversations",
+        {
+            "query": query,
+            "member_names": member_names,
+            "limit": limit,
+        },
+    )
 
 
 @tool(args_schema=LoadConversationMessagesInput)
@@ -325,7 +333,19 @@ def load_conversation_messages(conversation_id: str) -> str:
     """외부 SQLite 데이터베이스에서 특정 이전 대화의 모든 메시지를 불러옵니다."""
 
     # TODO: call_external_tool_payload("load_conversation_messages", {"conversation_id": ...}) 결과를 JSON으로 반환하세요.
-    ...
+
+    # 사용자가 "철수가 QA 리뷰에 관해 예전에 뭐라고 했어?" 질문 시
+    # Agent는 다음과 같이 동작함
+    # search_previous_conversations 호출 -> 관련 대화 후보, conversation_id를 찾음
+    # 그 다음 load_conversation_messages 호출 -> conversation_id를 넘겨받아 전체 메시지를 시간 순으로 읽음
+    # rows가 포함된 JSON 문자열 반환
+    payload = call_external_tool_payload(  # call_external_tool_payload()는 내부에서 MCP 문자열을 json.loads()로 dict를 변환
+        "load_conversation_messages",
+        {"conversation_id": conversation_id},
+    )
+    return json_payload(
+        payload
+    )  # 다시 json_payload()로 감싸 랭체인 tool이 안정적으로 문자열을 반환하게 함
 
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
