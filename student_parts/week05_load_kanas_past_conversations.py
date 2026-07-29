@@ -494,7 +494,19 @@ def week05_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        "내 개인 정보(메모·저장한 일정·내 앱 대화)는 이전 주차 도구로 처리하고, "
+        "다른 사람(외부 멤버)의 과거 대화와 일정은 Week 5 MCP wrapper로 처리한다. "
+        "내 앱 대화 검색은 search_conversation_messages, 외부 멤버의 과거 대화 검색은 "
+        "search_previous_conversations로 서로 다른 저장소를 본다는 점을 혼동하지 않는다.",
+        "다른 사람의 일정을 물으면 extract_schedules_from_history로 그 멤버의 일정을 추출하고, "
+        "특정 대화의 전체 내용이 필요하면 search_previous_conversations로 conversation_id를 찾은 뒤 "
+        "load_conversation_messages로 불러온다. 공유 일정 저장소 자체를 확인할 때는 list_shared_schedules를 쓴다.",
+        "나와 다른 사람의 일정을 함께 봐야 하는 조율 질문에는 collect_member_schedules를 사용한다. "
+        "member_names에는 조율 대상 전원을 넣고, 내 일정이 필요하면 '나'를 함께 넣는다. "
+        "이 tool은 내 일정과 외부 멤버 일정을 같은 구조로 모아 주므로 출처별로 따로 호출하지 않는다.",
+        "조회 결과가 비어 있으면 일정을 지어내지 말고 해당 기간에 확인된 일정이 없다고 답한다. "
+        "여러 사람의 최종 회의 시간을 확정하는 것은 이번 주차 범위가 아니므로, "
+        "확인된 일정을 근거로 바쁜 시간을 설명하는 데까지만 답한다.",
     ]
 
 
