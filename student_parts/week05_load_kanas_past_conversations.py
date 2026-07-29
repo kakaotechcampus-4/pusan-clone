@@ -287,9 +287,19 @@ class LoadConversationMessagesInput(BaseModel):
 class ExtractSchedulesFromHistoryInput(BaseModel):
     """외부 멤버 일정 추출 입력입니다."""
 
-    member_names: list[str]
-    date_from: str
-    date_to: str
+    member_names: list[str] = Field(description="조회할 사람 이름 목록.")
+    # 날짜가 필수라서, 사용자가 기간을 말하지 않았을 때 모델이 값을 지어내기 쉽다.
+    # 실제로 '철수 일정 알려줘'에 오늘 하루로 좁혀 조회하고 "일정이 없다"고 답한 적이 있다.
+    # 인자를 어떻게 채울지는 이 필드 설명이 가장 가까운 자리다.
+    date_from: str = Field(
+        description=(
+            "조회 시작일(YYYY-MM-DD). 사용자가 기간을 말하지 않았으면 오늘이나 임의의 날짜로 "
+            "정하지 말고, tool을 부르기 전에 어느 기간을 볼지 되물어라."
+        )
+    )
+    date_to: str = Field(
+        description="조회 종료일(YYYY-MM-DD). date_from 보다 앞설 수 없다."
+    )
 
 
 class CreateSharedScheduleInput(BaseModel):
@@ -354,7 +364,12 @@ class CollectMemberSchedulesInput(BaseModel):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
 
     member_names: list[str] = Field(description="조회할 다른 사람 이름 목록.")
-    date_from: str = Field(description="조회 시작일(YYYY-MM-DD).")
+    date_from: str = Field(
+        description=(
+            "조회 시작일(YYYY-MM-DD). 사용자가 기간을 말하지 않았으면 오늘이나 임의의 날짜로 "
+            "정하지 말고, tool을 부르기 전에 어느 기간을 볼지 되물어라."
+        )
+    )
     date_to: str = Field(description="조회 종료일(YYYY-MM-DD). date_from 보다 앞설 수 없다.")
     # 기본값을 두지 않는다. 기본값이 있으면 모델이 이 판단을 건너뛰고, 그 결과가
     # "안 물어본 내 일정 누출" 또는 "조율에서 내 일정 누락"으로 조용히 나타난다.
@@ -777,9 +792,12 @@ WEEK05_EXTERNAL_MEMBER_PROMPT = (
     "지난 대화는 search_previous_conversations로 찾고, 전문이 필요할 때만 "
     "그 conversation_id로 load_conversation_messages를 부른다.\n"
     "일정 조회의 날짜 범위는 YYYY-MM-DD로 넘긴다. 사용자가 범위를 말하지 않았으면 "
-    "임의로 넓히지 말고 어느 기간을 볼지 되묻는다. "
+    "임의로 넓히지도 좁히지도 말고 어느 기간을 볼지 되묻는다. "
+    "특히 '오늘 하루'로 좁혀서 조회하면 실제로 있는 일정을 없다고 답하게 되므로 하지 않는다. "
     "다만 저장소 점검용 list_shared_schedules 는 필터 없이 불러도 된다.\n"
     "조회 결과의 rows와 schedule_summary만 근거로 답한다. 사용자가 묻지 않은 사람의 일정은 언급하지 않는다.\n"
+    "조회를 하지 않은 채 '기록이 없다'고 말하지 않는다. 처음 보는 이름이라도 일단 tool로 조회하고, "
+    "결과가 비어 있을 때만 없다고 답한다.\n"
     "여러 사람의 최종 회의 시간을 확정하는 것은 아직 이 단계의 일이 아니다. "
     "겹치지 않는 시간대를 근거와 함께 제안하되 확정된 것처럼 단정하지 않는다."
 )
