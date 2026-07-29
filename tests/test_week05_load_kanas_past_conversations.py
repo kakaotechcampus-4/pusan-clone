@@ -26,7 +26,11 @@ from fixed.external_people_store import PERSONAL_SHARED_MEMBER_NAME
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, conversation_session_scope
 
 import student_parts.week01_wake_up_nana as week01
+import student_parts.week05_load_kanas_past_conversations as week05
+from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts
 from student_parts.week05_load_kanas_past_conversations import (
+    CollectMemberSchedulesInput,
+    ExtractSchedulesFromHistoryInput,
     _collect_member_schedules,
     _external_member_names_excluding_me,
     _is_within_date_range,
@@ -487,6 +491,72 @@ class SharedScheduleRoundTripTest(unittest.TestCase):
         self.assertEqual([row["title"] for row in rows], ["고침"])  # 중복 생성이 아니라 갱신
 
         delete_shared_schedule.invoke({"schedule_id": "shared_idempotent"})
+
+
+class Week05PromptPartsTest(unittest.TestCase):
+    """누적 프롬프트가 week4까지 이어받고, 이전 주차의 범위 선언이 거짓으로 남지 않는지 검증한다.
+
+    LLM 없이 문자열만 본다. 프롬프트 버그는 순수 함수 테스트로 안 잡히는데,
+    '이전 주차 문구가 5주차에서 거짓이 되는' 종류는 이렇게 고정할 수 있다.
+    """
+
+    def _text(self) -> str:
+        return "\n".join(week05.week05_prompt_parts())
+
+    def test_week04_조각을_누적한다(self):
+        parts = week05.week05_prompt_parts()
+        for base in week04_prompt_parts():
+            self.assertIn(base, parts)
+
+    def test_이전_주차의_범위_선언이_거짓으로_남아_있지_않다(self):
+        # week2/week3 시점에는 맞았지만 week5 에서는 틀린 문장들.
+        # 남아 있으면 모델이 "도구 사용이 제한되어 있다"며 tool 호출을 건너뛴다.
+        text = self._text()
+        for stale in [
+            "외부 멤버 일정 조율을 하지 않는다",
+            "외부 멤버 일정 조율이나 RAG 검색은 이후 주차",
+        ]:
+            self.assertNotIn(stale, text, f"5주차에서 거짓이 된 문구가 남아 있다: {stale}")
+
+    def test_삭제_지시가_내_일정으로_한정돼_있다(self):
+        # 조건 없는 '삭제 요청' 지시는 공유 저장소 삭제까지 개인 일정 tool 로 낚아챈다.
+        self.assertNotIn("삭제 요청('X 일정 지워줘')은", self._text())
+
+    def test_주차_간_출처_경계를_담는다(self):
+        text = self._text()
+        for tool_name in [
+            "search_personal_references",
+            "search_saved_requests",
+            "search_conversation_messages",
+        ]:
+            self.assertIn(tool_name, text)
+
+
+class Week05ToolDescriptionTest(unittest.TestCase):
+    """tool 선택 기준과 인자 채우는 규칙은 description/스키마에 둔다. 그 계약을 고정한다."""
+
+    def _descriptions(self) -> dict[str, str]:
+        return {tool.name: tool.description for tool in week05.week05_tools()}
+
+    def test_extract와_collect가_서로를_구분하는_안내를_갖는다(self):
+        d = self._descriptions()
+        self.assertIn("내 일정은 포함되지 않습니다", d["extract_schedules_from_history"])
+        self.assertIn("extract_schedules_from_history", d["collect_member_schedules"])
+
+    def test_대화_검색_description이_query_형태를_안내한다(self):
+        # 이름을 query 에 섞으면 LIKE 로 못 찾는다.
+        text = self._descriptions()["search_previous_conversations"]
+        self.assertIn("member_names", text)
+
+    def test_날짜_인자에_기간_미지정_안내가_있다(self):
+        # 기간을 안 주면 오늘로 좁혀 "일정 없음"으로 답하던 문제를 막는 안내.
+        for schema in (ExtractSchedulesFromHistoryInput, CollectMemberSchedulesInput):
+            description = schema.model_fields["date_from"].description or ""
+            self.assertIn("되물어라", description, f"{schema.__name__}.date_from")
+
+    def test_내_일정_포함_여부는_기본값_없는_필수_인자다(self):
+        required = CollectMemberSchedulesInput.model_json_schema()["required"]
+        self.assertIn("include_my_schedules", required)
 
 
 if __name__ == "__main__":
