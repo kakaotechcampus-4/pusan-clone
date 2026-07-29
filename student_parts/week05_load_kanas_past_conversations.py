@@ -260,3 +260,69 @@ def extract_schedules_from_history(
     )
 
 
+@tool(args_schema=CreateSharedScheduleInput)
+def create_shared_schedule(
+    member_name: str,
+    title: str,
+    date: str,
+    start_time: str,
+    end_time: str = "미정",
+    notes: str | None = None,
+    source_conversation_id: str | None = None,
+    schedule_id: str | None = None,
+) -> str:
+    """외부 MCP 공유 일정 저장소에 일정을 등록하거나 같은 ID의 일정을 갱신합니다."""
+
+    return call_mcp_tool_sync(
+        "create_shared_schedule",
+        {
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
+
+
+@tool(args_schema=DeleteSharedScheduleInput)
+def delete_shared_schedule(
+    schedule_id: str | None = None,
+    source_conversation_id: str | None = None,
+) -> str:
+    """외부 MCP 공유 일정 저장소에서 ID 또는 원본 연결 ID로 일정을 삭제합니다."""
+
+    return call_mcp_tool_sync(
+        "delete_shared_schedule",
+        {
+            "schedule_id": schedule_id,
+            "source_conversation_id": source_conversation_id,
+        },
+    )
+
+
+@tool(args_schema=ListSharedSchedulesInput)
+def list_shared_schedules(
+    member_names: list[str] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    source_conversation_id: str | None = None,
+    limit: int = 50,
+) -> str:
+    """외부 MCP 공유 일정 저장소의 등록 row와 요약을 조회합니다."""
+
+    return call_mcp_tool_sync(
+        "list_shared_schedules",
+        {
+            "member_names": member_names,
+            "date_from": date_from,
+            "date_to": date_to,
+            "source_conversation_id": source_conversation_id,
+            "limit": limit,
+        },
+    )
+
+
