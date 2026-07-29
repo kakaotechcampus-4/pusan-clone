@@ -150,3 +150,74 @@ class CollectMemberSchedulesInput(BaseModel):
     date_to: str
 
 
+def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
+    """앱 일정 row를 Week 2 StructuredRequest 모양으로 읽습니다."""
+
+    return StructuredRequest(
+        kind="personal_schedule",
+        title=row.get("title"),
+        date=row.get("date"),
+        start_time=row.get("start_time"),
+        end_time=row.get("end_time"),
+        members=row.get("attendees") or row.get("members") or [],
+        original_text=str(row.get("title") or ""),
+    )
+
+
+def _collect_member_schedules(
+    *,
+    member_names: list[str],
+    date_from: str,
+    date_to: str,
+    personal_schedules: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """내 일정과 외부 멤버 일정을 같은 busy-time row 구조로 합칩니다."""
+
+    normalized_members = normalize_external_member_names(member_names)
+    external_members = [
+        member for member in normalized_members if member != PERSONAL_SHARED_MEMBER_NAME
+    ]
+    normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
+        member_names,
+        date_from,
+        date_to,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for schedule in personal_schedules:
+        structured = _structured_request_from_schedule_row(schedule)
+        schedule_date = structured.date or ""
+        if normalized_date_from and schedule_date < normalized_date_from:
+            continue
+        if normalized_date_to and schedule_date > normalized_date_to:
+            continue
+        rows.append(
+            {
+                "member_name": PERSONAL_SHARED_MEMBER_NAME,
+                "title": structured.title,
+                "date": structured.date,
+                "start_time": structured.start_time,
+                "end_time": structured.end_time,
+                "notes": "",
+            }
+        )
+
+    external_payload = json.loads(
+        call_mcp_tool_sync(
+            "extract_schedules_from_history",
+            {
+                "member_names": external_members,
+                "date_from": normalized_date_from,
+                "date_to": normalized_date_to,
+            },
+        )
+    )
+    rows.extend(external_payload.get("rows", []))
+    return {
+        "ok": True,
+        "tool_name": "collect_member_schedules",
+        "rows": rows,
+        "schedule_summary": external_schedule_summary(rows),
+    }
+
+
