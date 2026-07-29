@@ -446,10 +446,12 @@ def search_conversation_messages(
     """
     ## 설명
     앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 짧은 핵심 명사나 구를 넣습니다.
-    앱에 저장된 이전 대화 기록을 확인하기 위해 사용할 수 있습니다.
-    
+
+    검색 대상은 **나와 Nana가 이 앱에서 주고받은 대화**입니다. 다른 사람의 이름이 나와도
+    그 사람이 화제였을 뿐이며, 그 사람이 참여한 대화를 찾는 것이 아닙니다.
+
     ## 예시
-    사용자: '예전 대화에서 철수에 대해 무슨 말을 했지?' 
+    사용자: '예전 대화에서 철수에 대해 무슨 말을 했지?'
     → `search_conversation_messages(query='철수')`
     """
 
@@ -533,11 +535,14 @@ def week04_system_prompt() -> str:
     return join_system_prompt(week04_prompt_parts())
 
 
-def week04_prompt_parts() -> list[str]:
-    """1~4주차 system prompt 조각을 누적합니다."""
+def week04_prompt_parts(active_week: int = 4) -> list[str]:
+    """1~4주차 system prompt 조각을 누적합니다.
+
+    `active_week`를 하위 주차로 전달하면 Week 2·3 전용 프롬프트가 제외됩니다.
+    """
 
     return [
-        *week03_prompt_parts(),
+        *week03_prompt_parts(active_week),
         # Week 4 Nana memory agent system prompt.
         "# Week4 System Prompt",
         "## Instructions",
@@ -553,12 +558,10 @@ def week04_prompt_parts() -> list[str]:
         """
         일정, 할 일, 알림 저장은 extract_schedule_request -> save_structured_request 경로로만 처리하고
         personal_create_schedule은 호출하지 말아라.
-        Week 2의 "personal_create_schedule 결과를 받으면 다시 tool을 호출하지 않는다"는 지시와
-        Week 3의 personal_create_schedule 호환 tool 안내는 Week 4에서 적용하지 않는다.
         """,
 
         """
-        저장 요청은 다음 순서로 처리하여라. 이 순서는 Week 3의 "새로운 자연어 저장 요청 처리 순서"보다 우선한다.
+        저장 요청은 다음 순서로 처리하여라.
         1. extract_schedule_request를 호출해 kind와 각 필드를 확인한다.
            날짜, 시간, 참여자가 빠져 있어 요청이 모호해 보여도 이 호출을 먼저 한다.
            tool을 하나도 호출하지 않은 채로 사용자에게 되묻지 말아라.
@@ -595,9 +598,9 @@ def week04_prompt_parts() -> list[str]:
         - 제목이나 키워드가 기준이면 search_saved_requests를 사용한다.
 
         날짜로 저장 기록을 조회할 때 쓰는 기본 도구는 list_saved_requests다.
-        Week 3의 "일정 조회 요청은 personal_list_saved_schedules를 사용하여라"는 Week 4에서
-        사용자가 "개인 일정만", "그룹 일정만"처럼 **다른 종류를 제외하겠다고 분명히 밝힌**
-        경우에만 적용한다. 그 도구는 일정 테이블만 조회해서 할 일과 알림이 누락되기 때문이다.
+        날짜 조회를 personal_list_saved_schedules로 대신하는 것은 사용자가 "개인 일정만",
+        "그룹 일정만"처럼 **다른 종류를 제외하겠다고 분명히 밝힌** 경우로 한정한다.
+        수정·삭제 대상을 찾는 것은 날짜 조회가 아니므로 이 제한과 무관하다.
 
         날짜와 키워드가 함께 주어진 조회라면 list_saved_requests와 search_saved_requests를
         둘 다 호출하고 두 결과를 합쳐서 판단한다. 어느 쪽을 고를지 고민하지 말고 둘 다 부른다.
@@ -609,16 +612,13 @@ def week04_prompt_parts() -> list[str]:
         명사로 또렷하게 말했을 때만 키워드로 세지 말아라. 동사꼴이나 서술형으로 말해도,
         무엇을 하기로 했는지를 가리키는 말이면 그 어간을 그대로 query에 넣어 검색한다.
         날짜 외에 종류 단어밖에 없는 질문만 날짜 전용 조회로 보고 list_saved_requests만 부른다.
-        이때 넘기는 인자가 서로 다르다. list_saved_requests는 kind/date_from/date_to만 받고
-        키워드 인자가 없으므로 날짜만 넘긴다. 키워드는 search_saved_requests의 query로만 넘긴다.
-        list_saved_requests에 키워드를 넘기면 그 값은 버려지고 날짜 조건만 걸린 목록이 오므로,
-        그 결과를 키워드로 걸러진 것처럼 취급하지 말아라.
+        두 도구는 받는 인자가 서로 다르다. 날짜는 list_saved_requests로, 키워드는
+        search_saved_requests의 query로 넘긴다.
 
-        search_saved_requests는 저장된 글자와 겹치는지만 보는 검색이라 뜻이 같아도 글자가
-        다르면 걸리지 않는다. rows가 비었으면 다음 근거가 사용자의 질문에 명시됐는지 확인한다.
+        search_saved_requests의 rows가 비었으면 다음 근거가 사용자의 질문에 명시됐는지 확인한다.
         - 날짜나 기간을 말했으면 그 범위만 list_saved_requests로 조회한다. 사용자가 말하지 않은
           date_from/date_to를 만들거나 date_to를 오늘로 정하지 말아라.
-        - "예전 대화에서"처럼 과거 대화를 출처로 말했으면 search_conversation_messages를 사용한다.
+        - 앱에서 나와 주고받은 지난 대화를 출처로 말했으면 search_conversation_messages를 사용한다.
         - "최근에 저장한" 기록을 말했으면 list_saved_requests를 날짜 없이 호출해 최근 목록을 확인한다.
         이 근거가 없으면 최근 목록이나 과거 대화로 자동 확장하지 말아라. 동의어나 구체 사례를
         추측해 기록을 만들어내지도 말아라. "현재 검색어와 글자가 겹치는 기록을 찾지 못했다"고

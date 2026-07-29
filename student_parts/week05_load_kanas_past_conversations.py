@@ -353,7 +353,18 @@ def search_previous_conversations(
     member_names: list[str] | None = None,
     limit: int = 5,
 ) -> str:
-    """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다.
+
+    검색 대상은 **외부 멤버들이 앱 밖에서 자기들끼리 나눈 대화**입니다. 내가 Nana와
+    주고받은 대화는 여기 없으므로, 그건 search_conversation_messages로 찾습니다.
+    누구의 대화를 찾는지가 기준이며, 사람 이름이 화제로만 등장하는 경우는 여기가 아닙니다.
+
+    query는 대화 본문과 글자가 겹치는지만 보는 부분 문자열 검색입니다. 뜻이 같아도 글자가
+    다르면 걸리지 않으므로, 본문에 그대로 나올 법한 짧은 명사나 구 하나만 넣으세요.
+
+    사람 이름은 query에 넣지 말고 member_names로 넘기세요. 이름과 주제어를 한 문자열로
+    붙이면("하린 온보딩") 본문에 그런 연속된 글자가 없어 검색이 비게 됩니다.
+    """
 
     # TODO: call_mcp_tool_sync("search_previous_conversations", args)를 호출하고 결과 문자열을 반환하세요.
     return call_mcp_tool_sync("search_previous_conversations", {
@@ -416,7 +427,14 @@ def delete_shared_schedule(
     schedule_id: str | None = None,
     source_conversation_id: str | None = None,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
+    """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다.
+
+    앱에 저장해 둔 일정을 지우는 용도로는 쓰지 마세요. 그건 personal_delete_saved_schedules가
+    공유 복사본까지 함께 정리합니다. 이 도구로 공유본만 지우면 앱 DB에 일정이 남아
+    두 저장소가 어긋납니다.
+
+    이 도구는 앱 기록 없이 공유 저장소에만 있는 row를 직접 정리할 때 씁니다.
+    """
 
     # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
     return call_mcp_tool_sync("delete_shared_schedule", {
@@ -433,7 +451,14 @@ def list_shared_schedules(
     source_conversation_id: str | None = None,
     limit: int = 50,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다. 필터가 없으면 기본 공유 일정을 반환합니다."""
+    """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다.
+
+    필터를 하나도 주지 않으면 실습용 기본 멤버와 기간의 row가 돌아옵니다. 그래서 어떤
+    멤버가 등록돼 있는지, 일정이 어느 기간에 몰려 있는지 훑어볼 때 쓸 수 있습니다.
+    반환 row의 member_name과 date를 보면 됩니다.
+
+    누가 언제 바쁜지를 계산하는 용도는 아닙니다. 그건 collect_member_schedules입니다.
+    """
 
     # TODO: call_mcp_tool_sync("list_shared_schedules", args)로 공유 일정 저장소 rows를 조회하세요.
     return call_mcp_tool_sync("list_shared_schedules", {
@@ -447,7 +472,16 @@ def list_shared_schedules(
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
+    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다.
+
+    date_from과 date_to는 필수이며 그 범위 안의 일정만 돌아옵니다.
+
+    사용자가 기간을 말했으면 그 기간을 그대로 넣으세요. 기간을 말하지 않았을 때 오늘 날짜를
+    채워 넣으면 거의 항상 빈 결과가 됩니다. 그럴 때는 이 도구를 부르기 전에
+    list_shared_schedules를 필터 없이 호출해 등록된 row의 date로 조회할 범위를 정하세요.
+
+    결과가 비었다는 것은 "그 기간에 없다"는 뜻이지 "그 멤버에게 일정이 없다"는 뜻이 아닙니다.
+    """
 
     # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
     return json_payload(
@@ -484,12 +518,58 @@ def week05_system_prompt() -> str:
     return join_system_prompt(week05_prompt_parts())
 
 
-def week05_prompt_parts() -> list[str]:
-    """1~5주차 system prompt 조각을 누적합니다."""
+def week05_prompt_parts(active_week: int = 5) -> list[str]:
+    """1~5주차 system prompt 조각을 누적합니다.
+
+    `active_week`를 하위 주차로 전달해 Week 2·3 전용 조각을 제외합니다.
+    """
 
     return [
-        *week04_prompt_parts(),
+        *week04_prompt_parts(active_week),
         # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        "# Week5 System Prompt",
+
+        """
+        Week 5에서는 외부 멤버의 이전 대화와 공유 일정을 MCP 도구로 다룬다.
+        앱에 저장된 내 기록(Week 3·4 도구)과 외부 멤버 기록(Week 5 도구)은 저장소가 다르므로
+        어느 쪽을 묻는지 보고 도구를 고르고, 답할 때 출처를 구분하여라.
+        """,
+
+        """
+        외부 멤버의 이전 대화를 볼 때는 다음 순서를 지켜라.
+        1. search_previous_conversations로 관련 대화를 찾는다.
+           query에는 사용자 질문의 핵심 명사나 짧은 구를 넣는다.
+        2. 그 결과의 conversation_id로 load_conversation_messages를 호출한다.
+        conversation_id를 모르는 채로 load_conversation_messages를 부르지 말아라.
+        검색 결과의 내용만으로 답할 수 있으면 2번은 생략한다.
+        """,
+
+        """
+        여러 사람이 언제 시간이 되는지 묻는 요청은 collect_member_schedules 하나로 처리하여라.
+        extract_schedules_from_history를 직접 부르면 내 일정이 빠져서 조율 근거가 불완전해진다.
+        collect_member_schedules는 내 일정과 외부 멤버의 바쁜 시간을 같은 rows로 함께 돌려준다.
+        member_names에는 사용자가 말한 사람 이름을 넣고, date_from과 date_to로 조회 기간을 넘겨라.
+        """,
+
+        """
+        list_shared_schedules는 공유 일정 저장소에 실제로 등록된 row를 확인할 때만 사용하여라.
+        누가 언제 바쁜지를 알아보는 용도로는 쓰지 말아라. 그것은 collect_member_schedules가 한다.
+
+        어떤 외부 멤버가 있는지 물으면 사용자에게 명단을 되묻지 말아라.
+        list_shared_schedules를 필터 없이 호출하면 등록된 row가 오므로 그 member_name으로
+        누가 있는지 답할 수 있다.
+        """,
+
+        """
+        조회 결과가 비면 "일정이 없다"고 단정하지 말아라. 어느 멤버를 어느 기간으로 조회해서
+        비었는지 밝히고, 다른 기간을 확인할지 물어보아라.
+        """,
+
+        """
+        Week 5는 바쁜 시간을 모아서 보여주는 데까지만 한다.
+        후보 시간대를 제안할 수는 있지만 최종 회의 시간을 혼자 확정하지는 말고,
+        모은 rows를 근거로 제시한 뒤 사용자에게 확인을 받아라.
+        """,
     ]
 
 
