@@ -25,6 +25,7 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, conversation_session_scop
 
 import student_parts.week01_wake_up_nana as week01
 from student_parts.week05_load_kanas_past_conversations import (
+    _collect_member_schedules,
     _external_member_names_excluding_me,
     _personal_schedule_rows,
     _personal_schedules_for_current_scope,
@@ -189,6 +190,48 @@ class PersonalScheduleRowsTest(unittest.TestCase):
         self.assertEqual(rows[0]["title"], "제목 없음")
         self.assertEqual(rows[0]["start_time"], "미정")
         self.assertEqual(rows[0]["end_time"], "미정")
+
+
+class CollectMemberSchedulesTest(unittest.TestCase):
+    """MCP 호출이 없는 조합만 검증한다(외부 대상이 비면 subprocess 를 띄우지 않는다)."""
+
+    MY = [{"schedule_id": "s1", "title": "팀 회의", "date": "2026-07-15", "start_time": "15:00"}]
+
+    def _collect(self, **kwargs):
+        base = dict(
+            member_names=[],
+            date_from="2026-07-14",
+            date_to="2026-07-18",
+            personal_schedules=self.MY,
+        )
+        return _collect_member_schedules(**{**base, **kwargs})
+
+    def test_include가_참이면_내_일정이_들어간다(self):
+        result = self._collect(include_my_schedules=True)
+        self.assertEqual([row["member_name"] for row in result["rows"]], ["나"])
+        self.assertEqual(result["member_names"], ["나"])
+        self.assertTrue(result["include_my_schedules"])
+
+    def test_include가_거짓이면_내_일정이_빠진다(self):
+        # 안 물어본 내 일정이 답변에 새는 것을 막는 경로다.
+        result = self._collect(include_my_schedules=False, personal_schedules=[])
+        self.assertEqual(result["rows"], [])
+        self.assertEqual(result["member_names"], [])
+        self.assertFalse(result["include_my_schedules"])
+
+    def test_ISO_datetime_범위도_날짜로_잘라_쓴다(self):
+        result = self._collect(date_from="2026-07-14T00:00:00", date_to="2026-07-18T23:59:59")
+        self.assertEqual(result["date_from"], "2026-07-14")
+        self.assertEqual(len(result["rows"]), 1)
+
+    def test_같은_날짜는_시간_미정이_뒤로_간다(self):
+        result = self._collect(
+            personal_schedules=[
+                {"title": "미정건", "date": "2026-07-15"},
+                {"title": "09시건", "date": "2026-07-15", "start_time": "09:00"},
+            ]
+        )
+        self.assertEqual([row["title"] for row in result["rows"]], ["09시건", "미정건"])
 
 
 class PersonalSchedulesForCurrentScopeTest(unittest.TestCase):

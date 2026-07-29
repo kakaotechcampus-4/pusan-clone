@@ -286,9 +286,18 @@ class ListSharedSchedulesInput(BaseModel):
 class CollectMemberSchedulesInput(BaseModel):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
 
-    member_names: list[str]
-    date_from: str
-    date_to: str
+    member_names: list[str] = Field(description="조회할 다른 사람 이름 목록.")
+    date_from: str = Field(description="조회 시작일(YYYY-MM-DD).")
+    date_to: str = Field(description="조회 종료일(YYYY-MM-DD). date_from 보다 앞설 수 없다.")
+    # 기본값을 두지 않는다. 기본값이 있으면 모델이 이 판단을 건너뛰고, 그 결과가
+    # "안 물어본 내 일정 누출" 또는 "조율에서 내 일정 누락"으로 조용히 나타난다.
+    include_my_schedules: bool = Field(
+        description=(
+            "내 일정도 함께 모을지. 나와 다른 사람의 시간을 맞추는 요청이면 true, "
+            "다른 사람 일정만 물었으면 false. "
+            "'내 일정이랑 겹치는지', '나도 되는 시간'처럼 사용자가 자기 일정을 언급하면 true다."
+        )
+    )
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
@@ -375,12 +384,18 @@ def _collect_member_schedules(
     date_from: str,
     date_to: str,
     personal_schedules: list[dict[str, Any]],
+    include_my_schedules: bool = True,
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다.
 
     출처를 '합치는' 게 아니라 멤버별로 **권위 있는 출처 하나씩만** 읽는다.
       - "나"      -> 앱 SQLite + 현재 대화의 임시 일정 (personal_schedules 로 주입)
       - 외부 멤버 -> 외부 SQLite/MCP 의 extract_schedules_from_history
+
+    내 일정을 넣을지는 member_names 에 "나"가 있는지로 유추하지 않고 include_my_schedules 로
+    받는다. 실측했을 때 모델은 조율 요청에서도 member_names 에 "나"를 절반만 넣었고
+    ('내 일정이랑 겹치는지 봐줘'에도 빠뜨렸다), 리스트에 무엇이 '없는지'로 의도를
+    읽어내는 방식 자체가 신호가 약했다.
 
     판단 로직은 위의 순수 helper 두 개가 갖고, 이 함수는 그 둘과 MCP 호출 한 번을
     엮는 역할만 한다.
@@ -391,7 +406,11 @@ def _collect_member_schedules(
     )
     external_members = _external_member_names_excluding_me(member_names)
 
-    rows = _personal_schedule_rows(personal_schedules, normalized_date_from, normalized_date_to)
+    rows = (
+        _personal_schedule_rows(personal_schedules, normalized_date_from, normalized_date_to)
+        if include_my_schedules
+        else []
+    )
 
     # 외부 조회 대상이 "나"뿐이면 MCP subprocess 를 띄울 이유가 없다.
     if external_members:
@@ -417,7 +436,12 @@ def _collect_member_schedules(
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
-        "member_names": [PERSONAL_SHARED_MEMBER_NAME, *external_members],
+        "member_names": (
+            [PERSONAL_SHARED_MEMBER_NAME, *external_members]
+            if include_my_schedules
+            else list(external_members)
+        ),
+        "include_my_schedules": include_my_schedules,
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
         "rows": rows,
@@ -431,7 +455,13 @@ def search_previous_conversations(
     member_names: list[str] | None = None,
     limit: int = 5,
 ) -> str:
-    """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    """다른 사람의 지난 대화를 검색합니다. 글자가 그대로 들어 있는지로 찾으므로 query는 짧을수록 좋습니다.
+
+    사람 이름은 query가 아니라 member_names 에 넣습니다.
+    query에는 '일정·얘기·관련해서' 같은 군더더기를 빼고 대화에 그대로 나올 법한
+    핵심 명사 하나만 넣습니다. 예) '온보딩 세션', 'API 연동 실습'.
+    결과가 비면 없다고 단정하기 전에 query를 더 짧게 줄여 한 번 더 검색하세요.
+    """
 
     # 멤버 이름 정규화는 외부 store/MCP 경계에서 이미 한 번 처리하므로 여기서 다시 하지 않는다.
     # member_names 는 None(전체) / [](명시적으로 없음) / [...](필터) 3-상태를 그대로 넘긴다.
@@ -457,7 +487,11 @@ def load_conversation_messages(conversation_id: str) -> str:
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
-    """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
+    """다른 사람의 일정/바쁜 시간만 조회합니다. 내 일정은 포함되지 않습니다.
+
+    '철수 일정 알려줘', '철수랑 영희가 언제 바쁜지'처럼 조회 대상에 '나'가 없을 때 씁니다.
+    사람 수는 상관없습니다. 내 일정도 함께 봐야 하면 collect_member_schedules 를 쓰세요.
+    """
 
     # 날짜 형식 정리도 외부 store/MCP 경계에서 한 번만 한다(normalize_external_schedule_date_bounds).
     # 결과 rows 의 member_name/title/date/start_time/end_time/notes 를 유지하려면 가공하지 않는 게 맞다.
@@ -543,17 +577,28 @@ def list_shared_schedules(
 
 
 @tool(args_schema=CollectMemberSchedulesInput)
-def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
+def collect_member_schedules(
+    member_names: list[str],
+    date_from: str,
+    date_to: str,
+    include_my_schedules: bool = True,
+) -> str:
+    """나와 다른 사람의 시간을 맞출 때 씁니다. 내 일정과 상대 일정을 같은 rows 구조로 함께 모읍니다.
 
-    # 내 일정은 member_names 에 "나"가 없어도 항상 포함한다. 이 tool 의 정체성이
-    # "내 일정 + 남의 일정"이라, 빠지면 조율 근거가 반쪽이 되기 때문이다.
-    # 외부 멤버 일정만 필요하면 extract_schedules_from_history 를 쓴다.
+    '서연이랑 7월 15일에 만날 수 있을까', '철수랑 언제 되지'처럼 다른 사람과 시간이 되는지
+    묻는 것도 이 tool입니다. 상대 일정은 앱에 없으므로 내 일정만 보고 답하면 안 됩니다.
+    include_my_schedules=true 면 내 일정이 결과에 포함됩니다.
+    다른 사람 일정만 필요하면 extract_schedules_from_history 를 쓰세요.
+    """
+
     payload = _collect_member_schedules(
         member_names=member_names,
         date_from=date_from,
         date_to=date_to,
-        personal_schedules=_personal_schedules_for_current_scope(),
+        personal_schedules=(
+            _personal_schedules_for_current_scope() if include_my_schedules else []
+        ),
+        include_my_schedules=include_my_schedules,
     )
     return json_payload(payload)
 
@@ -579,35 +624,21 @@ def week05_system_prompt() -> str:
     return join_system_prompt(week05_prompt_parts())
 
 
+# tool을 어떻게 고르고 인자를 어떤 형태로 넣을지는 각 tool의 description에 둔다.
+# 모델이 tool을 고르는 순간 보는 건 19개짜리 tool 목록이지, 여기에서 멀리 떨어진 이 문장이 아니다.
+# 여기에는 tool 하나만 봐서는 알 수 없는 것 — 주차 간 출처 경계와 답변 규범 — 만 남긴다.
 WEEK05_EXTERNAL_MEMBER_PROMPT = (
     "[5주차 외부 멤버 대화·일정]\n"
     "다른 사람(철수·영희·민준·서연·지훈·하린 등)의 일정과 지난 대화는 앱 안에 없고 "
-    "외부 SQLite/MCP 서버에 있다. 지어내지 말고 아래 tool로 조회한다.\n"
-    "두 tool 중 무엇을 쓸지는 **'나'가 조회 대상에 들어가는지**로 정한다. 사람 수로 정하지 않는다.\n"
-    "- 대상에 '나'가 포함되면(나와 남의 시간을 맞추는 요청): collect_member_schedules 하나만 호출한다.\n"
-    "  예) '나랑 철수랑 언제 되지', '우리 셋이 다 되는 시간', '내 일정이랑 겹치는지 봐줘'.\n"
-    "  이 tool이 내 일정과 상대방 일정을 같은 rows 구조로 한 번에 모아 준다. "
-    "search_previous_conversations와 extract_schedules_from_history를 손으로 조합하지 않는다.\n"
-    "- 대상에 '나'가 없으면(한 명이든 여러 명이든, 내 일정은 필요 없음): "
-    "extract_schedules_from_history 를 쓴다.\n"
-    "  예) '민준이 일정 알려줘', '철수랑 영희가 언제 바쁜지' — 사람 수는 상관없다. "
-    "이때 collect_member_schedules를 쓰면 묻지도 않은 내 일정이 결과에 섞인다.\n"
-    "- 지난 대화에서 무슨 말이 오갔는지 궁금하면: search_previous_conversations 로 먼저 찾고, "
-    "특정 대화의 전문이 필요할 때만 그 conversation_id로 load_conversation_messages 를 부른다.\n"
-    "- 공유 일정 저장소에 어떤 row가 등록돼 있는지 확인하려면: list_shared_schedules 를 쓴다.\n"
-    "search_previous_conversations 의 query는 **글자가 그대로 들어 있는지**로 찾는다(의미 검색이 아니다). "
-    "그래서 query를 길게 쓸수록 못 찾는다.\n"
-    "- 사람 이름은 query에 넣지 말고 member_names 에 넣는다. "
-    "'하린 온보딩 세션'이 아니라 query='온보딩 세션', member_names=['하린'] 이다.\n"
-    "- query에는 '일정·관련해서·얘기·뭐라고 했는지' 같은 군더더기를 빼고, "
-    "대화에 그대로 나올 법한 핵심 명사 하나만 넣는다. 예) 'API 연동 실습', '고객 인터뷰'.\n"
-    "- 결과가 비면 '기록이 없다'고 단정하기 전에, query를 더 짧은 핵심어로 한 번 줄여 다시 검색한다.\n"
+    "외부 SQLite/MCP 서버에 있다. 지어내지 말고 5주차 외부 tool로 조회한다.\n"
     "출처를 섞지 않는다: 내가 적어 둔 메모·선호는 search_personal_references, "
     "내가 앱에 등록한 일정/할 일은 search_saved_requests, 앱 안의 지난 대화는 search_conversation_messages 다. "
     "'다른 사람'이 주어일 때만 5주차 외부 tool을 쓴다.\n"
-    "날짜 범위(date_from·date_to)는 YYYY-MM-DD로 넘기고, 사용자가 범위를 말하지 않았으면 "
+    "지난 대화는 search_previous_conversations로 찾고, 전문이 필요할 때만 "
+    "그 conversation_id로 load_conversation_messages를 부른다.\n"
+    "날짜 범위는 YYYY-MM-DD로 넘기고, 사용자가 범위를 말하지 않았으면 "
     "임의로 넓히지 말고 어느 기간을 볼지 되묻는다.\n"
-    "조회 결과의 rows와 schedule_summary만 근거로 답하고, 비어 있으면 '기록이 없다'고 말한다. "
+    "조회 결과의 rows와 schedule_summary만 근거로 답한다. 사용자가 묻지 않은 사람의 일정은 언급하지 않는다.\n"
     "여러 사람의 최종 회의 시간을 확정하는 것은 아직 이 단계의 일이 아니다. "
     "겹치지 않는 시간대를 근거와 함께 제안하되 확정된 것처럼 단정하지 않는다."
 )
