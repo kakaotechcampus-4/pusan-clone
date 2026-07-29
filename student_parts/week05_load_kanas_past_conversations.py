@@ -11,6 +11,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
+    PERSONAL_SHARED_MEMBER_NAME,
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
@@ -292,29 +293,38 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    external_member_name = normalize_external_member_names(member_names)
-    external_schedule_date = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
-    external_dict = {
-        "member_names": external_member_name,
-        "date_from": external_schedule_date[0],
-        "date_to": external_schedule_date[1]
+    normalized_member_names = normalize_external_member_names(member_names)
+    normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
+        member_names, date_from, date_to
+    )
+    external_args = {
+        "member_names": normalized_member_names,
+        "date_from": normalized_date_from,
+        "date_to": normalized_date_to,
     }
 
-    external_schedules = call_mcp_tool_sync(
-        tool_name="extract_schedules_from_history",
-        args=external_dict,
-        db_path=CONFIG.app_db_path
-    )["rows"]
-    # member_name/title/date/start_time/end_time/notes
+    external_result = json.loads(
+        call_mcp_tool_sync(tool_name="extract_schedules_from_history", args=external_args)
+    )
+    external_rows = external_result.get("rows", [])
 
-    my_schedules = _personal_schedules_for_current_scope()
+    my_rows = []
+    for schedule in personal_schedules:
+        structured = _structured_request_from_schedule_row(schedule)
+        my_rows.append({
+            "member_name": PERSONAL_SHARED_MEMBER_NAME,
+            "title": structured.title,
+            "date": structured.date,
+            "start_time": structured.start_time,
+            "end_time": structured.end_time,
+            "notes": None,
+        })
 
-    total_rows = external_schedules + my_schedules
+    total_rows = my_rows + external_rows
 
     return {
         "rows": total_rows,
-        "schedule_summary": external_schedule_summary(total_rows)
+        "schedule_summary": external_schedule_summary(total_rows),
     }
 
 
