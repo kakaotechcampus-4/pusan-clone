@@ -459,8 +459,17 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    args = {
+        "member_name": member_name,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "notes": notes,
+        "source_conversation_id": source_conversation_id,
+        "schedule_id": schedule_id,
+    }
+    return call_mcp_tool_sync("create_shared_schedule", args)
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -470,8 +479,38 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    filters = {
+        "schedule_id": schedule_id,
+        "source_conversation_id": source_conversation_id,
+    }
+    if not schedule_id and not source_conversation_id:
+        # ok=True인 빈 삭제가 조건 없음과 대상 없음의 차이를 숨기지 않도록 외부 호출 전에 차단한다.
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "delete_shared_schedule",
+                "error": "삭제 조건이 없습니다. schedule_id 또는 source_conversation_id가 필요합니다.",
+                "filters": filters,
+                "deleted_count": 0,
+                "deleted": [],
+            }
+        )
+    if schedule_id and source_conversation_id:
+        # 외부 store의 OR 조건이 의도보다 넓은 삭제로 번지지 않도록 식별자를 하나로 제한한다.
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "delete_shared_schedule",
+                "error": (
+                    "삭제 조건은 하나만 지정해야 합니다. "
+                    "schedule_id 또는 source_conversation_id 중 하나만 입력해 주세요."
+                ),
+                "filters": filters,
+                "deleted_count": 0,
+                "deleted": [],
+            }
+        )
+    return call_mcp_tool_sync("delete_shared_schedule", filters)
 
 
 @tool(args_schema=ListSharedSchedulesInput)
