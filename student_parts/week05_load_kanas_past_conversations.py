@@ -298,6 +298,9 @@ def _collect_member_schedules(
         member_names, date_from, date_to
     )
 
+    normalized_from = normalized_from or current_app_date_iso()
+    normalized_to = normalized_to or normalized_from
+
     external_member_names = [
         name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME
     ]
@@ -352,6 +355,7 @@ def _collect_member_schedules(
         "member_names": normalized_members,
         "date_from": normalized_from,
         "date_to": normalized_to,
+        "received": {"date_from": date_from, "date_to": date_to},
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
     }
