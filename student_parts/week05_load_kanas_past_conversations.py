@@ -28,7 +28,6 @@ from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, join_system_pr
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
 from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
 
-
 _WEEK05_AGENT: Any | None = None
 
 
@@ -381,7 +380,9 @@ def load_conversation_messages(conversation_id: str) -> str:
 
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
-def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
+def extract_schedules_from_history(
+    member_names: list[str], date_from: str, date_to: str
+) -> str:
     """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
 
     # 날짜 형식 정리도 외부 store/MCP 경계에서 한 번만 처리하므로 여기서 중복 정규화하지 않는다.
@@ -456,7 +457,9 @@ def list_shared_schedules(
 
 
 @tool(args_schema=CollectMemberSchedulesInput)
-def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
+def collect_member_schedules(
+    member_names: list[str], date_from: str, date_to: str
+) -> str:
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
     result = _collect_member_schedules(
