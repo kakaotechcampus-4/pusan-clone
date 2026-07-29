@@ -297,8 +297,21 @@ def _collect_member_schedules(
     )
 
     outside_schedules = json.loads(outside_schedules)
-    total_schedule = outside_schedules.get("rows", []) + personal_schedules
+    personal = []
 
+    for p in personal_schedules:
+        structured = _structured_request_from_schedule_row(p)
+        personal.append({
+            "member_name": "나",
+            "title": structured.title,
+            "date": structured.date,
+            "start_time": structured.start_time,
+            "end_time": structured.end_time,
+            "notes": None
+        })
+
+    total_schedule = personal + outside_schedules.get("rows", [])
+    
     rows = []
     for schedule in total_schedule:
         rows.append({
