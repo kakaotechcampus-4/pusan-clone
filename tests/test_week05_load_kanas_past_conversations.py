@@ -17,6 +17,8 @@ import json
 import os
 import tempfile
 import unittest
+
+import pydantic
 from pathlib import Path
 
 from fixed.app_store import AppSQLiteStore
@@ -396,11 +398,11 @@ class DeleteSharedScheduleGuardTest(unittest.TestCase):
     """삭제 대상이 없으면 조용히 0건이 아니라 크게 실패해야 한다."""
 
     def test_대상_미지정이면_예외를_던진다(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises(pydantic.ValidationError):
             delete_shared_schedule.invoke({})
 
     def test_빈_문자열도_대상으로_보지_않는다(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises(pydantic.ValidationError):
             delete_shared_schedule.invoke({"schedule_id": "", "source_conversation_id": ""})
 
 

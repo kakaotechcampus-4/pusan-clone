@@ -6,7 +6,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
@@ -32,6 +32,15 @@ from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week
 
 APP_STORE = AppSQLiteStore(CONFIG.app_db_path)
 _WEEK05_AGENT: Any | None = None
+
+# collect_member_schedules 가 한 번에 돌려줄 수 있는 rows 상한입니다.
+# extract_schedules_from_history 에는 limit 인자가 없어(mcp_server/sqlite_mcp_server.py)
+# 범위를 넓게 잡으면 rows 가 그대로 다 옵니다. 실측하면 6명 기준
+#   7일 87건(약 18,000자) / 30일 378건(약 77,000자) / 90일 1,098건(약 224,000자)
+# 로, 넓은 범위는 컨텍스트를 그대로 밀어냅니다.
+# 넘칠 때 잘라내지 않고 실패시키는 이유: 조용히 자르면 바쁜 시간이 사라지고,
+# 그건 "그 시간에 비어 있다"는 정반대 결론으로 이어집니다.
+MAX_COLLECT_MEMBER_SCHEDULE_ROWS = 200
 
 
 # [5주차 수강생 구현 가이드]
@@ -311,6 +320,34 @@ class DeleteSharedScheduleInput(BaseModel):
     schedule_id: str | None = None
     source_conversation_id: str | None = None
 
+    @model_validator(mode="after")
+    def _require_delete_target(self) -> DeleteSharedScheduleInput:
+        """삭제 대상이 비어 있으면 tool 을 부르기 전에 막습니다.
+
+        잘못된 삭제를 막는 가드가 아닙니다. 대상을 안 넘기면 store 가 어차피 아무것도
+        지우지 않습니다(delete_shared_schedules 가 곧바로 [] 를 반환). 막는 것은
+        **0건의 원인을 구분할 수 없다는 점**입니다. 실제로 두 경우의 payload 가 같습니다.
+
+            대상 지정 O, 그런 일정 없음  -> {"ok": true, "deleted_count": 0, "deleted": []}
+            대상 지정 X                  -> {"ok": true, "deleted_count": 0, "deleted": []}
+
+        그래서 모델이 인자를 못 채운 채 호출하면 "삭제할 일정이 없습니다"라고 답하고
+        끝냅니다. 사용자는 일정이 이미 없다고 믿지만 일정은 그대로 남아 있고,
+        모델은 성공(ok=true)으로 봤으니 다시 시도할 이유도 없습니다.
+
+        본문에서 raise 하지 않고 스키마에 두는 이유: 이 하네스의 기본 tool 에러 핸들러는
+        인자 검증 실패만 모델에게 메시지로 돌려주고(ToolInvocationError), 본문에서 난
+        예외는 그대로 재발생시켜 agent 실행 자체를 중단시킵니다. 스키마에 두어야
+        모델이 이유를 읽고 인자를 채워 다시 부를 수 있습니다.
+        """
+
+        if not self.schedule_id and not self.source_conversation_id:
+            raise ValueError(
+                "삭제 대상을 지정해야 합니다: schedule_id 또는 source_conversation_id 중 "
+                "최소 하나가 필요합니다."
+            )
+        return self
+
 
 class ListSharedSchedulesInput(BaseModel):
     """공유 일정 조회 입력입니다."""
@@ -337,6 +374,20 @@ class CollectMemberSchedulesInput(BaseModel):
             "'내 일정이랑 겹치는지', '나도 되는 시간'처럼 사용자가 자기 일정을 언급하면 true다."
         )
     )
+
+    @model_validator(mode="after")
+    def _require_ordered_dates(self) -> CollectMemberSchedulesInput:
+        """날짜 범위가 뒤집혀 있으면 조회 전에 막습니다.
+
+        store 는 뒤집힌 범위에 조용히 빈 rows 를 돌려주는데, 그러면 "일정이 없다"와
+        구분되지 않아 없는 사실을 확정하게 됩니다. 항상 참인 판단이라 코드로 막습니다.
+        스키마에 두는 이유는 DeleteSharedScheduleInput 과 같습니다.
+        """
+
+        start, end = normalize_external_schedule_date_bounds(None, self.date_from, self.date_to)
+        if start and end and start > end:
+            raise ValueError(f"date_from({start})이 date_to({end})보다 뒤입니다.")
+        return self
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
@@ -472,12 +523,11 @@ def _collect_member_schedules(
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
         member_names, date_from, date_to
     )
-    # 범위가 뒤집히면 store 는 조용히 빈 rows 를 준다. "일정이 없다"와 구분되지 않아
-    # 없는 사실을 확정하게 되므로, 항상 참인 판단은 코드에서 먼저 실패시킨다.
+    # 날짜 역전은 CollectMemberSchedulesInput 이 스키마에서 막지만, 이 helper 를 직접
+    # 부르는 경로(테스트, Week 6 재사용)도 있어 여기서 한 번 더 확인한다.
     if normalized_date_from and normalized_date_to and normalized_date_from > normalized_date_to:
         raise ValueError(
-            f"date_from({normalized_date_from})이 date_to({normalized_date_to})보다 뒤입니다. "
-            "조회 범위를 다시 확인하세요."
+            f"date_from({normalized_date_from})이 date_to({normalized_date_to})보다 뒤입니다."
         )
     external_members = _external_member_names_excluding_me(member_names)
 
@@ -501,6 +551,27 @@ def _collect_member_schedules(
         )
         rows.extend(row for row in payload.get("rows", []) if isinstance(row, dict))
 
+    if len(rows) > MAX_COLLECT_MEMBER_SCHEDULE_ROWS:
+        # 조회해 보기 전에는 알 수 없는 조건이라 스키마로 막을 수 없다. 그렇다고 본문에서
+        # raise 하면 agent 실행이 통째로 중단되므로, LLM 이 읽고 다시 부를 수 있도록
+        # 실패를 payload 로 돌려준다. rows/schedule_summary 는 아예 넣지 않는다 —
+        # 빈 배열을 실으면 "일정이 없다"로 오해될 수 있기 때문이다.
+        return {
+            "ok": False,
+            "tool_name": "collect_member_schedules",
+            "error": "too_many_rows",
+            "row_count": len(rows),
+            "max_rows": MAX_COLLECT_MEMBER_SCHEDULE_ROWS,
+            "date_from": normalized_date_from,
+            "date_to": normalized_date_to,
+            "message": (
+                f"조회 결과가 {len(rows)}건으로 한 번에 다루기에 너무 많습니다"
+                f"(상한 {MAX_COLLECT_MEMBER_SCHEDULE_ROWS}건). "
+                "날짜 범위를 좁히거나 멤버 수를 줄여 다시 조회하세요. "
+                "결과를 임의로 잘라내지 않았으므로 이 응답만으로 일정 유무를 판단하면 안 됩니다."
+            ),
+        }
+
     rows.sort(
         key=lambda row: (
             str(row.get("date") or ""),
@@ -519,6 +590,7 @@ def _collect_member_schedules(
         "include_my_schedules": include_my_schedules,
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
+        "row_count": len(rows),
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
     }
@@ -613,14 +685,8 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # 삭제 대상이 비어 있으면 store 는 조용히 []를 반환한다. LLM 에게는 "지웠는데 0건"과
-    # "지울 대상을 못 정했다"가 똑같이 보이므로, 여기서 먼저 크게 실패시킨다.
-    # 삭제는 되돌릴 수 없는 판단이라 프롬프트가 아니라 코드로 막는다.
-    if not schedule_id and not source_conversation_id:
-        raise ValueError(
-            "삭제 대상을 지정해야 합니다: schedule_id 또는 source_conversation_id 중 "
-            "최소 하나가 필요합니다."
-        )
+    # 삭제 대상 미지정은 DeleteSharedScheduleInput 스키마에서 막는다(그래야 모델이
+    # 이유를 읽고 다시 부를 수 있다). 여기부터는 가공 없는 passthrough 다.
     return call_mcp_tool_sync(
         "delete_shared_schedule",
         {"schedule_id": schedule_id, "source_conversation_id": source_conversation_id},
@@ -671,6 +737,7 @@ def collect_member_schedules(
     묻는 것도 이 tool입니다. 상대 일정은 앱에 없으므로 내 일정만 보고 답하면 안 됩니다.
     include_my_schedules=true 면 내 일정이 결과에 포함됩니다.
     다른 사람 일정만 필요하면 extract_schedules_from_history 를 쓰세요.
+    한 번에 200건까지만 모을 수 있으니 회의를 잡을 만한 기간(보통 1~2주)으로 좁혀 부르세요.
     """
 
     payload = _collect_member_schedules(
