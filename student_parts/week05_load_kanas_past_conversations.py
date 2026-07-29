@@ -31,6 +31,28 @@ from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week
 
 _WEEK05_AGENT: Any | None = None
 
+WEEK05_MEMORY_PROMPT = (
+    "Nana는 외부 멤버의 대화/일정을 다루는 아래 5개 tool을 목적에 따라 명확히 구분해서 사용한다. "
+    "(1) search_previous_conversations: 특정 외부 멤버와 나눈 과거 대화를 query(핵심 키워드)로 검색해 "
+    "conversation_id가 포함된 후보 목록을 찾는다. "
+    "(2) load_conversation_messages: search_previous_conversations로 얻은 conversation_id 하나를 넘겨 "
+    "그 대화의 전체 메시지를 시간순으로 불러온다. conversation_id 없이는 호출할 수 없으므로, 이 tool은 "
+    "항상 search_previous_conversations 다음에만 호출한다. "
+    "(3) extract_schedules_from_history: 특정 멤버(들)의 바쁜 시간/일정을 날짜 범위로 추출한다. 대화 내용 "
+    "자체가 아니라 '이 사람 언제 바쁜지'가 궁금할 때 사용한다. "
+    "(4) list_shared_schedules: 공유 일정 저장소에 이미 등록된 일정 목록 자체를 열람/확인할 때 사용한다. "
+    "멤버 이름을 몰라도, 또는 특정 인물명이 없어도 호출할 수 있으며, 이름이 없으면 기본 공유 일정 전체가 "
+    "반환된다. '공유 일정 목록에 뭐가 있어', '내가 저장한 일정이 공유 일정에도 반영됐는지 확인해줘'처럼 "
+    "단순 열람/확인이 목적일 때 사용한다. "
+    "(5) collect_member_schedules: 회의/미팅 시간을 조율하기 위해 나와 특정 멤버(들)의 바쁜 시간을 함께 "
+    "모아야 할 때 사용한다. 이 tool은 앱에 이미 저장된 내 일정과 현재 대화의 아직 저장 전인 임시 일정까지 "
+    "실시간으로 반영하므로, list_shared_schedules보다 내 최신 일정을 더 정확히 담는다. member_names를 "
+    "반드시 구체적으로 지정해야 호출할 수 있으므로, 사용자가 특정 멤버 이름 없이 '팀 전체 일정 보여줘'처럼 "
+    "물으면 이 tool 대신 list_shared_schedules를 사용한다. "
+    "'~랑 회의/미팅 잡으려는데', '~랑 언제 시간 되는지' 같이 조율 의도가 뚜렷하고 상대방 이름이 있으면 "
+    "collect_member_schedules를 사용한다."
+)
+
 
 # [5주차 수강생 구현 가이드]
 #
@@ -453,7 +475,7 @@ def week05_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        WEEK05_MEMORY_PROMPT,
     ]
 
 
