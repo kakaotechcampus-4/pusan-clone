@@ -319,8 +319,92 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    ...
+    normalized_members = normalize_external_member_names(member_names)
+    normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
+        member_names,
+        date_from,
+        date_to,
+    )
+    external_member_names = [
+        member_name
+        for member_name in normalized_members
+        if member_name != PERSONAL_SHARED_MEMBER_NAME
+    ]
+    excluded_member_names = [
+        member_name
+        for member_name in normalized_members
+        if member_name == PERSONAL_SHARED_MEMBER_NAME
+    ]
+
+    personal_rows: list[dict[str, Any]] = []
+    undated_personal_schedules: list[dict[str, Any]] = []
+    for schedule in personal_schedules:
+        structured = _structured_request_from_schedule_row(schedule)
+        source_store = str(schedule.get("source_store") or "app_sqlite")
+        personal_row = {
+            "member_name": PERSONAL_SHARED_MEMBER_NAME,
+            "title": structured.title or "제목 없음",
+            "date": structured.date,
+            "start_time": structured.start_time or "미정",
+            "end_time": structured.end_time or "미정",
+            "notes": MY_SCHEDULE_NOTES.get(source_store, "내 일정"),
+            "schedule_id": schedule.get("schedule_id") or schedule.get("id"),
+            "source_store": source_store,
+        }
+        if not structured.date:
+            undated_personal_schedules.append(personal_row)
+            continue
+        if _within_date_range(
+            structured.date,
+            normalized_date_from,
+            normalized_date_to,
+        ):
+            personal_rows.append(personal_row)
+
+    external_tool_called = bool(external_member_names)
+    external_payload: dict[str, Any] = {"ok": True, "rows": []}
+    if external_tool_called:
+        external_payload = json.loads(
+            call_mcp_tool_sync(
+                "extract_schedules_from_history",
+                {
+                    "member_names": external_member_names,
+                    "date_from": normalized_date_from,
+                    "date_to": normalized_date_to,
+                },
+            )
+        )
+    external_rows = external_payload.get("rows", [])
+
+    rows = [*personal_rows, *external_rows]
+    rows.sort(
+        key=lambda row: (
+            str(row.get("date") or ""),
+            str(row.get("start_time") or ""),
+            str(row.get("member_name") or ""),
+        )
+    )
+    sources = {
+        "app_sqlite": sum(row.get("source_store") == "app_sqlite" for row in personal_rows),
+        "session_memory": sum(row.get("source_store") == "session_memory" for row in personal_rows),
+        "external_mcp": len(external_rows),
+    }
+
+    return {
+        "ok": bool(external_payload.get("ok", True)),
+        "tool_name": "collect_member_schedules",
+        "rows": rows,
+        "schedule_summary": external_schedule_summary(rows),
+        "filters": {
+            "member_names": normalized_members,
+            "date_from": normalized_date_from,
+            "date_to": normalized_date_to,
+            "excluded_member_names": excluded_member_names,
+        },
+        "sources": sources,
+        "external_tool_called": external_tool_called,
+        "undated_personal_schedules": undated_personal_schedules,
+    }
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
@@ -414,8 +498,21 @@ def list_shared_schedules(
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
-    # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
-    ...
+    normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
+        member_names,
+        date_from,
+        date_to,
+    )
+    payload = _collect_member_schedules(
+        member_names=member_names,
+        date_from=normalized_date_from,
+        date_to=normalized_date_to,
+        personal_schedules=_personal_schedules_for_current_scope(
+            date_from=normalized_date_from,
+            date_to=normalized_date_to,
+        ),
+    )
+    return json_payload(payload)
 
 
 def week05_tools() -> list[Any]:
