@@ -503,7 +503,38 @@ def create_shared_schedule(
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
     # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    # store는 date가 없으면 ValueError를 던진다. 어느 필드가 비었는지 붙여 되돌려 준다.
+    if not str(date or "").strip():
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "create_shared_schedule",
+                "error": "공유 일정 등록에는 날짜(date)가 필요합니다.",
+                "field": "date",
+            }
+        )
+
+    # schedule_id를 그대로 넘겨야 같은 id 재등록이 갱신(updated)으로 처리된다.
+    args: dict[str, Any] = {
+        "member_name": member_name,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "notes": notes,
+        "source_conversation_id": source_conversation_id,
+        "schedule_id": schedule_id,
+    }
+    try:
+        return call_mcp_tool_sync("create_shared_schedule", args)
+    except Exception as error:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "create_shared_schedule",
+                "error": f"공유 일정 등록에 실패했습니다: {error}",
+            }
+        )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -514,7 +545,37 @@ def delete_shared_schedule(
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
     # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    # 조건이 둘 다 비면 store는 아무것도 지우지 않고 빈 목록만 돌려준다.
+    # 그대로 통과시키면 "삭제했다"로 읽히므로 무엇으로 지울지 먼저 확인한다.
+    if not str(schedule_id or "").strip() and not str(source_conversation_id or "").strip():
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "delete_shared_schedule",
+                "deleted_count": 0,
+                "deleted": [],
+                "error": "삭제 조건이 없습니다. schedule_id 또는 source_conversation_id를 지정하세요. "
+                "id를 모르면 list_shared_schedules로 먼저 조회하세요.",
+                "fields": ["schedule_id", "source_conversation_id"],
+            }
+        )
+
+    args: dict[str, Any] = {
+        "schedule_id": schedule_id,
+        "source_conversation_id": source_conversation_id,
+    }
+    try:
+        return call_mcp_tool_sync("delete_shared_schedule", args)
+    except Exception as error:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "delete_shared_schedule",
+                "deleted_count": 0,
+                "deleted": [],
+                "error": f"공유 일정 삭제에 실패했습니다: {error}",
+            }
+        )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
