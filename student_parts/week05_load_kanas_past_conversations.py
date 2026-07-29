@@ -310,11 +310,11 @@ def _collect_member_schedules(
             "notes": None
         })
 
-    total_schedule = personal + outside_schedules.get("rows", [])
-    
-    rows = []
-    for schedule in total_schedule:
-        rows.append({
+    outside_schedules = outside_schedules.get("rows", [])
+
+    outsides = []
+    for schedule in outside_schedules:
+        outsides.append({
             "member_name": schedule.get("member_name"),
             "title": schedule.get("title"),
             "date": schedule.get("date"),
@@ -323,10 +323,12 @@ def _collect_member_schedules(
             "notes": schedule.get("notes")
         })
 
+    total_schedule = personal + outsides
+
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
-        "rows": rows,
+        "rows": total_schedule,
         "schedule_summary": external_schedule_summary(total_schedule),
     }
 
