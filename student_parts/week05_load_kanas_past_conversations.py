@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import datetime
 from typing import Any
 
 from langchain.agents import create_agent
@@ -31,6 +33,8 @@ from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week
 
 
 _WEEK05_AGENT: Any | None = None
+DATE_ONLY_FORMAT = "%Y-%m-%d"
+DATE_ONLY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 # [5주차 수강생 구현 가이드]
@@ -211,18 +215,48 @@ def json_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _missing_date_range_fields(date_from: str, date_to: str) -> list[str]:
-    """비어 있는 날짜 범위 인자 이름을 모읍니다.
+def _date_only_text(value: str | None) -> str:
+    """ISO datetime이 와도 store 경계와 같은 방식으로 날짜 부분만 남깁니다."""
 
-    빈 날짜를 store로 넘기면 SQL 필터가 풀려 조용히 0건이 되고, LLM이 그것을
-    "일정이 없다"로 잘못 읽습니다. 그래서 호출 전에 이름을 집어 되돌려 줍니다.
+    return str(value or "").split("T", 1)[0].strip()
+
+
+def _date_range_error(tool_name: str, date_from: str, date_to: str) -> dict[str, Any] | None:
+    """조회 범위로 쓸 수 없는 날짜를 MCP 호출 전에 걸러냅니다.
+
+    빈 값, YYYY-MM-DD가 아닌 값, 뒤집힌 범위는 모두 store SQL에서 조용한 0건이
+    되고 LLM은 그것을 "일정이 없다"로 읽습니다. 그래서 rows 대신 이유를 돌려줍니다.
+    형식 보정은 store 경계 책임이므로 여기서 고쳐 쓰지 않고 되돌려 보냅니다.
     """
 
-    return [
-        field_name
-        for field_name, value in (("date_from", date_from), ("date_to", date_to))
-        if not str(value or "").strip()
-    ]
+    invalid_fields: list[str] = []
+    for field_name, value in (("date_from", date_from), ("date_to", date_to)):
+        date_text = _date_only_text(value)
+        if not DATE_ONLY_RE.fullmatch(date_text):
+            invalid_fields.append(field_name)
+            continue
+        try:
+            datetime.strptime(date_text, DATE_ONLY_FORMAT)
+        except ValueError:
+            invalid_fields.append(field_name)
+    if invalid_fields:
+        return {
+            "ok": False,
+            "tool_name": tool_name,
+            "rows": [],
+            "error": "조회 범위 날짜는 실제로 존재하는 YYYY-MM-DD 값이어야 합니다.",
+            "fields": invalid_fields,
+        }
+
+    if _date_only_text(date_from) > _date_only_text(date_to):
+        return {
+            "ok": False,
+            "tool_name": tool_name,
+            "rows": [],
+            "error": "date_from이 date_to보다 늦습니다. 시작일과 종료일을 바꿔 다시 호출하세요.",
+            "fields": ["date_from", "date_to"],
+        }
+    return None
 
 
 class SearchPreviousConversationsInput(BaseModel):
@@ -336,15 +370,22 @@ def _collect_member_schedules(
             }
         )
 
+    # 내 일정은 위에서 앱 저장소 기준으로 이미 모았으므로 외부 조회 대상에서 "나"를 뺀다.
+    # Week 3+ 저장 경로가 내 일정을 공유 저장소에 "나" 이름으로 복사해 두기 때문에,
+    # 그대로 넘기면 같은 일정이 앱 row와 공유 복사본으로 두 번 잡힌다.
+    external_member_names = [
+        name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME
+    ]
+
     # 외부 멤버 일정은 MCP tool 결과 rows를 가공하지 않고 그대로 쓴다.
     external_rows: list[dict[str, Any]] = []
     external_error: str | None = None
-    if normalized_members:
+    if external_member_names:
         try:
             payload = call_external_tool_payload(
                 "extract_schedules_from_history",
                 {
-                    "member_names": normalized_members,
+                    "member_names": external_member_names,
                     "date_from": normalized_date_from,
                     "date_to": normalized_date_to,
                 },
@@ -367,6 +408,9 @@ def _collect_member_schedules(
         "ok": external_error is None,
         "tool_name": "collect_member_schedules",
         "member_names": normalized_members,
+        # 내 일정을 앱 저장소에서 읽었다는 사실을 payload에도 남겨 LLM이 누락으로 읽지 않게 한다.
+        "external_member_names": external_member_names,
+        "personal_schedule_source": "app_store",
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
         "rows": rows,
@@ -457,18 +501,10 @@ def extract_schedules_from_history(member_names: list[str], date_from: str, date
     """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
 
     # TODO: call_mcp_tool_sync("extract_schedules_from_history", args)를 호출해 외부 멤버 busy-time rows를 반환하세요.
-    # 날짜가 비면 store SQL이 조용히 0건을 돌려주므로, 빈 범위는 미리 걸러 이유를 알려준다.
-    missing_fields = _missing_date_range_fields(date_from, date_to)
-    if missing_fields:
-        return json_payload(
-            {
-                "ok": False,
-                "tool_name": "extract_schedules_from_history",
-                "rows": [],
-                "error": "외부 일정을 조회할 날짜 범위(date_from, date_to)가 필요합니다.",
-                "fields": missing_fields,
-            }
-        )
+    # 빈 값, 잘못된 형식, 뒤집힌 범위는 store SQL에서 조용한 0건이 되므로 미리 걸러낸다.
+    date_error = _date_range_error("extract_schedules_from_history", date_from, date_to)
+    if date_error is not None:
+        return json_payload(date_error)
 
     # 멤버 이름 정규화와 날짜 형식 정리는 외부 store/MCP 경계에서 한 번만 처리한다.
     args: dict[str, Any] = {
@@ -616,18 +652,10 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
     # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
-    # 날짜 범위가 비면 내 일정 필터와 외부 SQL 필터가 동시에 풀려 결과를 신뢰할 수 없다.
-    missing_fields = _missing_date_range_fields(date_from, date_to)
-    if missing_fields:
-        return json_payload(
-            {
-                "ok": False,
-                "tool_name": "collect_member_schedules",
-                "rows": [],
-                "error": "일정을 모을 날짜 범위(date_from, date_to)가 필요합니다.",
-                "fields": missing_fields,
-            }
-        )
+    # 날짜 범위가 잘못되면 내 일정 필터와 외부 SQL 필터가 동시에 풀려 결과를 신뢰할 수 없다.
+    date_error = _date_range_error("collect_member_schedules", date_from, date_to)
+    if date_error is not None:
+        return json_payload(date_error)
 
     # helper가 던진 앱 SQLite 예외를 tool 경계인 여기서 처음 잡는다.
     try:
@@ -696,10 +724,13 @@ def week05_prompt_parts() -> list[str]:
 - 대화 원문을 그대로 보여 달라고 하면 search_previous_conversations로 conversation_id를 먼저 찾고, 이어서 load_conversation_messages를 호출해 메시지 원문을 가져옵니다.
 - 내 일정과 비교할 필요 없이 팀원의 일정만 알려 달라고 하면 extract_schedules_from_history를 사용합니다.
 - 공유 일정 저장소에 등록된 row를 확인할 때는 list_shared_schedules를 사용합니다. 이때 "내가 공유한/올린 일정"을 물으면 반드시 member_names=["나"]로 호출합니다. 필터 없이 호출하면 팀원들의 실습 일정만 돌아와 내 일정이 하나도 없는 것처럼 보입니다.
-- member_names에는 사용자가 말한 사람 이름을 그대로 넣습니다. 빈 배열은 "대상 없음"이라 결과가 비므로 절대 빈 배열로 호출하지 말고, 사용자가 사람을 전혀 언급하지 않은 경우에만 누구의 일정인지 되묻습니다.
-- date_from과 date_to는 항상 오늘({current_app_date_iso()}) 기준으로 계산한 YYYY-MM-DD 값을 채웁니다. 기간이 불분명하면 최소 한 주 범위로 넓혀 조회합니다.
+- collect_member_schedules와 extract_schedules_from_history의 member_names에는 팀원 이름만 넣습니다. 내 일정은 collect_member_schedules가 앱 저장소에서 자동으로 함께 모으므로 "나", "내", 사용자 본인을 member_names에 넣지 마세요. "나랑 철수 일정" 같은 요청도 member_names=["철수"] 한 번으로 호출하면 내 일정까지 같이 돌아옵니다.
+- 단 list_shared_schedules는 예외로, 내가 공유 저장소에 올린 일정을 확인할 때 member_names=["나"]를 씁니다. 이때 사용자가 기간을 말하지 않았으면 date_from과 date_to는 채우지 말고 비워 둡니다. 오늘 날짜만 넣으면 그날 일정만 조회돼 등록된 일정이 없는 것처럼 보입니다.
+- member_names를 빈 배열로 호출하면 "대상 없음"이라 결과가 비므로 절대 빈 배열로 호출하지 말고, 사용자가 팀원을 전혀 언급하지 않은 경우에만 누구의 일정인지 되묻습니다.
+- collect_member_schedules와 extract_schedules_from_history의 date_from, date_to는 오늘({current_app_date_iso()}) 기준으로 계산한 YYYY-MM-DD 값으로 반드시 채웁니다. "2026-7-7"처럼 0을 뺀 형식이나 "7월 7일" 같은 자연어를 넣으면 도구가 거부합니다. 기간이 불분명하면 최소 한 주 범위로 넓혀 조회하고, 시작일이 종료일보다 늦지 않게 넣습니다.
 - rows가 0건이면 "일정이 없다"고 단정하기 전에 날짜 범위를 넓혀 한 번 더 조회합니다. ok가 false면 조회에 실패했다는 사실을 사용자에게 알리고, rows에 없는 일정이나 시간을 만들어내지 마세요.
-- 이번 주차는 바쁜 시간을 근거로 모아 보여주는 단계입니다. 수집한 rows에서 비어 있는 시간대를 설명하고, 회의 시간 확정과 저장은 사용자가 명시적으로 요청할 때만 진행합니다.
+- 이번 주차는 내 일정과 팀원의 바쁜 시간을 모아 정리해 전달하는 단계입니다. rows와 schedule_summary를 근거로 누가 언제 바쁜지 날짜·시간과 함께 알려줍니다.
+- 여러 사람의 공통 가능 시간을 직접 계산해 특정 시간을 추천하거나 회의 시간을 확정하지는 마세요. 그 판단은 다음 단계의 몫이므로, 사용자가 시간을 정해 달라고 하면 수집한 바쁜 시간을 근거로 보여주고 사용자가 고르도록 안내합니다.
 """.strip(),
     ]
 
