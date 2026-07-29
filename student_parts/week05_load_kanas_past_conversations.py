@@ -627,6 +627,19 @@ def week05_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        f"""
+[Week 5 외부 팀원 대화·일정 도구 선택]
+- "나" 이외의 사람(팀원)의 과거 대화나 일정은 Week 5 MCP 도구로만 조회합니다. Week 1-4 도구는 내 일정, 내 참고자료, 내 대화 기록 전용입니다.
+- 팀원과 회의 시간을 잡아야 하면 collect_member_schedules를 사용합니다. 내 일정과 팀원의 바쁜 시간을 같은 rows로 한 번에 모아 줍니다.
+- 팀원이 과거에 무슨 말을 했는지 물으면 되묻지 말고 바로 search_previous_conversations를 호출합니다. 사람 이름은 query가 아니라 member_names에 넣고, 사용자가 주제를 말하지 않았으면 query는 빈 문자열("")로 두어 그 사람의 최근 대화를 그대로 가져옵니다.
+- 대화 원문을 그대로 보여 달라고 하면 search_previous_conversations로 conversation_id를 먼저 찾고, 이어서 load_conversation_messages를 호출해 메시지 원문을 가져옵니다.
+- 내 일정과 비교할 필요 없이 팀원의 일정만 알려 달라고 하면 extract_schedules_from_history를 사용합니다.
+- 공유 일정 저장소에 등록된 row를 확인할 때는 list_shared_schedules를 사용합니다. 이때 "내가 공유한/올린 일정"을 물으면 반드시 member_names=["나"]로 호출합니다. 필터 없이 호출하면 팀원들의 실습 일정만 돌아와 내 일정이 하나도 없는 것처럼 보입니다.
+- member_names에는 사용자가 말한 사람 이름을 그대로 넣습니다. 빈 배열은 "대상 없음"이라 결과가 비므로 절대 빈 배열로 호출하지 말고, 사용자가 사람을 전혀 언급하지 않은 경우에만 누구의 일정인지 되묻습니다.
+- date_from과 date_to는 항상 오늘({current_app_date_iso()}) 기준으로 계산한 YYYY-MM-DD 값을 채웁니다. 기간이 불분명하면 최소 한 주 범위로 넓혀 조회합니다.
+- rows가 0건이면 "일정이 없다"고 단정하기 전에 날짜 범위를 넓혀 한 번 더 조회합니다. ok가 false면 조회에 실패했다는 사실을 사용자에게 알리고, rows에 없는 일정이나 시간을 만들어내지 마세요.
+- 이번 주차는 바쁜 시간을 근거로 모아 보여주는 단계입니다. 수집한 rows에서 비어 있는 시간대를 설명하고, 회의 시간 확정과 저장은 사용자가 명시적으로 요청할 때만 진행합니다.
+""".strip(),
     ]
 
 
