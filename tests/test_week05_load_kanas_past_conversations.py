@@ -301,5 +301,181 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
         self.assertEqual(week01.PERSONAL_SCHEDULES, original_copy)
 
 
+class CollectMemberSchedulesHelperTest(Week05IsolatedTestCase):
+    def test_normalizes_filters_excludes_me_and_builds_eight_key_payload(self) -> None:
+        external_rows = [
+            {
+                "member_name": "철수",
+                "title": "외부 일정",
+                "date": "2026-07-07",
+                "start_time": "09:00",
+                "end_time": "10:00",
+                "notes": "외부 대화",
+                "source_conversation_id": "ext-cs",
+            }
+        ]
+        personal_schedules = [
+            {
+                "schedule_id": "stored-1",
+                "title": "시간 미정 일정",
+                "date": "2026-07-07",
+                "start_time": None,
+                "end_time": None,
+                "attendees": ["나"],
+                "source_store": "app_sqlite",
+            },
+            {
+                "id": "memory-1",
+                "title": "현재 대화 일정",
+                "date": "2026-07-08",
+                "start_time": "11:00",
+                "end_time": "12:00",
+                "members": ["나"],
+                "source_store": "session_memory",
+            },
+            {
+                "id": "undated-1",
+                "title": "날짜 없는 일정",
+                "date": None,
+                "start_time": "13:00",
+                "source_store": "session_memory",
+            },
+        ]
+        mcp_result = json.dumps(
+            {
+                "ok": True,
+                "tool_name": "extract_schedules_from_history",
+                "rows": external_rows,
+                "schedule_summary": "외부 요약",
+            },
+            ensure_ascii=False,
+        )
+
+        with patch.object(week05, "call_mcp_tool_sync", return_value=mcp_result) as mocked:
+            payload = week05._collect_member_schedules(
+                member_names=[" 나 ", "철수"],
+                date_from="2026-07-07T00:00:00",
+                date_to="2026-07-08T23:59:59",
+                personal_schedules=personal_schedules,
+            )
+
+        mocked.assert_called_once_with(
+            "extract_schedules_from_history",
+            {
+                "member_names": ["철수"],
+                "date_from": "2026-07-07",
+                "date_to": "2026-07-08",
+            },
+        )
+        self.assertEqual(
+            set(payload),
+            {
+                "ok",
+                "tool_name",
+                "rows",
+                "schedule_summary",
+                "filters",
+                "sources",
+                "external_tool_called",
+                "undated_personal_schedules",
+            },
+        )
+        self.assertEqual(payload["filters"]["member_names"], ["나", "철수"])
+        self.assertEqual(payload["filters"]["excluded_member_names"], ["나"])
+        self.assertTrue(payload["external_tool_called"])
+
+        rows = payload["rows"]
+        self.assertEqual(
+            [(row["date"], row["start_time"], row["member_name"]) for row in rows],
+            sorted(
+                (row["date"], row["start_time"], row["member_name"])
+                for row in rows
+            ),
+        )
+        stored_row = next(row for row in rows if row.get("schedule_id") == "stored-1")
+        self.assertEqual(stored_row["start_time"], "미정")
+        self.assertEqual(stored_row["end_time"], "미정")
+        self.assertEqual(stored_row["notes"], week05.MY_SCHEDULE_NOTES["app_sqlite"])
+        self.assertNotIn("stored-1", stored_row["notes"])
+        self.assertEqual(
+            payload["undated_personal_schedules"][0]["schedule_id"],
+            "undated-1",
+        )
+        self.assertNotIn(
+            "undated-1",
+            [row.get("schedule_id") for row in rows],
+        )
+        self.assertEqual(payload["schedule_summary"], external_schedule_summary(rows))
+        self.assertEqual(
+            payload["sources"],
+            {"app_sqlite": 1, "session_memory": 1, "external_mcp": 1},
+        )
+
+    def test_structured_adapter_reads_attendees_and_members(self) -> None:
+        attendees = week05._structured_request_from_schedule_row(
+            {"title": "A", "attendees": ["철수"]}
+        )
+        members = week05._structured_request_from_schedule_row(
+            {"title": "B", "members": ["영희"]}
+        )
+
+        self.assertEqual(attendees.members, ["철수"])
+        self.assertEqual(members.members, ["영희"])
+
+    def test_only_normalized_me_skips_external_call(self) -> None:
+        payload = week05._collect_member_schedules(
+            member_names=[" 나 "],
+            date_from="2026-07-07",
+            date_to="2026-07-17",
+            personal_schedules=[
+                {
+                    "id": "personal-only",
+                    "title": "내 일정",
+                    "date": "2026-07-09",
+                    "start_time": "10:00",
+                    "end_time": "11:00",
+                    "source_store": "session_memory",
+                }
+            ],
+        )
+
+        self.mcp_mock.assert_not_called()
+        self.assertFalse(payload["external_tool_called"])
+        self.assertEqual(payload["filters"]["excluded_member_names"], ["나"])
+        self.assertEqual(len(payload["rows"]), 1)
+        self.assertEqual(payload["rows"][0]["schedule_id"], "personal-only")
+        self.assertEqual(payload["rows"][0]["member_name"], "나")
+
+    def test_three_external_members_use_one_mcp_call(self) -> None:
+        mcp_result = json.dumps({"ok": True, "rows": []}, ensure_ascii=False)
+        with patch.object(week05, "call_mcp_tool_sync", return_value=mcp_result) as mocked:
+            week05._collect_member_schedules(
+                member_names=["철수", "영희", "민준"],
+                date_from="2026-07-07",
+                date_to="2026-07-17",
+                personal_schedules=[],
+            )
+
+        mocked.assert_called_once()
+        self.assertEqual(
+            mocked.call_args.args[1]["member_names"],
+            ["철수", "영희", "민준"],
+        )
+
+    def test_mcp_failure_propagates(self) -> None:
+        with patch.object(
+            week05,
+            "call_mcp_tool_sync",
+            side_effect=RuntimeError("mcp unavailable"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "mcp unavailable"):
+                week05._collect_member_schedules(
+                    member_names=["철수"],
+                    date_from="2026-07-07",
+                    date_to="2026-07-17",
+                    personal_schedules=[],
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
