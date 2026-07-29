@@ -221,3 +221,42 @@ def _collect_member_schedules(
     }
 
 
+@tool(args_schema=SearchPreviousConversationsInput)
+def search_previous_conversations(
+    query: str,
+    member_names: list[str] | None = None,
+    limit: int = 5,
+) -> str:
+    """외부 SQLite/MCP 이전 대화를 짧은 검색어와 선택적 멤버 필터로 검색합니다."""
+
+    return call_mcp_tool_sync(
+        "search_previous_conversations",
+        {"query": query, "member_names": member_names, "limit": limit},
+    )
+
+
+@tool(args_schema=LoadConversationMessagesInput)
+def load_conversation_messages(conversation_id: str) -> str:
+    """검색으로 선택한 외부 대화의 메시지를 시간순으로 불러옵니다."""
+
+    payload = call_external_tool_payload(
+        "load_conversation_messages",
+        {"conversation_id": conversation_id},
+    )
+    return json_payload(payload)
+
+
+@tool(args_schema=ExtractSchedulesFromHistoryInput)
+def extract_schedules_from_history(
+    member_names: list[str],
+    date_from: str,
+    date_to: str,
+) -> str:
+    """외부 멤버의 이전 대화에서 지정 기간의 busy-time row를 추출합니다."""
+
+    return call_mcp_tool_sync(
+        "extract_schedules_from_history",
+        {"member_names": member_names, "date_from": date_from, "date_to": date_to},
+    )
+
+
