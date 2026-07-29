@@ -176,6 +176,44 @@ _WEEK05_AGENT: Any | None = None
 #
 #   - [공통] build_week05_agent() / build_week_agent()
 #     Week 1~5 tool을 가진 agent를 한 번만 만들고 재사용합니다.
+#
+#
+# [구현 메모] 위 가이드와 실제 구현이 다른 지점과 그 이유
+#
+#   가이드에 없는 helper 3개를 추가했습니다. 셋 다 순수 함수이고, MCP/저장소 접근이 있는
+#   함수에서 '판단'만 떼어낸 것입니다. mocking 없이 단위 테스트로 고정하기 위해서입니다.
+#     - _external_member_names_excluding_me(...)
+#         외부 조회 대상에서 "나"를 뺍니다. 앱 저장 경로가 외부 공유 저장소에 "나" 복사본을
+#         자동 생성하므로(fixed/app_store.py -> sync_personal_schedule_to_shared),
+#         빼지 않으면 개인 일정을 처음 저장하는 순간부터 같은 일정이 rows 에 두 번 들어갑니다.
+#     - _personal_schedule_rows(...)
+#         내 일정을 외부 멤버 row 와 같은 구조로 성형하고 날짜 범위로 거릅니다.
+#     - _is_within_date_range(...)
+#         날짜 범위 판정. 값을 고치는 정규화가 아니라 포함 여부만 정합니다(책임 경계 유지).
+#
+#   시그니처를 바꾼 곳 2개
+#     - _personal_schedules_for_current_scope(app_store=None, limit=200)
+#         인자는 모두 선택이라 가이드의 무인자 호출 그대로 씁니다. app_store 는 테스트에서
+#         임시 SQLite 를 넣기 위한 것이고, limit 은 list_schedules 기본값 12(최근 목록용)가
+#         조율 후보 전량 수집에는 모자라서 명시했습니다.
+#     - collect_member_schedules(..., include_my_schedules)
+#         내 일정을 넣을지를 member_names 에 "나"가 있는지로 유추하지 않고 인자로 받습니다.
+#         실측에서 모델은 조율 요청에도 member_names 에 "나"를 절반만 넣었고
+#         ('내 일정이랑 겹치는지 봐줘'에도 빠뜨림), 반대로 남의 일정만 물었을 때
+#         묻지 않은 내 일정이 답변에 새어 나왔습니다.
+#
+#   가이드의 "결과를 그대로 전달"에서 벗어난 곳 1개
+#     - delete_shared_schedule: schedule_id 와 source_conversation_id 가 둘 다 비면
+#       MCP 를 부르기 전에 ValueError 를 냅니다. store 는 이때 조용히 0건을 돌려주는데,
+#       LLM 에게는 "지웠는데 0건"과 "지울 대상을 못 정했다"가 구분되지 않기 때문입니다.
+#       삭제는 되돌릴 수 없어 프롬프트가 아니라 코드에서 막았습니다. 나머지 4개 wrapper와
+#       create_shared_schedule 은 가공 없는 passthrough 입니다.
+#
+#   tool 선택 기준을 system prompt 가 아니라 각 tool 의 description 에 둔 이유
+#     모델이 tool 을 고르는 순간 보는 것은 21개짜리 tool 목록입니다. 판정 기준을
+#     description 으로 옮기고 나서 라우팅 실패가 재현되지 않았고, system prompt 조각도
+#     1572자에서 613자로 줄었습니다. system prompt 에는 tool 하나만 봐서는 알 수 없는 것
+#     — 주차 간 출처 경계, 근거 규범, Week 6 범위 — 만 남겼습니다.
 
 
 call_mcp_tool = call_local_mcp_tool
@@ -597,7 +635,14 @@ def list_shared_schedules(
     source_conversation_id: str | None = None,
     limit: int = 50,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다. 필터가 없으면 기본 공유 일정을 반환합니다."""
+    """공유 일정 저장소에 어떤 row가 등록돼 있는지 확인합니다. 일정 조회가 아니라 저장소 점검용입니다.
+
+    앱에 일정을 저장하면 공유 저장소에도 복사본이 생기는데, 그게 제대로 등록됐는지 볼 때 씁니다.
+    저장소 자체를 확인할 때는 member_names 에 "나"를 포함해 조회합니다.
+    사람의 일정이 궁금한 것뿐이라면 extract_schedules_from_history 나
+    collect_member_schedules 를 쓰세요.
+    필터를 하나도 넘기지 않으면 실습용 기본 공유 일정이 반환됩니다.
+    """
 
     # 필터를 하나도 안 넘기면 store 가 실습용 기본 공유 일정을 반환한다. 그 판단은 store 몫이라
     # wrapper 에서 기본값을 지어내지 않고 받은 값을 그대로 넘긴다.
@@ -673,8 +718,9 @@ WEEK05_EXTERNAL_MEMBER_PROMPT = (
     "'다른 사람'이 주어일 때만 5주차 외부 tool을 쓴다.\n"
     "지난 대화는 search_previous_conversations로 찾고, 전문이 필요할 때만 "
     "그 conversation_id로 load_conversation_messages를 부른다.\n"
-    "날짜 범위는 YYYY-MM-DD로 넘기고, 사용자가 범위를 말하지 않았으면 "
-    "임의로 넓히지 말고 어느 기간을 볼지 되묻는다.\n"
+    "일정 조회의 날짜 범위는 YYYY-MM-DD로 넘긴다. 사용자가 범위를 말하지 않았으면 "
+    "임의로 넓히지 말고 어느 기간을 볼지 되묻는다. "
+    "다만 저장소 점검용 list_shared_schedules 는 필터 없이 불러도 된다.\n"
     "조회 결과의 rows와 schedule_summary만 근거로 답한다. 사용자가 묻지 않은 사람의 일정은 언급하지 않는다.\n"
     "여러 사람의 최종 회의 시간을 확정하는 것은 아직 이 단계의 일이 아니다. "
     "겹치지 않는 시간대를 근거와 함께 제안하되 확정된 것처럼 단정하지 않는다."
