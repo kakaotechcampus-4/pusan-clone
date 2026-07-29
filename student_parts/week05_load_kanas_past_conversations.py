@@ -480,8 +480,21 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    # schedule_id 는 멱등 키(같은 id 면 갱신), source_conversation_id 는 앱 원본으로 되돌아가는
+    # 역참조 키다. 둘 다 그대로 넘겨야 나중에 수정/삭제 동기화가 가능하다.
+    return call_mcp_tool_sync(
+        "create_shared_schedule",
+        {
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -491,8 +504,18 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    # 삭제 대상이 비어 있으면 store 는 조용히 []를 반환한다. LLM 에게는 "지웠는데 0건"과
+    # "지울 대상을 못 정했다"가 똑같이 보이므로, 여기서 먼저 크게 실패시킨다.
+    # 삭제는 되돌릴 수 없는 판단이라 프롬프트가 아니라 코드로 막는다.
+    if not schedule_id and not source_conversation_id:
+        raise ValueError(
+            "삭제 대상을 지정해야 합니다: schedule_id 또는 source_conversation_id 중 "
+            "최소 하나가 필요합니다."
+        )
+    return call_mcp_tool_sync(
+        "delete_shared_schedule",
+        {"schedule_id": schedule_id, "source_conversation_id": source_conversation_id},
+    )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
