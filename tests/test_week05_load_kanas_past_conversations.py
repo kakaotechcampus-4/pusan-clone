@@ -226,11 +226,13 @@ class CollectMemberSchedulesTest(unittest.TestCase):
     MY = [{"schedule_id": "s1", "title": "팀 회의", "date": "2026-07-15", "start_time": "15:00"}]
 
     def _collect(self, **kwargs):
+        # include_my_schedules 는 기본값이 없다. 호출자가 매번 의도를 밝혀야 한다.
         base = dict(
             member_names=[],
             date_from="2026-07-14",
             date_to="2026-07-18",
             personal_schedules=self.MY,
+            include_my_schedules=True,
         )
         return _collect_member_schedules(**{**base, **kwargs})
 

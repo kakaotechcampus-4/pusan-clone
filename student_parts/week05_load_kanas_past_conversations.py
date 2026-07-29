@@ -178,42 +178,18 @@ _WEEK05_AGENT: Any | None = None
 #     Week 1~5 tool을 가진 agent를 한 번만 만들고 재사용합니다.
 #
 #
-# [구현 메모] 위 가이드와 실제 구현이 다른 지점과 그 이유
-#
-#   가이드에 없는 helper 3개를 추가했습니다. 셋 다 순수 함수이고, MCP/저장소 접근이 있는
-#   함수에서 '판단'만 떼어낸 것입니다. mocking 없이 단위 테스트로 고정하기 위해서입니다.
-#     - _external_member_names_excluding_me(...)
-#         외부 조회 대상에서 "나"를 뺍니다. 앱 저장 경로가 외부 공유 저장소에 "나" 복사본을
-#         자동 생성하므로(fixed/app_store.py -> sync_personal_schedule_to_shared),
-#         빼지 않으면 개인 일정을 처음 저장하는 순간부터 같은 일정이 rows 에 두 번 들어갑니다.
-#     - _personal_schedule_rows(...)
-#         내 일정을 외부 멤버 row 와 같은 구조로 성형하고 날짜 범위로 거릅니다.
-#     - _is_within_date_range(...)
-#         날짜 범위 판정. 값을 고치는 정규화가 아니라 포함 여부만 정합니다(책임 경계 유지).
-#
-#   시그니처를 바꾼 곳 2개
-#     - _personal_schedules_for_current_scope(app_store=None, limit=200)
-#         인자는 모두 선택이라 가이드의 무인자 호출 그대로 씁니다. app_store 는 테스트에서
-#         임시 SQLite 를 넣기 위한 것이고, limit 은 list_schedules 기본값 12(최근 목록용)가
-#         조율 후보 전량 수집에는 모자라서 명시했습니다.
-#     - collect_member_schedules(..., include_my_schedules)
-#         내 일정을 넣을지를 member_names 에 "나"가 있는지로 유추하지 않고 인자로 받습니다.
-#         실측에서 모델은 조율 요청에도 member_names 에 "나"를 절반만 넣었고
-#         ('내 일정이랑 겹치는지 봐줘'에도 빠뜨림), 반대로 남의 일정만 물었을 때
-#         묻지 않은 내 일정이 답변에 새어 나왔습니다.
-#
-#   가이드의 "결과를 그대로 전달"에서 벗어난 곳 1개
-#     - delete_shared_schedule: schedule_id 와 source_conversation_id 가 둘 다 비면
-#       MCP 를 부르기 전에 ValueError 를 냅니다. store 는 이때 조용히 0건을 돌려주는데,
-#       LLM 에게는 "지웠는데 0건"과 "지울 대상을 못 정했다"가 구분되지 않기 때문입니다.
-#       삭제는 되돌릴 수 없어 프롬프트가 아니라 코드에서 막았습니다. 나머지 4개 wrapper와
-#       create_shared_schedule 은 가공 없는 passthrough 입니다.
-#
-#   tool 선택 기준을 system prompt 가 아니라 각 tool 의 description 에 둔 이유
-#     모델이 tool 을 고르는 순간 보는 것은 21개짜리 tool 목록입니다. 판정 기준을
-#     description 으로 옮기고 나서 라우팅 실패가 재현되지 않았고, system prompt 조각도
-#     1572자에서 613자로 줄었습니다. system prompt 에는 tool 하나만 봐서는 알 수 없는 것
-#     — 주차 간 출처 경계, 근거 규범, Week 6 범위 — 만 남겼습니다.
+# [구현 메모] 위 가이드와 다른 점 (경위와 근거는 PR 본문에)
+#   - 가이드에 없는 순수 helper 3개를 추가했습니다. MCP/저장소 접근이 있는 함수에서 '판단'만
+#     떼어내 mocking 없이 테스트하기 위해서입니다.
+#       _external_member_names_excluding_me / _personal_schedule_rows / _is_within_date_range
+#   - _personal_schedules_for_current_scope(app_store=None, limit=200): 인자는 모두 선택이라
+#     가이드의 무인자 호출 그대로 씁니다.
+#   - collect_member_schedules(..., include_my_schedules, limit): 내 일정을 넣을지를
+#     member_names 에 "나"가 있는지로 유추하지 않고 인자로 받습니다.
+#   - delete_shared_schedule: 삭제 대상이 비면 스키마에서 막습니다. 나머지 wrapper 는
+#     가공 없는 passthrough 입니다.
+#   - tool 선택 기준과 인자 채우는 규칙은 system prompt 가 아니라 각 tool 의 description 과
+#     입력 스키마 필드에 둡니다.
 
 
 call_mcp_tool = call_local_mcp_tool
@@ -288,9 +264,8 @@ class ExtractSchedulesFromHistoryInput(BaseModel):
     """외부 멤버 일정 추출 입력입니다."""
 
     member_names: list[str] = Field(description="조회할 사람 이름 목록.")
-    # 날짜가 필수라서, 사용자가 기간을 말하지 않았을 때 모델이 값을 지어내기 쉽다.
-    # 실제로 '철수 일정 알려줘'에 오늘 하루로 좁혀 조회하고 "일정이 없다"고 답한 적이 있다.
-    # 인자를 어떻게 채울지는 이 필드 설명이 가장 가까운 자리다.
+    # 날짜가 필수라서 기간을 안 말했을 때 모델이 값을 지어내기 쉽다.
+    # 인자 채우는 규칙은 system prompt 보다 이 필드 설명이 가까워서 여기에 둔다.
     date_from: str = Field(
         description=(
             "조회 시작일(YYYY-MM-DD). 사용자가 기간을 말하지 않았으면 오늘이나 임의의 날짜로 "
@@ -325,21 +300,12 @@ class DeleteSharedScheduleInput(BaseModel):
     def _require_delete_target(self) -> DeleteSharedScheduleInput:
         """삭제 대상이 비어 있으면 tool 을 부르기 전에 막습니다.
 
-        잘못된 삭제를 막는 가드가 아닙니다. 대상을 안 넘기면 store 가 어차피 아무것도
-        지우지 않습니다(delete_shared_schedules 가 곧바로 [] 를 반환). 막는 것은
-        **0건의 원인을 구분할 수 없다는 점**입니다. 실제로 두 경우의 payload 가 같습니다.
+        잘못된 삭제를 막는 가드가 아닙니다(대상이 없으면 store 가 어차피 아무것도 지우지 않음).
+        막는 것은 "지울 대상을 못 정했다"와 "지웠는데 0건"의 payload 가 같아서
+        모델이 전자를 후자로 답하고 끝내 버리는 것입니다.
 
-            대상 지정 O, 그런 일정 없음  -> {"ok": true, "deleted_count": 0, "deleted": []}
-            대상 지정 X                  -> {"ok": true, "deleted_count": 0, "deleted": []}
-
-        그래서 모델이 인자를 못 채운 채 호출하면 "삭제할 일정이 없습니다"라고 답하고
-        끝냅니다. 사용자는 일정이 이미 없다고 믿지만 일정은 그대로 남아 있고,
-        모델은 성공(ok=true)으로 봤으니 다시 시도할 이유도 없습니다.
-
-        본문에서 raise 하지 않고 스키마에 두는 이유: 이 하네스의 기본 tool 에러 핸들러는
-        인자 검증 실패만 모델에게 메시지로 돌려주고(ToolInvocationError), 본문에서 난
-        예외는 그대로 재발생시켜 agent 실행 자체를 중단시킵니다. 스키마에 두어야
-        모델이 이유를 읽고 인자를 채워 다시 부를 수 있습니다.
+        본문 raise 가 아니라 스키마에 두는 이유: 이 하네스는 인자 검증 실패만 모델에게
+        메시지로 돌려주고, 본문 예외는 agent 실행 자체를 중단시킵니다.
         """
 
         if not self.schedule_id and not self.source_conversation_id:
@@ -415,19 +381,12 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
 
 
 def _external_member_names_excluding_me(member_names: list[str]) -> list[str]:
-    """외부 MCP 조회 대상 멤버 이름만 남깁니다. "나"는 제외합니다.
+    """외부 MCP 조회 대상 멤버 이름만 남깁니다. "나"는 제외합니다. (순수 함수)
 
-    내 일정의 진실은 앱 SQLite 다. 외부 공유 저장소의 "나" row 는 앱 저장 경로
-    (fixed/app_store.py 의 sync_personal_schedule_to_shared 호출)가 자동으로 만드는
-    **파생 복사본**이라, 원본과 같이 읽으면 같은 일정이 rows 에 두 번 들어간다.
-    개인 일정을 처음 저장하는 순간부터 재현되는 문제다.
-
-    합친 뒤 값으로 걸러내는 방법은 안정적이지 않다. 동기화가 값을 변환하기 때문이다.
-      - fixed/external_mcp.py: `end_time or "미정"`, `title or "제목 없음"`, notes 덮어쓰기
-      - fixed/external_people_store.py: create_shared_schedule 이 title 의 괄호를 제거
-    그래서 값이 아니라 member_name 으로 출처를 고르는 방식으로 코드에서 막는다.
-
-    순수 함수다(부수효과 없음).
+    내 일정의 진실은 앱 SQLite 다. 외부 공유 저장소의 "나" row 는 앱 저장 경로가
+    자동으로 만드는 파생 복사본이라(sync_personal_schedule_to_shared), 원본과 같이 읽으면
+    같은 일정이 rows 에 두 번 들어간다. 동기화가 title/end_time/notes 값을 바꾸므로
+    합친 뒤 값으로 거르는 방법은 안정적이지 않아, member_name 으로 출처를 고른다.
     """
 
     normalized = normalize_external_member_names(member_names)
@@ -442,18 +401,12 @@ def _external_member_names_excluding_me(member_names: list[str]) -> list[str]:
 
 
 def _is_within_date_range(date: str, date_from: str, date_to: str) -> bool:
-    """일정 날짜가 조회 범위 안인지 판정합니다. 판정할 수 없으면 포함시킵니다.
+    """일정 날짜가 조회 범위 안인지 판정합니다. 판정할 수 없으면 포함시킵니다. (순수 함수)
 
-    날짜 비교는 문자열 사전순으로 한다(외부 store 의 SQL 비교와 같은 규칙).
-    이 규칙은 세 값이 모두 YYYY-MM-DD 로 zero-pad 돼 있을 때만 성립한다.
-    앱 DB 는 저장 시 날짜 형식을 보정하지 않아서 "2026-7-5" 같은 값이 들어올 수 있고,
-    그러면 "2026-7-5" > "2026-07-31" 이 되어 **범위 안 일정이 조용히 빠진다.**
-
-    busy-time 조회에서 일정이 빠지는 건 "그 시간에 비어 있다"는 잘못된 결론으로
-    이어지므로, 형식을 신뢰할 수 없을 때는 버리지 않고 포함시키는 쪽으로 실패한다.
-    (형식 보정 자체는 저장 계층의 몫이라 여기서 값을 고치지는 않는다.)
-
-    순수 함수다.
+    문자열 사전순 비교는 세 값이 모두 zero-pad 된 YYYY-MM-DD 일 때만 성립한다.
+    앱 DB 는 날짜 형식을 보정하지 않아 "2026-7-5" 같은 값이 들어올 수 있고,
+    그러면 범위 안 일정이 조용히 빠진다. busy-time 이 빠지면 "그 시간에 비어 있다"는
+    잘못된 결론으로 이어지므로, 형식을 못 믿을 때는 버리지 않고 포함하는 쪽으로 실패한다.
     """
 
     def parseable(value: str) -> bool:
@@ -513,7 +466,7 @@ def _collect_member_schedules(
     date_from: str,
     date_to: str,
     personal_schedules: list[dict[str, Any]],
-    include_my_schedules: bool = True,
+    include_my_schedules: bool,
     limit: int = 50,
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다.
@@ -523,12 +476,9 @@ def _collect_member_schedules(
       - 외부 멤버 -> 외부 SQLite/MCP 의 extract_schedules_from_history
 
     내 일정을 넣을지는 member_names 에 "나"가 있는지로 유추하지 않고 include_my_schedules 로
-    받는다. 실측했을 때 모델은 조율 요청에서도 member_names 에 "나"를 절반만 넣었고
-    ('내 일정이랑 겹치는지 봐줘'에도 빠뜨렸다), 리스트에 무엇이 '없는지'로 의도를
-    읽어내는 방식 자체가 신호가 약했다.
+    받는다. 리스트에 무엇이 '없는지'로 의도를 읽어내는 방식은 신호가 약했다.
 
-    판단 로직은 위의 순수 helper 두 개가 갖고, 이 함수는 그 둘과 MCP 호출 한 번을
-    엮는 역할만 한다.
+    판단 로직은 위의 순수 helper 두 개가 갖고, 이 함수는 그 둘과 MCP 호출 한 번을 엮는다.
     """
 
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
@@ -729,7 +679,7 @@ def collect_member_schedules(
     member_names: list[str],
     date_from: str,
     date_to: str,
-    include_my_schedules: bool = True,
+    include_my_schedules: bool,
     limit: int = 50,
 ) -> str:
     """나와 다른 사람의 시간을 맞출 때 씁니다. 내 일정과 상대 일정을 같은 rows 구조로 함께 모읍니다.
