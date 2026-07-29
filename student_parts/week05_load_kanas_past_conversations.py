@@ -190,7 +190,18 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
-    ...
+    # Week 3 이후 저장 경로를 통과한 확정 일정. 예외는 삼키지 않고 tool 경계에서 한 번만 처리한다.
+    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
+
+    # Week 3 저장 경로가 Week 1 임시 id를 schedule_id로 그대로 쓰므로, 같은 id는 이미 저장된 일정이다.
+    saved_ids = {str(schedule.get("schedule_id")) for schedule in saved_schedules}
+    session_id = current_session_scope()
+    pending_schedules = [
+        schedule
+        for schedule in PERSONAL_SCHEDULES
+        if _schedule_scope(schedule) == session_id and str(schedule.get("id")) not in saved_ids
+    ]
+    return [*saved_schedules, *pending_schedules]
 
 
 def json_payload(payload: dict[str, Any]) -> str:
@@ -295,7 +306,23 @@ def search_previous_conversations(
     """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
     # TODO: call_mcp_tool_sync("search_previous_conversations", args)를 호출하고 결과 문자열을 반환하세요.
-    ...
+    # 멤버 이름 정규화는 외부 store/MCP 경계에서 처리하므로 wrapper는 인자를 그대로 넘긴다.
+    args: dict[str, Any] = {
+        "query": query,
+        "member_names": member_names,
+        "limit": limit,
+    }
+    try:
+        return call_mcp_tool_sync("search_previous_conversations", args)
+    except Exception as error:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "search_previous_conversations",
+                "rows": [],
+                "error": f"이전 대화 검색에 실패했습니다: {error}",
+            }
+        )
 
 
 @tool(args_schema=LoadConversationMessagesInput)
@@ -303,7 +330,46 @@ def load_conversation_messages(conversation_id: str) -> str:
     """외부 SQLite 데이터베이스에서 특정 이전 대화의 모든 메시지를 불러옵니다."""
 
     # TODO: call_external_tool_payload("load_conversation_messages", {"conversation_id": ...}) 결과를 JSON으로 반환하세요.
-    ...
+    # MCP subprocess를 띄우기 전에 필수 인자부터 검증한다.
+    conversation_id_text = str(conversation_id or "").strip()
+    if not conversation_id_text:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "load_conversation_messages",
+                "rows": [],
+                "error": "conversation_id가 필요합니다. search_previous_conversations 결과의 conversation_id를 사용하세요.",
+                "field": "conversation_id",
+            }
+        )
+
+    try:
+        payload = call_external_tool_payload(
+            "load_conversation_messages",
+            {"conversation_id": conversation_id_text},
+        )
+    except json.JSONDecodeError as error:
+        # 외부 tool이 JSON이 아닌 문자열(에러 메시지 등)을 돌려준 경우.
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "load_conversation_messages",
+                "rows": [],
+                "error": f"외부 대화 메시지 응답을 JSON으로 읽지 못했습니다: {error}",
+            }
+        )
+    except Exception as error:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "load_conversation_messages",
+                "rows": [],
+                "error": f"외부 대화 메시지 조회에 실패했습니다: {error}",
+            }
+        )
+
+    # rows의 sender/content/created_at 순서를 가공하지 않고 그대로 전달한다.
+    return json_payload(payload)
 
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
@@ -311,7 +377,40 @@ def extract_schedules_from_history(member_names: list[str], date_from: str, date
     """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
 
     # TODO: call_mcp_tool_sync("extract_schedules_from_history", args)를 호출해 외부 멤버 busy-time rows를 반환하세요.
-    ...
+    # 날짜가 비면 store SQL이 조용히 0건을 돌려주므로, 빈 범위는 미리 걸러 이유를 알려준다.
+    missing_fields = [
+        field_name
+        for field_name, value in (("date_from", date_from), ("date_to", date_to))
+        if not str(value or "").strip()
+    ]
+    if missing_fields:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "extract_schedules_from_history",
+                "rows": [],
+                "error": "외부 일정을 조회할 날짜 범위(date_from, date_to)가 필요합니다.",
+                "fields": missing_fields,
+            }
+        )
+
+    # 멤버 이름 정규화와 날짜 형식 정리는 외부 store/MCP 경계에서 한 번만 처리한다.
+    args: dict[str, Any] = {
+        "member_names": member_names,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+    try:
+        return call_mcp_tool_sync("extract_schedules_from_history", args)
+    except Exception as error:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "extract_schedules_from_history",
+                "rows": [],
+                "error": f"외부 일정 추출에 실패했습니다: {error}",
+            }
+        )
 
 
 @tool(args_schema=CreateSharedScheduleInput)
@@ -353,7 +452,26 @@ def list_shared_schedules(
     """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다. 필터가 없으면 기본 공유 일정을 반환합니다."""
 
     # TODO: call_mcp_tool_sync("list_shared_schedules", args)로 공유 일정 저장소 rows를 조회하세요.
-    ...
+    # 모든 필터가 optional이고 store가 "필터 없음" 분기를 갖고 있으므로 None을 None 그대로 넘긴다.
+    # member_names를 [] 로 바꾸면 "멤버 지정 없음"이 "해당 멤버 없음"으로 뒤집힌다.
+    args: dict[str, Any] = {
+        "member_names": member_names,
+        "date_from": date_from,
+        "date_to": date_to,
+        "source_conversation_id": source_conversation_id,
+        "limit": limit,
+    }
+    try:
+        return call_mcp_tool_sync("list_shared_schedules", args)
+    except Exception as error:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "list_shared_schedules",
+                "rows": [],
+                "error": f"공유 일정 조회에 실패했습니다: {error}",
+            }
+        )
 
 
 @tool(args_schema=CollectMemberSchedulesInput)
