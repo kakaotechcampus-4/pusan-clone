@@ -11,6 +11,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
+    PERSONAL_SHARED_MEMBER_NAME,
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
@@ -552,6 +553,61 @@ def week05_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        (
+            "5주차부터는 외부 SQLite/MCP 서버에 저장된 다른 사람의 "
+            "이전 대화와 일정도 조회할 수 있다. "
+            "내 일정과 내 기록은 1~4주차 도구를 사용하고, "
+            "철수·영희와 같은 외부 멤버의 기록은 5주차 MCP 도구를 사용한다."
+        ),
+        (
+            "사용자가 다른 사람과 나눈 과거 대화를 물어보면 "
+            "search_previous_conversations로 관련 대화를 먼저 검색한다. "
+            "검색 결과에서 conversation_id를 얻은 뒤 전체 대화 내용이 필요하면 "
+            "load_conversation_messages를 호출한다."
+        ),
+        (
+            "search_previous_conversations의 query는 긴 질문 전체가 아니라 "
+            "'QA 리뷰', '릴리즈 회의', '고객 인터뷰'처럼 "
+            "검색에 필요한 짧은 핵심 명사나 구를 사용한다."
+        ),
+        (
+            "Week 4의 search_conversation_messages는 사용자와 Kana가 나눈 "
+            "앱 내부 대화를 검색하는 도구다. "
+            "Week 5의 search_previous_conversations는 외부 멤버의 이전 대화를 "
+            "검색하는 도구다. 두 도구를 혼동하지 않는다."
+        ),
+        (
+            "특정 외부 멤버의 날짜 범위 일정만 필요하면 "
+            "extract_schedules_from_history를 사용한다."
+        ),
+        (
+            "나를 포함한 여러 사람의 바쁜 시간을 함께 확인해야 하면 "
+            "collect_member_schedules를 사용한다. "
+            "collect_member_schedules는 내 일정과 외부 멤버 일정을 이미 함께 조회하므로 "
+            "같은 요청에서 extract_schedules_from_history를 중복 호출하지 않는다."
+        ),
+        (
+            "외부 공유 일정 저장소에 실제로 등록된 row를 확인할 때는 "
+            "list_shared_schedules를 사용한다."
+        ),
+        (
+            "사용자가 공유 일정 등록이나 삭제를 명시적으로 요청한 경우에만 "
+            "create_shared_schedule 또는 delete_shared_schedule을 사용한다. "
+            "공유 일정을 생성한 뒤에는 반환된 schedule_id를 답변에 알려준다."
+        ),
+        (
+            f"외부 일정 조회 날짜는 오늘({current_app_date_iso()})을 기준으로 해석하고 "
+            "MCP 도구에는 YYYY-MM-DD 형식으로 전달한다."
+        ),
+        (
+            "5주차에서는 각 멤버의 바쁜 시간을 수집하고 설명할 수 있지만 "
+            "여러 사람이 모두 가능한 최종 회의 시간을 임의로 확정하지 않는다. "
+            "공통 가능 시간 계산과 최종 선택은 6주차 범위다."
+        ),
+        (
+            "도구 결과의 rows가 비어 있으면 일정을 추측하거나 만들어내지 않는다. "
+            "'해당 기간에 기록된 일정을 찾지 못했습니다'라고 답한다."
+        ),
     ]
 
 
