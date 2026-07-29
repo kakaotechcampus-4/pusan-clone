@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date as date_module
 from typing import Any
 
 from langchain.agents import create_agent
@@ -341,6 +342,37 @@ def _external_member_names_excluding_me(member_names: list[str]) -> list[str]:
     return external_names
 
 
+def _is_within_date_range(date: str, date_from: str, date_to: str) -> bool:
+    """일정 날짜가 조회 범위 안인지 판정합니다. 판정할 수 없으면 포함시킵니다.
+
+    날짜 비교는 문자열 사전순으로 한다(외부 store 의 SQL 비교와 같은 규칙).
+    이 규칙은 세 값이 모두 YYYY-MM-DD 로 zero-pad 돼 있을 때만 성립한다.
+    앱 DB 는 저장 시 날짜 형식을 보정하지 않아서 "2026-7-5" 같은 값이 들어올 수 있고,
+    그러면 "2026-7-5" > "2026-07-31" 이 되어 **범위 안 일정이 조용히 빠진다.**
+
+    busy-time 조회에서 일정이 빠지는 건 "그 시간에 비어 있다"는 잘못된 결론으로
+    이어지므로, 형식을 신뢰할 수 없을 때는 버리지 않고 포함시키는 쪽으로 실패한다.
+    (형식 보정 자체는 저장 계층의 몫이라 여기서 값을 고치지는 않는다.)
+
+    순수 함수다.
+    """
+
+    def parseable(value: str) -> bool:
+        try:
+            date_module.fromisoformat(value)
+        except ValueError:
+            return False
+        return True
+
+    if not parseable(date):
+        return True
+    if date_from and parseable(date_from) and date < date_from:
+        return False
+    if date_to and parseable(date_to) and date > date_to:
+        return False
+    return True
+
+
 def _personal_schedule_rows(
     personal_schedules: list[dict[str, Any]],
     date_from: str,
@@ -361,9 +393,7 @@ def _personal_schedule_rows(
         date = str(request.date or "").strip()
         if not date:
             continue
-        if date_from and date < date_from:
-            continue
-        if date_to and date > date_to:
+        if not _is_within_date_range(date, date_from, date_to):
             continue
         rows.append(
             {
@@ -404,6 +434,13 @@ def _collect_member_schedules(
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
         member_names, date_from, date_to
     )
+    # 범위가 뒤집히면 store 는 조용히 빈 rows 를 준다. "일정이 없다"와 구분되지 않아
+    # 없는 사실을 확정하게 되므로, 항상 참인 판단은 코드에서 먼저 실패시킨다.
+    if normalized_date_from and normalized_date_to and normalized_date_from > normalized_date_to:
+        raise ValueError(
+            f"date_from({normalized_date_from})이 date_to({normalized_date_to})보다 뒤입니다. "
+            "조회 범위를 다시 확인하세요."
+        )
     external_members = _external_member_names_excluding_me(member_names)
 
     rows = (

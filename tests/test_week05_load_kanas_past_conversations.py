@@ -27,6 +27,7 @@ import student_parts.week01_wake_up_nana as week01
 from student_parts.week05_load_kanas_past_conversations import (
     _collect_member_schedules,
     _external_member_names_excluding_me,
+    _is_within_date_range,
     _personal_schedule_rows,
     _personal_schedules_for_current_scope,
     create_shared_schedule,
@@ -192,6 +193,31 @@ class PersonalScheduleRowsTest(unittest.TestCase):
         self.assertEqual(rows[0]["end_time"], "미정")
 
 
+class IsWithinDateRangeTest(unittest.TestCase):
+    """날짜 범위 판정. 형식을 믿을 수 없으면 버리지 않고 포함시킨다."""
+
+    def test_범위_안과_경계는_포함한다(self):
+        self.assertTrue(_is_within_date_range("2026-07-15", "2026-07-14", "2026-07-18"))
+        self.assertTrue(_is_within_date_range("2026-07-14", "2026-07-14", "2026-07-18"))
+        self.assertTrue(_is_within_date_range("2026-07-18", "2026-07-14", "2026-07-18"))
+
+    def test_범위_밖은_제외한다(self):
+        self.assertFalse(_is_within_date_range("2026-07-01", "2026-07-14", "2026-07-18"))
+        self.assertFalse(_is_within_date_range("2026-09-01", "2026-07-14", "2026-07-18"))
+
+    def test_빈_범위는_필터하지_않는다(self):
+        self.assertTrue(_is_within_date_range("2020-01-01", "", ""))
+
+    def test_zero_pad가_없으면_버리지_않고_포함한다(self):
+        # 문자열 비교로는 "2026-7-5" > "2026-07-31" 이라 범위 안인데도 빠진다.
+        # busy-time 이 빠지면 "그 시간에 비어 있다"는 잘못된 결론이 나오므로 포함 쪽으로 실패한다.
+        self.assertTrue(_is_within_date_range("2026-7-5", "2026-07-01", "2026-07-31"))
+
+    def test_형식이_깨진_날짜도_포함한다(self):
+        self.assertTrue(_is_within_date_range("2026-13-99", "2026-07-01", "2026-07-31"))
+        self.assertTrue(_is_within_date_range("내일", "2026-07-01", "2026-07-31"))
+
+
 class CollectMemberSchedulesTest(unittest.TestCase):
     """MCP 호출이 없는 조합만 검증한다(외부 대상이 비면 subprocess 를 띄우지 않는다)."""
 
@@ -218,6 +244,11 @@ class CollectMemberSchedulesTest(unittest.TestCase):
         self.assertEqual(result["rows"], [])
         self.assertEqual(result["member_names"], [])
         self.assertFalse(result["include_my_schedules"])
+
+    def test_날짜_범위가_뒤집히면_실패시킨다(self):
+        # store 는 조용히 빈 rows 를 준다. "일정 없음"과 구분되지 않아 코드에서 먼저 막는다.
+        with self.assertRaises(ValueError):
+            self._collect(date_from="2026-07-18", date_to="2026-07-14")
 
     def test_ISO_datetime_범위도_날짜로_잘라_쓴다(self):
         result = self._collect(date_from="2026-07-14T00:00:00", date_to="2026-07-18T23:59:59")
