@@ -184,7 +184,7 @@ _WEEK05_AGENT: Any | None = None
 #       _external_member_names_excluding_me / _personal_schedule_rows / _is_within_date_range
 #   - _personal_schedules_for_current_scope(app_store=None, limit=200): 인자는 모두 선택이라
 #     가이드의 무인자 호출 그대로 씁니다.
-#   - collect_member_schedules(..., include_my_schedules, limit): 내 일정을 넣을지를
+#   - collect_member_schedules(..., include_my_schedules): 내 일정을 넣을지를
 #     member_names 에 "나"가 있는지로 유추하지 않고 인자로 받습니다.
 #   - delete_shared_schedule: 삭제 대상이 비면 스키마에서 막습니다. 나머지 wrapper 는
 #     가공 없는 passthrough 입니다.
@@ -346,10 +346,6 @@ class CollectMemberSchedulesInput(BaseModel):
             "'내 일정이랑 겹치는지', '나도 되는 시간'처럼 사용자가 자기 일정을 언급하면 true다."
         )
     )
-    # extract_schedules_from_history 에는 limit 인자가 없어서(mcp_server/sqlite_mcp_server.py)
-    # 범위를 넓게 잡으면 rows 가 그대로 다 옵니다. 같은 일정 row 를 돌려주는 형제 tool
-    # list_shared_schedules 와 같은 기본값/상한을 써서 조회량을 스키마에서 정합니다.
-    limit: int = Field(default=50, ge=1, le=200, description="한 번에 모을 일정 row 수.")
 
     @model_validator(mode="after")
     def _require_ordered_dates(self) -> CollectMemberSchedulesInput:
@@ -467,7 +463,6 @@ def _collect_member_schedules(
     date_to: str,
     personal_schedules: list[dict[str, Any]],
     include_my_schedules: bool,
-    limit: int = 50,
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다.
 
@@ -519,8 +514,11 @@ def _collect_member_schedules(
             str(row.get("member_name") or ""),
         )
     )
-    # 정렬한 뒤에 자른다. 조율은 가까운 날짜부터 보므로 앞쪽이 남아야 한다.
-    rows = rows[:limit]
+    # rows 를 자르지 않는다. 정렬이 (date, start_time, member_name) 이라 앞 날짜가 상한을
+    # 다 차지하면 뒷날짜 멤버가 통째로 사라지고, 그 멤버는 "일정 없음"으로 보인다.
+    # busy-time 이 빠지면 Week 6 이 "종일 한가함"으로 읽는다.
+    # 조회량 자체를 줄이려면 extract_schedules_from_history 에 limit 이 있어야 하는데
+    # 그건 mcp_server 쪽이라 학생 수정 대상이 아니다. 받은 뒤 자르는 건 전송량도 안 줄인다.
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
@@ -681,7 +679,6 @@ def collect_member_schedules(
     date_from: str,
     date_to: str,
     include_my_schedules: bool,
-    limit: int = 50,
 ) -> str:
     """나와 다른 사람의 시간을 맞출 때 씁니다. 내 일정과 상대 일정을 같은 rows 구조로 함께 모읍니다.
 
@@ -699,7 +696,6 @@ def collect_member_schedules(
             _personal_schedules_for_current_scope() if include_my_schedules else []
         ),
         include_my_schedules=include_my_schedules,
-        limit=limit,
     )
     return json_payload(payload)
 

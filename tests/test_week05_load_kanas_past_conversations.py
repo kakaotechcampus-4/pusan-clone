@@ -263,23 +263,27 @@ class CollectMemberSchedulesTest(unittest.TestCase):
         self.assertEqual(result["date_from"], "2026-07-14")
         self.assertEqual(len(result["rows"]), 1)
 
-    def test_limit으로_rows를_자른다(self):
-        # 조회량 상한은 형제 tool(list_shared_schedules)과 같은 방식으로 스키마 인자로 받는다.
-        schedules = [
-            {"title": f"일정{index}", "date": "2026-07-15", "start_time": f"{9 + index:02d}:00"}
-            for index in range(5)
-        ]
-        result = self._collect(personal_schedules=schedules, limit=3)
-        self.assertEqual(len(result["rows"]), 3)
+    def test_내_일정이_많아도_외부_멤버가_사라지지_않는다(self):
+        """rows 를 자르면 뒷날짜 멤버가 통째로 증발한다(PR #166 리뷰 지적).
 
-    def test_자르기는_정렬_뒤에_한다(self):
-        # 조율은 가까운 날짜부터 보므로, 잘린 뒤에도 앞쪽 날짜가 남아야 한다.
-        schedules = [
-            {"title": "늦은날", "date": "2026-07-18", "start_time": "10:00"},
-            {"title": "이른날", "date": "2026-07-14", "start_time": "10:00"},
+        정렬이 (date, start_time, member_name) 이라 앞 날짜가 상한을 다 차지하면
+        뒤 멤버는 rows 에도 schedule_summary 에도 안 남는다. 그러면 실제로 바쁜 사람이
+        "일정 없음"으로 보이고, Week 6 은 그 시간을 비어 있다고 읽는다.
+        """
+
+        mine = [
+            {"schedule_id": f"s{index}", "title": f"내 일정{index}",
+             "date": "2026-07-14", "start_time": f"{9 + index % 10:02d}:00"}
+            for index in range(50)
         ]
-        result = self._collect(personal_schedules=schedules, limit=1)
-        self.assertEqual([row["title"] for row in result["rows"]], ["이른날"])
+        result = self._collect(personal_schedules=mine + [
+            {"schedule_id": "late", "title": "늦은 내 일정", "date": "2026-07-18",
+             "start_time": "10:00"},
+        ])
+        titles = [row["title"] for row in result["rows"]]
+        self.assertEqual(len(result["rows"]), 51)
+        self.assertIn("늦은 내 일정", titles)
+        self.assertIn("늦은 내 일정", result["schedule_summary"])
 
     def test_같은_날짜는_시간_미정이_뒤로_간다(self):
         result = self._collect(
