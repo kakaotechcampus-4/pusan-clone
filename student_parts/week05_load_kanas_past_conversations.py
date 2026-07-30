@@ -193,7 +193,10 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     scope = current_session_scope()
     store = AppSQLiteStore(CONFIG.app_db_path)
 
-    stored = store.list_schedules(limit=200)
+    stored = [
+        *store.list_schedules(limit=200, kind="personal_schedule")
+        *store.list_schedules(limit=200, kind="group_schedule"),
+    ]
 
     stored_ids = {
         row.get("schedule_id") or row.get("id")
@@ -304,6 +307,15 @@ def _collect_member_schedules(
     my_rows = []
     for schedule in personal_schedules:
         structured = _structured_request_from_schedule_row(schedule)
+        schedule_date = structured.date
+
+        if schedule_date is None:
+            continue
+        if date_from and schedule_date < date_from:
+            continue
+        if date_tp and schedule_date > date_to:
+            continue
+
         my_rows.append({
             "member_name" : "나",
             "title" : structured.title,
@@ -325,7 +337,8 @@ def _collect_member_schedules(
         }
     )
 
-    external_rows = json.loads(external_result)["rows"]
+    external_payload = json.loads(external_result)
+    external_rows = external_payload.get("rows", [])
 
     rows = [*my_rows, *external_rows]
     summary = external_schedule_summary(rows)
@@ -475,6 +488,7 @@ def week05_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        (
         "다른 팀원의 이전 대화나 공유 일정이 필요하면 ",
         "search_previous_conversations, load_conversation_messages,",
         "extract_schedules_from_history, list_shared_schedules",
@@ -486,6 +500,7 @@ def week05_prompt_parts() -> list[str]:
         "내 일정과 외부 멤버 일정을 함께 조회한다.",
         "공유 일정 저장소에 새 일정을 등록하거나 삭제해야 하면 create_shared_schedule/ delete_shared_schedule을 사용한다.",
         "외부 멤버의 이름이나 날짜는 사용자가 말한 그대로 tool에 전달한다.",
+        ),
     ]
 
 
