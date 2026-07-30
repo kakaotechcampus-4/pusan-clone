@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import date as calendar_date
+from datetime import datetime as calendar_datetime
 import json
-from typing import Any
+from typing import Annotated, Any
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 
 from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
@@ -280,7 +282,7 @@ def _personal_schedules_for_current_scope(
 
     stored_schedules = SQLITE_STORE.list_schedules(
         limit=PERSONAL_SCHEDULE_CANDIDATE_LIMIT,
-        kind=None,
+        kind="personal_schedule",
         date_from=date_from,
         date_to=date_to,
     )
@@ -308,10 +310,40 @@ def json_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _require_non_blank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("공백만 있는 값은 사용할 수 없습니다.")
+    return value
+
+
+def _normalized_iso_date(value: str, field_name: str) -> str:
+    raw_value = str(value).strip()
+    try:
+        if "T" in raw_value:
+            calendar_datetime.fromisoformat(raw_value)
+        else:
+            calendar_date.fromisoformat(raw_value)
+    except ValueError as error:
+        raise ValueError(
+            f"{field_name}은 YYYY-MM-DD 또는 ISO datetime 형식이어야 합니다."
+        ) from error
+    return raw_value.split("T", 1)[0]
+
+
+def _validate_schedule_date_range(date_from: str, date_to: str) -> None:
+    normalized_date_from = _normalized_iso_date(date_from, "date_from")
+    normalized_date_to = _normalized_iso_date(date_to, "date_to")
+    if normalized_date_from > normalized_date_to:
+        raise ValueError("date_from은 date_to보다 늦을 수 없습니다.")
+
+
+_NonBlankText = Annotated[str, AfterValidator(_require_non_blank)]
+
+
 class SearchPreviousConversationsInput(BaseModel):
     """외부 이전 대화 검색 입력입니다."""
 
-    query: str
+    query: _NonBlankText
     member_names: list[str] | None = None
     limit: int = Field(default=5, ge=1, le=50)
 
@@ -319,58 +351,82 @@ class SearchPreviousConversationsInput(BaseModel):
 class LoadConversationMessagesInput(BaseModel):
     """외부 대화 메시지 조회 입력입니다."""
 
-    conversation_id: str
+    conversation_id: _NonBlankText
 
 
-class ExtractSchedulesFromHistoryInput(BaseModel):
+class _RequiredScheduleDateRangeInput(BaseModel):
+    date_from: _NonBlankText
+    date_to: _NonBlankText
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> _RequiredScheduleDateRangeInput:
+        _validate_schedule_date_range(self.date_from, self.date_to)
+        return self
+
+
+class ExtractSchedulesFromHistoryInput(_RequiredScheduleDateRangeInput):
     """외부 멤버 일정 추출 입력입니다."""
 
     member_names: list[str]
-    date_from: str
-    date_to: str
 
 
 class CreateSharedScheduleInput(BaseModel):
     """공유 일정 생성 입력입니다."""
 
-    member_name: str
-    title: str
-    date: str
-    start_time: str
+    member_name: _NonBlankText
+    title: _NonBlankText
+    date: _NonBlankText
+    start_time: _NonBlankText
     end_time: str = "미정"
     notes: str | None = None
-    source_conversation_id: str | None = None
-    schedule_id: str | None = None
+    source_conversation_id: _NonBlankText | None = None
+    schedule_id: _NonBlankText | None = None
+
+    @model_validator(mode="after")
+    def validate_date(self) -> CreateSharedScheduleInput:
+        _normalized_iso_date(self.date, "date")
+        return self
 
 
 class DeleteSharedScheduleInput(BaseModel):
     """공유 일정 삭제 입력입니다."""
 
-    schedule_id: str | None = None
-    source_conversation_id: str | None = None
+    schedule_id: _NonBlankText | None = None
+    source_conversation_id: _NonBlankText | None = None
 
 
 class ListSharedSchedulesInput(BaseModel):
     """공유 일정 조회 입력입니다."""
 
     member_names: list[str] | None = None
-    date_from: str | None = None
-    date_to: str | None = None
-    source_conversation_id: str | None = None
+    date_from: _NonBlankText | None = None
+    date_to: _NonBlankText | None = None
+    source_conversation_id: _NonBlankText | None = None
     limit: int = Field(default=50, ge=1, le=200)
 
+    @model_validator(mode="after")
+    def validate_optional_date_range(self) -> ListSharedSchedulesInput:
+        if self.date_from is not None:
+            _normalized_iso_date(self.date_from, "date_from")
+        if self.date_to is not None:
+            _normalized_iso_date(self.date_to, "date_to")
+        if self.date_from is not None and self.date_to is not None:
+            _validate_schedule_date_range(self.date_from, self.date_to)
+        return self
 
-class CollectMemberSchedulesInput(BaseModel):
+
+class CollectMemberSchedulesInput(_RequiredScheduleDateRangeInput):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
 
     member_names: list[str]
-    date_from: str
-    date_to: str
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 개인 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
 
+    row_kind = row.get("request_kind") or row.get("kind")
+    if row_kind not in {None, "personal_schedule"}:
+        raise ValueError("개인 일정 row만 busy-time으로 변환할 수 있습니다.")
     return StructuredRequest(
         kind="personal_schedule",
         title=row.get("title"),

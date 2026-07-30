@@ -9,6 +9,8 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import patch
 
+from pydantic import ValidationError
+
 from fixed import app_store as app_store_module
 from fixed import mcp_client
 from fixed.app_store import AppSQLiteStore
@@ -60,7 +62,8 @@ class FakeScheduleStore:
         rows = [
             row
             for row in self.rows
-            if (not date_from or str(row.get("date") or "") >= date_from)
+            if (not kind or row.get("request_kind") == kind)
+            and (not date_from or str(row.get("date") or "") >= date_from)
             and (not date_to or str(row.get("date") or "") <= date_to)
         ]
         return [dict(row) for row in rows[:limit]]
@@ -176,16 +179,23 @@ class Week05IsolatedTestCase(unittest.TestCase):
 
 
 class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
-    def test_reads_large_candidate_set_without_kind_filter(self) -> None:
-        original_rows = [
+    def test_filters_personal_kind_before_applying_candidate_limit(self) -> None:
+        personal_rows = [
             {
                 "schedule_id": f"stored-{index}",
                 "title": f"저장 일정 {index}",
                 "date": f"2026-07-{index + 1:02d}",
-                "request_kind": "group_schedule" if index == 0 else "personal_schedule",
+                "request_kind": "personal_schedule",
             }
             for index in range(20)
         ]
+        group_row = {
+            "schedule_id": "group-stored",
+            "title": "그룹 일정",
+            "date": "2026-07-01",
+            "request_kind": "group_schedule",
+        }
+        original_rows = [group_row, *personal_rows]
         original_copy = copy.deepcopy(original_rows)
         store = FakeScheduleStore(original_rows)
 
@@ -198,15 +208,43 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
             [
                 {
                     "limit": week05.PERSONAL_SCHEDULE_CANDIDATE_LIMIT,
-                    "kind": None,
+                    "kind": "personal_schedule",
                     "date_from": None,
                     "date_to": None,
                 }
             ],
         )
-        self.assertEqual(rows[0]["request_kind"], "group_schedule")
+        self.assertTrue(all(row["request_kind"] == "personal_schedule" for row in rows))
+        self.assertNotIn("group-stored", {row["schedule_id"] for row in rows})
         self.assertTrue(all(row["source_store"] == "app_sqlite" for row in rows))
         self.assertEqual(original_rows, original_copy)
+
+    def test_real_store_excludes_group_schedule(self) -> None:
+        self.sqlite_store.save_structured_request(
+            {
+                "kind": "personal_schedule",
+                "title": "개인 일정",
+                "date": "2026-07-07",
+                "members": ["나"],
+                "source_schedule_id": "personal-only",
+            }
+        )
+        self.sqlite_store.save_structured_request(
+            {
+                "kind": "group_schedule",
+                "title": "그룹 일정",
+                "date": "2026-07-08",
+                "members": ["나", "철수"],
+                "source_schedule_id": "group-excluded",
+            }
+        )
+
+        rows = week05._personal_schedules_for_current_scope()
+
+        self.assertEqual(
+            [row["schedule_id"] for row in rows],
+            ["personal-only"],
+        )
 
     def test_collect_tool_filters_dates_before_candidate_limit(self) -> None:
         older_rows = [
@@ -214,6 +252,7 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
                 "schedule_id": f"older-{index}",
                 "title": f"이전 일정 {index}",
                 "date": "2026-06-30",
+                "request_kind": "personal_schedule",
             }
             for index in range(week05.PERSONAL_SCHEDULE_CANDIDATE_LIMIT)
         ]
@@ -221,6 +260,7 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
             "schedule_id": "target-in-range",
             "title": "범위 안 일정",
             "date": "2026-07-07",
+            "request_kind": "personal_schedule",
         }
         store = FakeScheduleStore([*older_rows, target])
 
@@ -243,12 +283,22 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
             [
                 {
                     "limit": week05.PERSONAL_SCHEDULE_CANDIDATE_LIMIT,
-                    "kind": None,
+                    "kind": "personal_schedule",
                     "date_from": "2026-07-07",
                     "date_to": "2026-07-17",
                 }
             ],
         )
+
+    def test_rejects_group_row_before_personal_relabeling(self) -> None:
+        with self.assertRaisesRegex(ValueError, "개인 일정"):
+            week05._structured_request_from_schedule_row(
+                {
+                    "request_kind": "group_schedule",
+                    "title": "그룹 일정",
+                    "date": "2026-07-07",
+                }
+            )
 
     def test_deduplicates_saved_id_and_keeps_only_current_session_memory(self) -> None:
         self.sqlite_store.save_structured_request(
@@ -722,6 +772,70 @@ class ToolRegistryAndSchemaContractTest(Week05IsolatedTestCase):
             for field_name in field_names:
                 with self.subTest(model=input_model.__name__, field=field_name):
                     self.assertTrue(input_model.model_fields[field_name].is_required())
+
+    def test_blank_required_text_and_identifiers_are_rejected(self) -> None:
+        invalid_inputs = [
+            (week05.SearchPreviousConversationsInput, {"query": "   "}),
+            (week05.LoadConversationMessagesInput, {"conversation_id": "   "}),
+            (
+                week05.CreateSharedScheduleInput,
+                {
+                    "member_name": " ",
+                    "title": "회의",
+                    "date": "2026-07-07",
+                    "start_time": "10:00",
+                },
+            ),
+            (
+                week05.CreateSharedScheduleInput,
+                {
+                    "member_name": "나",
+                    "title": "회의",
+                    "date": "2026/07/07",
+                    "start_time": "10:00",
+                },
+            ),
+            (week05.DeleteSharedScheduleInput, {"schedule_id": "   "}),
+            (week05.ListSharedSchedulesInput, {"source_conversation_id": "   "}),
+        ]
+
+        for input_model, payload in invalid_inputs:
+            with self.subTest(model=input_model.__name__), self.assertRaises(
+                ValidationError
+            ):
+                input_model.model_validate(payload)
+
+    def test_schedule_date_ranges_reject_blank_invalid_and_reversed_bounds(self) -> None:
+        invalid_ranges = [
+            {"date_from": " ", "date_to": "2026-07-17"},
+            {"date_from": "2026/07/07", "date_to": "2026-07-17"},
+            {"date_from": "2026-07-07T잘못된시간", "date_to": "2026-07-17"},
+            {"date_from": "2026-07-17", "date_to": "2026-07-07"},
+        ]
+
+        for input_model in {
+            week05.ExtractSchedulesFromHistoryInput,
+            week05.CollectMemberSchedulesInput,
+        }:
+            for date_range in invalid_ranges:
+                with (
+                    self.subTest(model=input_model.__name__, date_range=date_range),
+                    self.assertRaises(ValidationError),
+                ):
+                    input_model.model_validate(
+                        {"member_names": ["철수"], **date_range}
+                    )
+
+    def test_optional_shared_schedule_dates_reject_invalid_values(self) -> None:
+        invalid_inputs = [
+            {"date_from": "2026/07/07"},
+            {"date_to": "2026-07-17T잘못된시간"},
+            {"date_from": "2026-07-17", "date_to": "2026-07-07"},
+        ]
+
+        for payload in invalid_inputs:
+            with self.subTest(payload=payload), self.assertRaises(ValidationError):
+                week05.ListSharedSchedulesInput.model_validate(payload)
 
     def test_week05_tool_descriptions_come_from_docstrings(self) -> None:
         week05_tool_names = {
