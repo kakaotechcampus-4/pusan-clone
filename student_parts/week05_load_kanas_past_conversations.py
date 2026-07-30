@@ -285,9 +285,14 @@ def _collect_member_schedules(
     personal_schedules: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
+    normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
+        member_names, date_from, date_to
+    )
     my_rows = []
     for row in personal_schedules:
         req = _structured_request_from_schedule_row(row)
+        if not req.date or not (normalized_date_from <= req.date <= normalized_date_to):
+            continue
         my_rows.append({
             "member_name": "나",
             "title": req.title,
@@ -304,9 +309,9 @@ def _collect_member_schedules(
     }
     
     external_payload = json.loads(call_mcp_tool_sync("extract_schedules_from_history", external_args))
-    exteranl_rows = external_payload.get("rows", [])
+    external_rows = external_payload.get("rows", [])
     
-    rows = my_rows + exteranl_rows
+    rows = my_rows + external_rows
     return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
 
 
