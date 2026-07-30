@@ -192,13 +192,10 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
-    sqlite_rows = AppSQLiteStore(CONFIG.app_db_path).list_schedules(kind="personal_schedule")
+    sqlite_rows = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=10_000, kind="personal_schedule")
     saved_ids = {row.get("schedule_id") for row in sqlite_rows}
     pending = [s for s in  _current_session_schedules() if s.get("id") not in saved_ids]
     return sqlite_rows+pending
-    # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
-    ...
-
 
 def json_payload(payload: dict[str, Any]) -> str:
     """도구 반환용 dict를 한글이 깨지지 않는 JSON 문자열로 변환합니다."""
