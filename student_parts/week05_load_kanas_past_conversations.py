@@ -718,7 +718,7 @@ def week05_tools() -> list[Any]:
 def week05_system_prompt() -> str:
     """5주차 단일 agent가 따르는 시스템 프롬프트입니다."""
 
-    return join_system_prompt(week05_prompt_parts())
+    return join_system_prompt([*week05_prompt_parts(), WEEK05_SCOPE_PROMPT])
 
 
 # tool을 어떻게 고르고 인자를 어떤 형태로 넣을지는 각 tool의 description에 둔다.
@@ -750,7 +750,12 @@ WEEK05_EXTERNAL_MEMBER_PROMPT = (
     "list_shared_schedules 는 필터가 모두 선택이라 이 규칙과 무관하다 — 그대로 호출한다.\n"
     "조회 결과의 rows와 schedule_summary만 근거로 답한다. 사용자가 묻지 않은 사람의 일정은 언급하지 않는다.\n"
     "조회를 하지 않은 채 '기록이 없다'고 말하지 않는다. 처음 보는 이름이라도 일단 tool로 조회하고, "
-    "결과가 비어 있을 때만 없다고 답한다.\n"
+    "결과가 비어 있을 때만 없다고 답한다."
+)
+
+# 이 주차에서만 참인 범위 선언이라 prompt_parts 에 두지 않는다.
+# Week 6 은 공통 가능 시간을 실제로 확정하므로, 누적되면 그때 거짓이 된다.
+WEEK05_SCOPE_PROMPT = (
     "여러 사람의 최종 회의 시간을 확정하는 것은 아직 이 단계의 일이 아니다. "
     "겹치지 않는 시간대를 근거와 함께 제안하되 확정된 것처럼 단정하지 않는다."
 )

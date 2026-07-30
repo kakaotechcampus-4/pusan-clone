@@ -27,6 +27,8 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, conversation_session_scop
 
 import student_parts.week01_wake_up_nana as week01
 import student_parts.week05_load_kanas_past_conversations as week05
+from student_parts.week02_structure_natural_language_requests import week02_system_prompt
+from student_parts.week03_build_nanas_logbook import week03_system_prompt
 from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts
 from student_parts.week05_load_kanas_past_conversations import (
     CollectMemberSchedulesInput,
@@ -517,10 +519,26 @@ class Week05PromptPartsTest(unittest.TestCase):
         # 남아 있으면 모델이 "도구 사용이 제한되어 있다"며 tool 호출을 건너뛴다.
         text = self._text()
         for stale in [
-            "외부 멤버 일정 조율을 하지 않는다",
+            "구조화 결과를 만드는 것까지만",
             "외부 멤버 일정 조율이나 RAG 검색은 이후 주차",
         ]:
             self.assertNotIn(stale, text, f"5주차에서 거짓이 된 문구가 남아 있다: {stale}")
+
+    def test_범위_선언은_그_주차_system_prompt_에는_살아_있다(self):
+        """삭제가 아니라 이동이다. 그 주차 agent 는 자기 범위를 알아야 한다(PR #166 리뷰).
+
+        prompt_parts() 는 다음 주차로 누적되고, system_prompt() 는 그 주차에만 쓰인다.
+        범위 선언처럼 다음 주차에서 거짓이 될 문장은 후자에만 둔다.
+        """
+
+        self.assertIn("구조화 결과를 만드는 것까지만", week02_system_prompt())
+        self.assertIn("이후 주차에서 다룬다", week03_system_prompt())
+
+    def test_week5_범위_선언도_다음_주차로_전파되지_않는다(self):
+        # Week 6 은 공통 가능 시간을 실제로 확정하므로 이 문장은 그때 거짓이 된다.
+        parts_text = self._text()
+        self.assertNotIn("이 단계의 일이 아니다", parts_text)
+        self.assertIn("이 단계의 일이 아니다", week05.week05_system_prompt())
 
     def test_삭제_지시가_내_일정으로_한정돼_있다(self):
         # 조건 없는 '삭제 요청' 지시는 공유 저장소 삭제까지 개인 일정 tool 로 낚아챈다.

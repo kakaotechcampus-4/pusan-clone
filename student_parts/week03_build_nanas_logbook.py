@@ -698,7 +698,15 @@ def week03_tools() -> list[Any]:
 def week03_system_prompt() -> str:
     """3주차 단일 agent가 따르는 시스템 프롬프트입니다."""
 
-    return join_system_prompt(week03_prompt_parts())
+    return join_system_prompt(
+        [
+            *week03_prompt_parts(),
+            # 이 주차에서만 참인 범위 선언이라 prompt_parts 에 두지 않는다.
+            # 누적되면 Week 4 의 RAG, Week 5 의 외부 멤버 조회를 agent 가 거부한다(PR #166 리뷰).
+            "Week 3의 범위는 개인 일정을 중심으로 한 저장·조회이며, "
+            "외부 멤버 일정 조율이나 RAG 검색은 이후 주차에서 다룬다.",
+        ]
+    )
 
 
 def week03_prompt_parts() -> list[str]:
