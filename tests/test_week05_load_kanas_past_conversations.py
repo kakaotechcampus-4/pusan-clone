@@ -87,6 +87,8 @@ def _make_stub_app_sqlite_store(schedules: list[dict] | None = None):
             pass
 
         def list_schedules(self, limit: int = 12, kind=None, date_from=None, date_to=None) -> list[dict]:
+            if kind not in (None, "personal_schedule"):
+                return []
             return list(stored)
 
     return _StubAppSQLiteStore
@@ -155,20 +157,79 @@ def test_collect_member_schedules_merges_real_mcp_envelope_without_dict_spread(m
     assert "규진" in payload["schedule_summary"]
 
 
-def test_collect_member_schedules_raises_keyerror_when_envelope_has_no_rows_key(monkeypatch, stub_sqlite_store):
-    """이 테스트가 잡으려는 실패: 수정 후에도 봉투에 "rows" 키 자체가 없으면
-    json.loads(...)["rows"]가 KeyError를 던지는 것이 방어 로직 없이 그대로 전파되는지 문서화."""
+def test_collect_member_schedules_treats_missing_rows_key_as_empty_list(monkeypatch, stub_sqlite_store):
+    """이 테스트가 잡으려는 실패: 봉투에 "rows" 키 자체가 없을 때 KeyError가 전파되는 회귀.
+    external_payload.get("rows", [])로 방어했으므로 external rows는 빈 리스트로 처리되고,
+    결과 rows에는 personal_schedules에서 온 항목만 남아야 합니다."""
 
     spy = _SpyMcpToolSync(return_value=json.dumps({"ok": True}, ensure_ascii=False))
     monkeypatch.setattr(w5, "call_mcp_tool_sync", spy)
 
-    with pytest.raises(KeyError):
-        w5._collect_member_schedules(
-            member_names=["규진"],
-            date_from="2026-07-30",
-            date_to="2026-07-30",
-            personal_schedules=[],
-        )
+    personal_schedule = {
+        "id": "temp_1",
+        "title": "개인 일정",
+        "date": "2026-07-30",
+        "start_time": "09:00",
+        "end_time": "10:00",
+        "attendees": [],
+        "session_id": DEFAULT_SESSION_SCOPE,
+    }
+
+    payload = w5._collect_member_schedules(
+        member_names=["규진"],
+        date_from="2026-07-30",
+        date_to="2026-07-30",
+        personal_schedules=[personal_schedule],
+    )
+
+    assert payload["rows"] == [
+        {
+            "member_name": "나",
+            "title": "개인 일정",
+            "date": "2026-07-30",
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "notes": None,
+        }
+    ]
+
+
+def test_collect_member_schedules_excludes_personal_schedule_outside_date_range(monkeypatch, stub_sqlite_store):
+    """이 테스트가 잡으려는 실패: 날짜 필터 로직이 없거나 잘못돼서 조회 범위(date_from~date_to)
+    밖의 personal_schedules 항목이 결과 rows에 그대로 섞여 들어가는 회귀. 범위 안의 일정은
+    정상적으로 포함되는지도 같이 확인해, 필터가 아예 없어서 통과하는 상태가 아님을 보장합니다."""
+
+    spy = _SpyMcpToolSync(return_value=_mcp_envelope(rows=[]))
+    monkeypatch.setattr(w5, "call_mcp_tool_sync", spy)
+
+    schedule_in_range = {
+        "id": "temp_in_range",
+        "title": "범위 안 일정",
+        "date": "2026-07-30",
+        "start_time": "09:00",
+        "end_time": "10:00",
+        "attendees": [],
+        "session_id": DEFAULT_SESSION_SCOPE,
+    }
+    schedule_outside_range = {
+        "id": "temp_outside_range",
+        "title": "범위 밖 일정",
+        "date": "2026-08-15",
+        "start_time": "09:00",
+        "end_time": "10:00",
+        "attendees": [],
+        "session_id": DEFAULT_SESSION_SCOPE,
+    }
+
+    payload = w5._collect_member_schedules(
+        member_names=[],
+        date_from="2026-07-25",
+        date_to="2026-07-31",
+        personal_schedules=[schedule_in_range, schedule_outside_range],
+    )
+
+    titles = [row["title"] for row in payload["rows"]]
+    assert titles == ["범위 안 일정"]
 
 
 # ---------------------------------------------------------------------------

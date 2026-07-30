@@ -194,7 +194,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     store = AppSQLiteStore(CONFIG.app_db_path)
 
     stored = [
-        *store.list_schedules(limit=200, kind="personal_schedule")
+        *store.list_schedules(limit=200, kind="personal_schedule"),
         *store.list_schedules(limit=200, kind="group_schedule"),
     ]
 
@@ -313,7 +313,7 @@ def _collect_member_schedules(
             continue
         if date_from and schedule_date < date_from:
             continue
-        if date_tp and schedule_date > date_to:
+        if date_to and schedule_date > date_to:
             continue
 
         my_rows.append({
