@@ -198,13 +198,26 @@ def _personal_schedules_for_current_scope(date_from : str, date_to : str) -> lis
     이미 SQLite에 저장된 일정과 임시 일정이 중복되지 않도록 schedule_id/id를 기준으로 한 번 걸러냅니다.
     """
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
+    sql_instance = AppSQLiteStore(CONFIG.app_db_path)
     
     temporary_schedules = [
         schedule
         for schedule in PERSONAL_SCHEDULES 
-        if _schedule_scope(schedule) == current_session_scope()
+        if (
+            _schedule_scope(schedule) == current_session_scope()
+        )
     ]
-    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
+    temporary_schedules_ids = [i["id"] for i in temporary_schedules]
+    db_existings = {
+        schedule["schedule_id"]
+        for schedule in sql_instance.find_schedules(schedule_ids=temporary_schedules_ids, limit=-1)
+    }
+
+    temporary_schedules = [schedule for schedule in temporary_schedules if schedule["id"] not in db_existings]
+
+    
+
+    saved_schedules = sql_instance.list_schedules(
         limit=-1, 
         date_from=date_from, 
         date_to=date_to
