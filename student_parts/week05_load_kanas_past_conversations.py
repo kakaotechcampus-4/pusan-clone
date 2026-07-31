@@ -519,6 +519,11 @@ def week05_prompt_parts() -> list[str]:
         "load_conversation_messages에 넘겨 대화 전문을 읽어. 이 두 tool은 이 순서로 이어서 사용해. "
         "search_previous_conversations의 query는 의미 검색이 아니라 문자열 포함 검색이야. "
         "문장을 전부 넣으면 못 찾으니까 'QA 리뷰', '릴리즈'처럼 짧은 핵심 명사만 넣어.",
+        "create_shared_schedule과 delete_shared_schedule은 조회 tool과 달리 공유 저장소를 실제로 변경하는 tool이야. "
+        "먼저 list_shared_schedules로 대상 row를 찾고, '철수 일정 지워줘'처럼 대상이 모호하거나 후보가 여러 개면 "
+        "임의로 고르지 말고 후보를 보여주면서 어떤 일정인지 되물어봐. "
+        "대상이 하나로 정해지면 누구의 언제 어떤 일정인지 요약해서 확인을 받고, 사용자가 그렇게 하라고 답한 뒤에만 호출해. "
+        "삭제할 땐 조회로 확인한 schedule_id나 source_conversation_id를 그대로 넘기고 값을 지어내지 마. "
         f"외부 일정을 조회할 때 상대 날짜는 오늘({current_app_date_iso()})을 기준으로 해석해서 YYYY-MM-DD로 넘겨. "
         "모은 일정은 '누가 언제 바쁜지'까지 정리해서 알려주고, 다른 사람의 시간을 네 마음대로 확정하지는 마. "
         "빈 시간대를 제안할 때도 근거가 된 일정을 함께 보여주고 사용자에게 확인을 받아. "
