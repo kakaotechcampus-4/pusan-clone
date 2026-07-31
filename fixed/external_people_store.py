@@ -467,7 +467,7 @@ class ExternalPeopleSQLiteStore(SQLiteFileStore):
         with self.connect() as conn:
             cur = conn.execute(
                 f"""
-                SELECT schedule_id, member_name, title, date, start_time, end_time, notes, source_conversation_id
+                SELECT member_name, title, date, start_time, end_time, notes, source_conversation_id
                 FROM external_schedules
                 WHERE date >= ?
                   AND date <= ?

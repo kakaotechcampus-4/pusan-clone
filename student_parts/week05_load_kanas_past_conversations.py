@@ -298,8 +298,7 @@ def _collect_member_schedules(
         rows.append({
             "member_name": "나", "title": structured.title,
             "date": structured.date, "start_time": structured.start_time,
-            "end_time": structured.end_time, "notes": "내 일정",
-            "schedule_id": s.get("schedule_id") or s.get("id"), "source_conversation_id": None,
+            "end_time": structured.end_time, "notes": "내 일정", "source_conversation_id": None,
         })
 
     # 외부 멤버 일정
