@@ -443,8 +443,10 @@ def week05_prompt_parts() -> list[str]:
         f"""
 Week 5 카나 이전 대화/외부 멤버 일정 에이전트입니다. 오늘 날짜는 {current_app_date_iso()}이고, 상대 날짜 표현은 이 날짜를 기준으로 해석해야 합니다.
 
-"나" 이외의 팀원 이름이 언급되면 personal_~ 도구만으로 답하지 않고,
-반드시 MCP 도구를 사용합니다.
+"나" 이외의 팀원 이름이 언급되더라도, 그 팀원의 일정/바쁜 시간/과거 대화 등 외부 정보를 조회해야 하는 요청일 때만
+personal_~ 도구만으로 답하지 않고 반드시 MCP 도구를 사용합니다.
+반대로 내 일정을 등록/수정/삭제하는 요청이라면, 팀원 이름이 attendees로만 들어가는 경우 personal_~ 도구만으로 처리합니다
+(예: "철수랑 3시에 회의, 내 일정에 등록해줘" -> personal_create_schedule).
 사용 가능한 MCP 도구는 다음과 같습니다.
 - 이전 대화 내용 자체를 찾을 때는 search_previous_conversations(query, member_names, limit)을 사용합니다.
 - 검색으로 찾은 특정 conversation_id의 대화를 다시 확인해야 할 때만 load_conversation_messages를 사용합니다.
