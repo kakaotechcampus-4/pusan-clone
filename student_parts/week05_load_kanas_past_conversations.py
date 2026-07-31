@@ -489,7 +489,7 @@ def delete_shared_schedule(
 
 
 @tool(args_schema=ListSharedSchedulesInput)
-def list_shared_schedules(  # 외부 공유 저장소에 실제로 등록된 row를 확인할 때 사용
+def list_shared_schedules(  # 외부 공유 저장소에 실제로 등록된 row를 확인할 떄 사용
     member_names: list[str] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
