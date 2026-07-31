@@ -1,6 +1,14 @@
+import os
+
 import pytest
 
+from fixed.config import CONFIG
 from student_parts.week05_load_kanas_past_conversations import build_week05_agent
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_LLM_TESTS") != "1" or not CONFIG.has_openai_key,
+    reason="RUN_LLM_TESTS=1과 PROXY_TOKEN이 필요한 LLM 통합 테스트입니다.",
+)
 
 
 def _called_tool_names(result: dict) -> list[str]:
