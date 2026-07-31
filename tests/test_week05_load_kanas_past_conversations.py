@@ -144,3 +144,16 @@ def test_collect_member_schedules_skips_mcp_when_only_me(monkeypatch):
 
     assert len(payload["rows"]) == 1
     assert payload["rows"][0]["member_name"] == "나"
+
+
+def test_week05_tool_guidance_separates_external_only_and_mixed_requests():
+    prompt = week05.week05_system_prompt()
+
+    assert "member_names에 '나'가 없고" in prompt
+    assert "이 경우 collect_member_schedules를 사용하지 않는다" in prompt
+    assert "member_names에 '나'가 포함되어" in prompt
+    assert "함께 확인해야 할 때만 collect_member_schedules를 사용한다" in prompt
+    assert "'나'를 제외한 외부 멤버만 요청됐을 때" in (
+        week05.extract_schedules_from_history.description
+    )
+    assert "'나'가 포함된 요청에서만" in week05.collect_member_schedules.description

@@ -241,7 +241,9 @@ class LoadConversationMessagesInput(BaseModel):
 class ExtractSchedulesFromHistoryInput(BaseModel):
     """외부 멤버 일정 추출 입력입니다."""
 
-    member_names: list[str]
+    member_names: list[str] = Field(
+        description="'나'를 제외하고 일정 기록을 조회할 외부 멤버 이름 목록입니다."
+    )
     date_from: str
     date_to: str
 
@@ -279,7 +281,9 @@ class ListSharedSchedulesInput(BaseModel):
 class CollectMemberSchedulesInput(BaseModel):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
 
-    member_names: list[str]
+    member_names: list[str] = Field(
+        description="'나'를 반드시 포함한 내 일정과 외부 멤버 이름 목록입니다."
+    )
     date_from: str
     date_to: str
 
@@ -426,10 +430,10 @@ def load_conversation_messages(conversation_id: str) -> str:
 
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
-def extract_schedules_from_history(  # 특정 사람의 과거 기록에서 바쁜 시간을 찾을 떄 사용
+def extract_schedules_from_history(  # 특정 사람의 과거 기록에서 바쁜 시간을 찾을 때 사용
     member_names: list[str], date_from: str, date_to: str
 ) -> str:
-    """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
+    """'나'를 제외한 외부 멤버만 요청됐을 때 이전 대화에서 일정을 추출합니다."""
 
     # TODO: call_mcp_tool_sync("extract_schedules_from_history", args)를 호출해 외부 멤버 busy-time rows를 반환하세요.
     return call_mcp_tool_sync(
@@ -515,7 +519,7 @@ def list_shared_schedules(  # 외부 공유 저장소에 실제로 등록된 row
 def collect_member_schedules(
     member_names: list[str], date_from: str, date_to: str
 ) -> str:
-    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
+    """'나'가 포함된 요청에서만 내 일정과 외부 멤버 일정을 함께 모읍니다."""
 
     # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
 
@@ -579,11 +583,13 @@ def week05_prompt_parts() -> list[str]:
             "검색하는 도구다. 두 도구를 혼동하지 않는다."
         ),
         (
-            "특정 외부 멤버의 날짜 범위 일정만 필요하면 "
-            "extract_schedules_from_history를 사용한다."
+            "요청한 member_names에 '나'가 없고 외부 멤버의 날짜 범위 일정만 필요하면 "
+            "extract_schedules_from_history를 사용한다. "
+            "이 경우 collect_member_schedules를 사용하지 않는다."
         ),
         (
-            "나를 포함한 여러 사람의 바쁜 시간을 함께 확인해야 하면 "
+            "요청한 member_names에 '나'가 포함되어 내 일정과 외부 멤버의 바쁜 시간을 "
+            "함께 확인해야 할 때만 "
             "collect_member_schedules를 사용한다. "
             "collect_member_schedules는 내 일정과 외부 멤버 일정을 이미 함께 조회하므로 "
             "같은 요청에서 extract_schedules_from_history를 중복 호출하지 않는다."
