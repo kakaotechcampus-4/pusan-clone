@@ -27,6 +27,7 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, join_system_prompt
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
 from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
+from collections import OrderedDict
 
 
 _WEEK05_AGENT: Any | None = None
@@ -267,13 +268,14 @@ class CollectMemberSchedulesInput(BaseModel):
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
     """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
 
+    members = [m for m in (row.get("attendees") or row.get("members") or []) if str(m).strip() and str(m).strip() != "나"]
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if members else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
         end_time=row.get("end_time"),
-        members=row.get("attendees") or row.get("members") or [],
+        members=members,
         original_text=str(row.get("title") or ""),
     )
 
