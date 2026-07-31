@@ -265,6 +265,8 @@ def week02_prompt_parts() -> list[str]:
         "Week 1 tool 결과 JSON을 이미 받은 경우에는 tool을 다시 호출하지 않고 payload를 읽어 structured_response로 변환한다.",
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
         "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다.",
+        "members에는 조사나 호칭을 뗀 순수한 이름만 넣는다. "
+        "'하린이와', '하린이', '서연이랑', '서연이는'처럼 조사가 붙은 형태는 '하린', '하린', '서연', '서연'으로 바꿔서 넣는다. ",
         "members 필드가 비어있지 않다면, kind 필드는 반드시 group_schedule로 설정한다.",
     ]
 
