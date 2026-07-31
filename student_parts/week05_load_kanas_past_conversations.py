@@ -291,7 +291,11 @@ def _collect_member_schedules(
     my_rows = []
     for row in personal_schedules:
         req = _structured_request_from_schedule_row(row)
-        if not req.date or not (normalized_date_from <= req.date <= normalized_date_to):
+        if not req.date:
+            continue
+        if normalized_date_from and req.date < normalized_date_from:
+            continue
+        if normalized_date_to and req.date > normalized_date_to:
             continue
         my_rows.append({
             "member_name": "나",
