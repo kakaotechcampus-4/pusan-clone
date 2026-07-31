@@ -196,6 +196,9 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
 
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
     # Week 3 이후 저장 경로를 통과한 확정 일정. 예외는 삼키지 않고 tool 경계에서 한 번만 처리한다.
+    # kind를 지정하지 않아 personal_schedule과 group_schedule을 함께 읽는다. 이 목록은 개인 일정
+    # 목록이 아니라 회의 조율에 쓸 내 busy-time이므로, 이미 확정된 그룹 일정도 바쁜 시간에 포함해야 한다.
+    # personal_schedule로 좁히면 참석 중인 그룹 회의가 빠져 그 시간이 비어 있는 것처럼 계산된다.
     saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
 
     # Week 3 저장 경로가 Week 1 임시 id를 schedule_id로 그대로 쓰므로, 같은 id는 이미 저장된 일정이다.
@@ -229,6 +232,9 @@ def _date_range_error(tool_name: str, date_from: str, date_to: str) -> dict[str,
     형식 보정은 store 경계 책임이므로 여기서 고쳐 쓰지 않고 되돌려 보냅니다.
     """
 
+    # 실패 payload 모양은 같으므로 한 번만 선언하고, 분기마다 새 dict로 확장해 반환한다.
+    error_payload: dict[str, Any] = {"ok": False, "tool_name": tool_name, "rows": []}
+
     invalid_fields: list[str] = []
     for field_name, value in (("date_from", date_from), ("date_to", date_to)):
         date_text = _date_only_text(value)
@@ -241,18 +247,14 @@ def _date_range_error(tool_name: str, date_from: str, date_to: str) -> dict[str,
             invalid_fields.append(field_name)
     if invalid_fields:
         return {
-            "ok": False,
-            "tool_name": tool_name,
-            "rows": [],
+            **error_payload,
             "error": "조회 범위 날짜는 실제로 존재하는 YYYY-MM-DD 값이어야 합니다.",
             "fields": invalid_fields,
         }
 
     if _date_only_text(date_from) > _date_only_text(date_to):
         return {
-            "ok": False,
-            "tool_name": tool_name,
-            "rows": [],
+            **error_payload,
             "error": "date_from이 date_to보다 늦습니다. 시작일과 종료일을 바꿔 다시 호출하세요.",
             "fields": ["date_from", "date_to"],
         }
@@ -454,14 +456,18 @@ def load_conversation_messages(conversation_id: str) -> str:
     """외부 SQLite 데이터베이스에서 특정 이전 대화의 모든 메시지를 불러옵니다."""
 
     # TODO: call_external_tool_payload("load_conversation_messages", {"conversation_id": ...}) 결과를 JSON으로 반환하세요.
+    error_payload: dict[str, Any] = {
+        "ok": False,
+        "tool_name": "load_conversation_messages",
+        "rows": [],
+    }
+
     # MCP subprocess를 띄우기 전에 필수 인자부터 검증한다.
     conversation_id_text = str(conversation_id or "").strip()
     if not conversation_id_text:
         return json_payload(
             {
-                "ok": False,
-                "tool_name": "load_conversation_messages",
-                "rows": [],
+                **error_payload,
                 "error": "conversation_id가 필요합니다. search_previous_conversations 결과의 conversation_id를 사용하세요.",
                 "field": "conversation_id",
             }
@@ -475,21 +481,11 @@ def load_conversation_messages(conversation_id: str) -> str:
     except json.JSONDecodeError as error:
         # 외부 tool이 JSON이 아닌 문자열(에러 메시지 등)을 돌려준 경우.
         return json_payload(
-            {
-                "ok": False,
-                "tool_name": "load_conversation_messages",
-                "rows": [],
-                "error": f"외부 대화 메시지 응답을 JSON으로 읽지 못했습니다: {error}",
-            }
+            {**error_payload, "error": f"외부 대화 메시지 응답을 JSON으로 읽지 못했습니다: {error}"}
         )
     except Exception as error:
         return json_payload(
-            {
-                "ok": False,
-                "tool_name": "load_conversation_messages",
-                "rows": [],
-                "error": f"외부 대화 메시지 조회에 실패했습니다: {error}",
-            }
+            {**error_payload, "error": f"외부 대화 메시지 조회에 실패했습니다: {error}"}
         )
 
     # rows의 sender/content/created_at 순서를 가공하지 않고 그대로 전달한다.
@@ -539,12 +535,13 @@ def create_shared_schedule(
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
     # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
+    error_payload: dict[str, Any] = {"ok": False, "tool_name": "create_shared_schedule"}
+
     # store는 date가 없으면 ValueError를 던진다. 어느 필드가 비었는지 붙여 되돌려 준다.
     if not str(date or "").strip():
         return json_payload(
             {
-                "ok": False,
-                "tool_name": "create_shared_schedule",
+                **error_payload,
                 "error": "공유 일정 등록에는 날짜(date)가 필요합니다.",
                 "field": "date",
             }
@@ -564,13 +561,7 @@ def create_shared_schedule(
     try:
         return call_mcp_tool_sync("create_shared_schedule", args)
     except Exception as error:
-        return json_payload(
-            {
-                "ok": False,
-                "tool_name": "create_shared_schedule",
-                "error": f"공유 일정 등록에 실패했습니다: {error}",
-            }
-        )
+        return json_payload({**error_payload, "error": f"공유 일정 등록에 실패했습니다: {error}"})
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -581,15 +572,19 @@ def delete_shared_schedule(
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
     # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
+    error_payload: dict[str, Any] = {
+        "ok": False,
+        "tool_name": "delete_shared_schedule",
+        "deleted_count": 0,
+        "deleted": [],
+    }
+
     # 조건이 둘 다 비면 store는 아무것도 지우지 않고 빈 목록만 돌려준다.
     # 그대로 통과시키면 "삭제했다"로 읽히므로 무엇으로 지울지 먼저 확인한다.
     if not str(schedule_id or "").strip() and not str(source_conversation_id or "").strip():
         return json_payload(
             {
-                "ok": False,
-                "tool_name": "delete_shared_schedule",
-                "deleted_count": 0,
-                "deleted": [],
+                **error_payload,
                 "error": "삭제 조건이 없습니다. schedule_id 또는 source_conversation_id를 지정하세요. "
                 "id를 모르면 list_shared_schedules로 먼저 조회하세요.",
                 "fields": ["schedule_id", "source_conversation_id"],
@@ -603,15 +598,7 @@ def delete_shared_schedule(
     try:
         return call_mcp_tool_sync("delete_shared_schedule", args)
     except Exception as error:
-        return json_payload(
-            {
-                "ok": False,
-                "tool_name": "delete_shared_schedule",
-                "deleted_count": 0,
-                "deleted": [],
-                "error": f"공유 일정 삭제에 실패했습니다: {error}",
-            }
-        )
+        return json_payload({**error_payload, "error": f"공유 일정 삭제에 실패했습니다: {error}"})
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -657,18 +644,13 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
     if date_error is not None:
         return json_payload(date_error)
 
+    error_payload: dict[str, Any] = {"ok": False, "tool_name": "collect_member_schedules", "rows": []}
+
     # helper가 던진 앱 SQLite 예외를 tool 경계인 여기서 처음 잡는다.
     try:
         personal_schedules = _personal_schedules_for_current_scope()
     except Exception as error:
-        return json_payload(
-            {
-                "ok": False,
-                "tool_name": "collect_member_schedules",
-                "rows": [],
-                "error": f"내 일정을 읽지 못했습니다: {error}",
-            }
-        )
+        return json_payload({**error_payload, "error": f"내 일정을 읽지 못했습니다: {error}"})
 
     try:
         result = _collect_member_schedules(
@@ -678,14 +660,7 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
             personal_schedules=personal_schedules,
         )
     except Exception as error:
-        return json_payload(
-            {
-                "ok": False,
-                "tool_name": "collect_member_schedules",
-                "rows": [],
-                "error": f"일정 수집에 실패했습니다: {error}",
-            }
-        )
+        return json_payload({**error_payload, "error": f"일정 수집에 실패했습니다: {error}"})
     return json_payload(result)
 
 
