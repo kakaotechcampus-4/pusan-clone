@@ -246,6 +246,108 @@ def test_collect_member_schedules_excludes_personal_schedule_outside_date_range(
     assert titles == ["범위 안 일정"]
 
 
+def test_collect_member_schedules_includes_personal_schedule_when_date_bounds_are_plain_date(
+    monkeypatch, stub_sqlite_store
+):
+    """date_from/date_to가 순수 날짜 문자열("2026-07-30")일 때 그 날짜의 personal_schedules
+    일정이 정상적으로 rows에 포함되는지 확인하는 기준선 테스트입니다."""
+
+    spy = _SpyMcpToolSync(return_value=_mcp_envelope(rows=[]))
+    monkeypatch.setattr(w5, "call_mcp_tool_sync", spy)
+
+    schedule = {
+        "id": "temp_plain_date",
+        "title": "순수 날짜 일정",
+        "date": "2026-07-30",
+        "start_time": "09:00",
+        "end_time": "10:00",
+        "attendees": [],
+        "session_id": DEFAULT_SESSION_SCOPE,
+    }
+
+    payload = w5._collect_member_schedules(
+        member_names=[],
+        date_from="2026-07-30",
+        date_to="2026-07-30",
+        personal_schedules=[schedule],
+    )
+
+    titles = [row["title"] for row in payload["rows"]]
+    assert titles == ["순수 날짜 일정"]
+
+
+def test_collect_member_schedules_includes_personal_schedule_when_date_bounds_are_iso_datetime(
+    monkeypatch, stub_sqlite_store
+):
+    """이 테스트가 잡으려는 실패: personal_schedules를 필터링할 때 정규화 전 원본 date_from/date_to를
+    그대로 문자열 비교에 써서, date_from/date_to가 "2026-07-30T00:00:00"처럼 ISO datetime
+    형식일 때 "2026-07-30" < "2026-07-30T00:00:00"이 True가 되어 그날 개인 일정이 부당하게
+    제외되던 회귀입니다."""
+
+    spy = _SpyMcpToolSync(return_value=_mcp_envelope(rows=[]))
+    monkeypatch.setattr(w5, "call_mcp_tool_sync", spy)
+
+    schedule = {
+        "id": "temp_iso_datetime",
+        "title": "ISO datetime 범위 일정",
+        "date": "2026-07-30",
+        "start_time": "09:00",
+        "end_time": "10:00",
+        "attendees": [],
+        "session_id": DEFAULT_SESSION_SCOPE,
+    }
+
+    payload = w5._collect_member_schedules(
+        member_names=[],
+        date_from="2026-07-30T00:00:00",
+        date_to="2026-07-30T23:59:59",
+        personal_schedules=[schedule],
+    )
+
+    titles = [row["title"] for row in payload["rows"]]
+    assert titles == ["ISO datetime 범위 일정"]
+
+
+def test_collect_member_schedules_excludes_personal_schedule_before_iso_datetime_date_from(
+    monkeypatch, stub_sqlite_store
+):
+    """date_from이 ISO datetime일 때도 실제로 그 범위보다 이전 날짜인 personal_schedules
+    일정은 정상적으로 제외되는지 확인해, 정규화 수정이 필터링 자체를 무력화하지 않았음을
+    보장합니다."""
+
+    spy = _SpyMcpToolSync(return_value=_mcp_envelope(rows=[]))
+    monkeypatch.setattr(w5, "call_mcp_tool_sync", spy)
+
+    schedule_in_range = {
+        "id": "temp_in_range",
+        "title": "범위 안 일정",
+        "date": "2026-07-30",
+        "start_time": "09:00",
+        "end_time": "10:00",
+        "attendees": [],
+        "session_id": DEFAULT_SESSION_SCOPE,
+    }
+    schedule_before_range = {
+        "id": "temp_before_range",
+        "title": "범위 이전 일정",
+        "date": "2026-07-29",
+        "start_time": "09:00",
+        "end_time": "10:00",
+        "attendees": [],
+        "session_id": DEFAULT_SESSION_SCOPE,
+    }
+
+    payload = w5._collect_member_schedules(
+        member_names=[],
+        date_from="2026-07-30T00:00:00",
+        date_to="2026-07-31T23:59:59",
+        personal_schedules=[schedule_in_range, schedule_before_range],
+    )
+
+    titles = [row["title"] for row in payload["rows"]]
+    assert titles == ["범위 안 일정"]
+
+
 # ---------------------------------------------------------------------------
 # 2. 빈 값/None 입력
 # ---------------------------------------------------------------------------
