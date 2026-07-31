@@ -367,9 +367,20 @@ def create_shared_schedule(
     schedule_id: str | None = None,
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
+    args = {
+        "member_name": member_name,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "notes": notes,
+        "source_conversation_id": source_conversation_id,
+        "schedule_id": schedule_id,
+    }
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    result = call_mcp_tool_sync("create_shared_schedule", args)
+
+    return result
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -426,6 +437,7 @@ def week05_tools() -> list[Any]:
         extract_schedules_from_history,
         list_shared_schedules,
         collect_member_schedules,
+        create_shared_schedule,
     ]
 
 
