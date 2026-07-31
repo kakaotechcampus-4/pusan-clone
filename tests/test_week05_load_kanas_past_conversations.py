@@ -353,9 +353,9 @@ def test_collect_member_schedules_excludes_personal_schedule_before_iso_datetime
 # ---------------------------------------------------------------------------
 
 
-def test_collect_member_schedules_with_empty_member_names_still_calls_mcp(monkeypatch, stub_sqlite_store):
-    """이 테스트가 잡으려는 실패: member_names=[]일 때 normalize 결과([])를 그대로 MCP에
-    넘기다가 크래시하거나, 빈 리스트를 걸러내지 않고 조용히 잘못된 값을 넘기는 회귀."""
+def test_collect_member_schedules_with_empty_member_names_skips_mcp_call(monkeypatch, stub_sqlite_store):
+    """정규화된 멤버 목록이 비면 어차피 store가 빈 rows를 돌려주므로, 매번 새 MCP 세션을 여는
+    비용을 아끼기 위해 call_mcp_tool_sync 자체를 호출하지 않아야 합니다."""
 
     spy = _SpyMcpToolSync(return_value=_mcp_envelope(rows=[], schedule_summary="조회된 외부 일정이 없습니다."))
     monkeypatch.setattr(w5, "call_mcp_tool_sync", spy)
@@ -364,8 +364,38 @@ def test_collect_member_schedules_with_empty_member_names_still_calls_mcp(monkey
         member_names=[], date_from="2026-07-30", date_to="2026-07-30", personal_schedules=[]
     )
 
-    assert spy.calls[0][1]["member_names"] == []
+    assert spy.calls == []
     assert payload["rows"] == []
+
+
+def test_collect_member_schedules_with_blank_member_names_skips_mcp_call(monkeypatch, stub_sqlite_store):
+    """공백 문자열만 있는 member_names도 normalize_external_member_names를 거치면 빈 리스트가
+    되므로, 이 경우도 MCP 호출을 건너뛰어야 합니다."""
+
+    spy = _SpyMcpToolSync(return_value=_mcp_envelope(rows=[]))
+    monkeypatch.setattr(w5, "call_mcp_tool_sync", spy)
+
+    payload = w5._collect_member_schedules(
+        member_names=["  ", ""], date_from="2026-07-30", date_to="2026-07-30", personal_schedules=[]
+    )
+
+    assert spy.calls == []
+    assert payload["rows"] == []
+
+
+def test_collect_member_schedules_with_nonempty_member_names_still_calls_mcp(monkeypatch, stub_sqlite_store):
+    """멤버가 실제로 있을 때는 기존과 동일하게 MCP를 호출해야 하는 회귀 방지 테스트입니다."""
+
+    spy = _SpyMcpToolSync(return_value=_mcp_envelope())
+    monkeypatch.setattr(w5, "call_mcp_tool_sync", spy)
+
+    payload = w5._collect_member_schedules(
+        member_names=["규진"], date_from="2026-07-30", date_to="2026-07-30", personal_schedules=[]
+    )
+
+    assert len(spy.calls) == 1
+    assert spy.calls[0][1]["member_names"] == ["규진"]
+    assert any(row.get("member_name") == "규진" for row in payload["rows"])
 
 
 def test_load_conversation_messages_passes_through_empty_conversation_id(monkeypatch):
