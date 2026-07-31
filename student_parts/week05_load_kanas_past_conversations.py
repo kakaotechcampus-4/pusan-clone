@@ -325,7 +325,7 @@ def search_previous_conversations(
             "search_previous_conversations",
             {"query": query, "member_names": member_names, "limit": limit},
         )
-    except Exception as exc:
+    except ExceptionGroup as exc:
         return json_payload({"ok": False, "tool_name": "search_previous_conversations", "error": str(exc)})
 
 
@@ -335,7 +335,7 @@ def load_conversation_messages(conversation_id: str) -> str:
 
     try:
         payload = call_external_tool_payload("load_conversation_messages", {"conversation_id": conversation_id})
-    except Exception as exc:
+    except ExceptionGroup as exc:
         return json_payload({"ok": False, "tool_name": "load_conversation_messages", "error": str(exc)})
     return json_payload(payload)
 
@@ -349,7 +349,7 @@ def extract_schedules_from_history(member_names: list[str], date_from: str, date
             "extract_schedules_from_history",
             {"member_names": member_names, "date_from": date_from, "date_to": date_to},
         )
-    except Exception as exc:
+    except ExceptionGroup as exc:
         return json_payload({"ok": False, "tool_name": "extract_schedules_from_history", "error": str(exc)})
 
 
@@ -402,7 +402,7 @@ def list_shared_schedules(
                 "limit": limit,
             },
         )
-    except Exception as exc:
+    except ExceptionGroup as exc:
         return json_payload({"ok": False, "tool_name": "list_shared_schedules", "error": str(exc)})
 
 
@@ -418,7 +418,7 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
             date_to=date_to,
             personal_schedules=personal_schedules,
         )
-    except Exception as exc:
+    except ExceptionGroup as exc:
         return json_payload({"ok": False, "tool_name": "collect_member_schedules", "error": str(exc)})
     return json_payload({"ok": True, "tool_name": "collect_member_schedules", **result})
 
