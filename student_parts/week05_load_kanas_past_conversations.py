@@ -288,7 +288,7 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     normalized_members = normalize_external_member_names(member_names)
-    norm_from, norm_to = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
+    norm_from, norm_to = normalize_external_schedule_date_bounds(normalized_members, date_from, date_to)
     rows: list[dict[str, Any]] = []
     
     # 내 일정
