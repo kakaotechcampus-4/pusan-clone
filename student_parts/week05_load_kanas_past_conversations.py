@@ -494,6 +494,7 @@ def week05_prompt_parts() -> list[str]:
 - 내 일정(DB 저장 + 현재 임시) + 팀원 일정(외부 기록)을 한 번에 조회
 - 반환: {rows: [...], schedule_summary: "모두의 일정 자연어 설명"}
 - "내일 모두 가능한 시간 있어?" 같은 회의 조율 질문에 사용
+- 공통 가능 시간과 최종 회의 시간을 결정하는 부분은 week6에서 구현된다. 
 
 ### 공유 일정 저장소 (New)
 **list_shared_schedules(member_names, date_from, date_to, limit)**
