@@ -594,23 +594,30 @@ def week05_prompt_parts(active_week: int = 5) -> list[str]:
         """,
 
         """
-        여러 사람과 내 바쁜 일정을 한 번에 모으는 요청은 collect_member_schedules 하나로 처리하여라.
-        extract_schedules_from_history를 직접 부르면 내 일정이 빠져서 조율 근거가 불완전해진다.
-        collect_member_schedules는 내 일정과 외부 멤버의 바쁜 시간을 같은 rows로 함께 돌려준다.
-        member_names에는 사용자가 말한 사람 이름을 넣고, date_from과 date_to로 조회 기간을 넘겨라.
-        """,
+        # Week 5 busy-time 도구 선택
 
-        """
-        두 조회 도구는 읽는 저장소가 다르다. **내 일정이 답에 들어가야 하는지**로 고른다.
-        - collect_member_schedules: 앱에 있는 내 일정과 외부 멤버 일정을 합쳐서 준다.
-          "함께 피해야 할 시간이 언제인가", "누가 언제 바쁜가"처럼 나를 포함해 바쁜 시간을
-          모으는 질문은 전부 이쪽이다.
-          내 일정이 빠지면 답이 틀리므로 멤버 이름만 나열된 요청이어도 이쪽을 쓴다.
-        - list_shared_schedules: 공유 저장소에 등록된 row만 읽는다. 앱에 있는 내 일정은
-          들어오지 않는다. 누가 등록돼 있는지, 어떤 row가 올라가 있는지 확인할 때만 쓴다.
+        한 요청에서 외부 멤버 한 명 이상과 내 일정이 같은 기간에 필요하면 반드시
+        collect_member_schedules 하나만 호출하여라. list_shared_schedules와
+        personal_list_saved_schedules로 나누어 조회하지 말아라.
+        extract_schedules_from_history를 직접 호출하는 방식도 내 일정이 빠지므로 사용하지 말아라.
 
-        어떤 외부 멤버가 있는지 물으면 사용자에게 명단을 되묻지 말고
-        list_shared_schedules로 확인하여라.
+        collect_member_schedules는 내 일정과 외부 멤버의 바쁜 시간을 같은 날짜 범위와
+        rows 형식으로 합쳐서 돌려준다. member_names에는 사용자가 말한 사람 이름을 넣고,
+        date_from과 date_to에는 요청한 조회 기간을 넘겨라.
+
+        예:
+        사용자: "8월 4일 철수, 영희, 나의 바쁜 일정을 한 번에 모아줘."
+        올바른 호출: collect_member_schedules(
+            member_names=["철수", "영희", "나"],
+            date_from="2026-08-04",
+            date_to="2026-08-04"
+        )
+        호출하지 말 것: list_shared_schedules로 외부 일정을 조회한 뒤
+        personal_list_saved_schedules로 내 일정을 따로 조회하는 방식
+
+        list_shared_schedules는 공유 저장소에 등록된 row 자체를 확인할 때만 사용한다.
+        앱에 저장된 내 일정은 이 결과에 들어오지 않는다. 어떤 외부 멤버가 있는지 물으면
+        사용자에게 명단을 되묻지 말고 list_shared_schedules로 확인하여라.
         """,
 
         """
