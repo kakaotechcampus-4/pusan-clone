@@ -305,14 +305,38 @@ def _collect_member_schedules(
         })
 
     # 외부 멤버 일정
-    mcp_result = json.loads(call_mcp_tool_sync("extract_schedules_from_history", {"member_names": normalized_members, "date_from": norm_from, "date_to": norm_to}))
-    rows.extend(mcp_result.get("rows", []))
+    external_members = [m for m in normalized_members if m != "나"]
+    if external_members:
+        mcp_result = json.loads(call_mcp_tool_sync("extract_schedules_from_history", {"member_names": external_members, "date_from": norm_from, "date_to": norm_to}))
+        rows.extend(mcp_result.get("rows", []))
 
     return {
         "ok": True, "tool_name": "collect_member_schedules",
-        "rows": rows, "schedule_summary": external_schedule_summary(rows)
+        "rows": rows, "schedule_summary": external_schedule_summary(rows), "merged_summary": _merged_summary(rows)
     }
 
+def _merged_summary(rows: list[dict[str, Any]]) -> str:
+    groups: "OrderedDict[tuple, dict[str, Any]]" = OrderedDict()
+    for row in rows:
+        key = (row.get("date"), (row.get("title") or "").strip(), row.get("start_time"))
+        group = groups.setdefault(key, {"row": row, "members": []})
+        name = row.get("member_name")
+        if name and name not in group["members"]:
+            group["members"].append(name)
+
+    if not groups:
+        return "조회된 일정이 없습니다."
+
+    lines = []
+    for g in groups.values():
+        r = g["row"]
+        members = ", ".join(g["members"])
+        date_text = r.get("date") or "날짜 미정"
+        start = r.get("start_time") or "시간 미정"
+        end = r.get("end_time") or "시간 미정"
+        title = (r.get("title") or "제목 없음")
+        lines.append(f"- {title} | {date_text} {start}-{end} | 참여자: {members}")
+    return "\n".join(lines)
 
 @tool(args_schema=SearchPreviousConversationsInput)
 def search_previous_conversations(
@@ -425,14 +449,18 @@ def week05_prompt_parts() -> list[str]:
         "내가 아닌 다른 사람의 과거 대화나 일정을 물어보면 외부 MCP 도구로 조회한다. ",
         "일정 조회 대상이 '나' 본인인지 다른 사람(외부 멤버)인지에 따라 도구를 구분한다. "
         "personal_list_saved_schedules와 list_saved_requests는 '나'의 앱 저장 일정만 조회한다. "
+
         "특정 외부 멤버의 일정만 물으면 extract_schedules_from_history에 그 사람 이름을 member_names로 넣어 조회한다. "
         "예를 들어 '하린이 일정 보여줘'는 personal_list_saved_schedules가 아니라 extract_schedules_from_history(member_names=['하린'])로 조회한다. ",
+
         "'나와 하린' 처럼 나와 외부 멤버를 함께, 또는 여러 사람의 일정을 한 번에 정리·비교해야 하면 "
-        "collect_member_schedules를 사용한다. 결과 rows에는 '나'와 외부 멤버 일정이 같은 구조로 들어 있고, "
-        "'개인별로'/'각자'/'각각' 같은 요청은 이 rows를 member_name 기준으로 나눠서 답한다. ",
+        "항상 collect_member_schedules 하나로 처리한다. personal_list_saved_schedules와 collect_member_schedules를 둘 다 호출하지 않는다. ",
+        "collect_member_schedules 결과에는 개인별 요약(schedule_summary)과 약속별로 묶은 요약(merged_summary)이 둘 다 들어있다. "
+        "'각각'/'개별'/'각자' 요청에는 schedule_summary를 개인별로 나눠서 답하고, "
+        "'모두'/'전체'/'종합' 요청에는 merged_summary를 그대로 사용해 약속별로 참여자와 함께 답한다. ",
+        
         "외부 멤버의 이전 대화 내용 자체가 필요하면 search_previous_conversations(query에는 사람 이름이나 핵심어 하나)로 검색하고, "
-        "특정 대화 전문이 필요하면 그 conversation_id로 load_conversation_messages를 호출한다. "
-        "특정 사람을 찾을 때는 query를 늘리지 말고 member_names에 그 사람 이름을 넣는다. ",
+        "특정 대화 전문이 필요하면 그 conversation_id로 load_conversation_messages를 호출한다. ",
         "공유 일정 저장소에 등록된 일정을 확인할 때는 list_shared_schedules를 사용한다. ",
         "일정 조회에는 member_names와 date_from, date_to 범위를 전달한다. ",
 
