@@ -9,6 +9,13 @@
     거짓 실패가 난다. 그래서 통과/실패가 아니라 **비율**을 리포트한다.
   - 호출마다 API 토큰을 쓴다.
 
+케이스는 5개 그룹으로 나뉜다.
+    routing  주차 간 출처 경계(week3/week4/week5 tool 중 어느 것을 고르나)
+    include  내 일정을 결과에 넣을지
+    query    글자 검색이라 query 를 짧게 보내는지
+    askback  모호한 요청에 값을 지어내지 않는지
+    ground   조회하지 않고 "없다"고 단정하지 않는지
+
 실행:
     uv run python tests/live_check_week05.py            # 케이스당 1회
     uv run python tests/live_check_week05.py --repeat 3 # 흔들리는 케이스 판단용
@@ -169,8 +176,8 @@ CASES: list[Case] = [
     # 모호할 때 지어내지 않기
     Case("askback", "기간 없음", "철수 일정 알려줘", asks_back),
     Case("askback", "날짜 역전", "철수 7월 18일부터 7월 14일까지 일정 알려줘", asks_back),
-    # 위 표현은 agent 가 collect 를 골라서 collect 의 가드에만 걸려 왔다.
-    # extract 로 유도되는 표현도 넣어 두 tool 의 가드를 모두 지난다.
+    # 위 표현은 agent 가 include_me 를 골라서 그쪽 가드에만 걸려 왔다.
+    # exclude_me 로 유도되는 표현도 넣어 두 tool 의 가드를 모두 지난다.
     Case("askback", "날짜 역전 (extract 유도)",
          "철수 일정만 7월 18일부터 7월 14일까지 뽑아줘", asks_back),
     Case("askback", "삭제 대상 없음", "공유 일정 하나 삭제해줘", asks_back),

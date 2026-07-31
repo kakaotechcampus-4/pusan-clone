@@ -178,18 +178,39 @@ _WEEK05_AGENT: Any | None = None
 #     Week 1~5 tool을 가진 agent를 한 번만 만들고 재사용합니다.
 #
 #
-# [구현 메모] 위 가이드와 다른 점 (경위와 근거는 PR 본문에)
-#   - 가이드에 없는 순수 helper 3개를 추가했습니다. MCP/저장소 접근이 있는 함수에서 '판단'만
-#     떼어내 mocking 없이 테스트하기 위해서입니다.
-#       _external_member_names_excluding_me / _personal_schedule_rows / _is_within_date_range
-#   - _personal_schedules_for_current_scope(app_store=None, limit=200): 인자는 모두 선택이라
-#     가이드의 무인자 호출 그대로 씁니다.
-#   - collect_member_schedules(..., include_my_schedules): 내 일정을 넣을지를
-#     member_names 에 "나"가 있는지로 유추하지 않고 인자로 받습니다.
-#   - delete_shared_schedule: 삭제 대상이 비면 스키마에서 막습니다. 나머지 wrapper 는
-#     가공 없는 passthrough 입니다.
-#   - tool 선택 기준과 인자 채우는 규칙은 system prompt 가 아니라 각 tool 의 description 과
-#     입력 스키마 필드에 둡니다.
+# [구현 메모] 위 가이드와 다른 점 (경위와 근거는 PR 본문 및 리뷰 답글에)
+#
+#   1. agent 가 보는 tool 이름과 파이썬 함수명이 다릅니다.
+#        collect_member_schedules        -> "extract_schedules_of_members_include_me"
+#        extract_schedules_from_history  -> "extract_schedules_of_members_exclude_me"
+#      두 tool 의 실제 차이가 "내 일정을 포함하는지" 하나뿐인데 원래 이름이 그걸 드러내지
+#      않아 바꿨습니다(PR #166 리뷰). @tool 로 노출 이름만 바꿔 파이썬 함수명은 유지되므로
+#      Week 6 이 import 해도 깨지지 않습니다. baseline week03 의
+#      @tool("personal_create_schedule") 과 같은 방식입니다.
+#      extract_schedules_from_history 는 MCP 서버 tool 의 이름이기도 해서
+#      call_mcp_tool_sync 호출 문자열로는 그대로 씁니다.
+#
+#   2. 가이드에 없는 순수 helper 4개를 추가했습니다. MCP/저장소 접근이 있는 함수에서
+#      '판단'만 떼어내 mocking 없이 테스트하기 위해서입니다.
+#        _external_member_names_excluding_me : 외부 조회 대상에서 "나" 제외
+#        _personal_schedule_rows             : 내 일정 -> 공통 row 스키마 성형
+#        _is_within_date_range               : 날짜 범위 판정(형식 불명이면 포함)
+#        _validate_date_order                : 조회 tool 3종의 날짜 역전 검증(스키마에서 호출)
+#      _validate_date_order 는 fixed/ 의 normalize_external_schedule_date_bounds 를
+#      호출할 뿐 값을 바꾸지 않습니다(정규화가 아니라 판정).
+#
+#   3. 시그니처를 바꾼 곳
+#        _personal_schedules_for_current_scope(app_store=None, limit=200)
+#          인자는 모두 선택이라 가이드의 무인자 호출 그대로 씁니다.
+#        collect_member_schedules(..., include_my_schedules)
+#          내 일정을 넣을지를 member_names 에 "나"가 있는지로 유추하지 않고 인자로 받습니다.
+#
+#   4. delete_shared_schedule 은 삭제 대상이 비면 스키마에서 막습니다.
+#      나머지 wrapper 는 가공 없는 passthrough 입니다.
+#
+#   5. tool 선택 기준과 인자 채우는 규칙은 system prompt 가 아니라 각 tool 의 description 과
+#      입력 스키마 필드에 둡니다. system prompt 에는 tool 하나만 봐서는 알 수 없는 것
+#      (주차 간 출처 경계, 근거 규범)만 남깁니다.
 
 
 call_mcp_tool = call_local_mcp_tool
@@ -498,8 +519,8 @@ def _collect_member_schedules(
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
         member_names, date_from, date_to
     )
-    # 날짜 역전은 CollectMemberSchedulesInput 이 스키마에서 막지만, 이 helper 를 직접
-    # 부르는 경로(테스트, Week 6 재사용)도 있어 여기서 한 번 더 확인한다.
+    # 날짜 역전은 조회 tool 3종의 입력 스키마가 _validate_date_order 로 막지만,
+    # 이 helper 를 직접 부르는 경로(테스트, Week 6 재사용)도 있어 여기서 한 번 더 확인한다.
     if normalized_date_from and normalized_date_to and normalized_date_from > normalized_date_to:
         raise ValueError(
             f"date_from({normalized_date_from})이 date_to({normalized_date_to})보다 뒤입니다."
@@ -744,7 +765,7 @@ def week05_system_prompt() -> str:
 
 
 # tool을 어떻게 고르고 인자를 어떤 형태로 넣을지는 각 tool의 description에 둔다.
-# 모델이 tool을 고르는 순간 보는 건 19개짜리 tool 목록이지, 여기에서 멀리 떨어진 이 문장이 아니다.
+# 모델이 tool을 고르는 순간 보는 건 누적된 tool 목록이지, 여기에서 멀리 떨어진 이 문장이 아니다.
 # 여기에는 tool 하나만 봐서는 알 수 없는 것 — 주차 간 출처 경계와 답변 규범 — 만 남긴다.
 WEEK05_EXTERNAL_MEMBER_PROMPT = (
     "[5주차 외부 멤버 대화·일정]\n"
@@ -761,9 +782,10 @@ WEEK05_EXTERNAL_MEMBER_PROMPT = (
     "지난 대화는 search_previous_conversations로 찾고, 전문이 필요할 때만 "
     "그 conversation_id로 load_conversation_messages를 부른다.\n"
     # 되묻기 규칙은 적용 대상 tool 을 반드시 이름으로 한정한다.
-    # "일정 조회의 날짜 범위는…" 처럼 전역으로 적었더니 날짜가 선택 인자인
-    # list_shared_schedules 까지 "기간을 알려달라"며 되묻게 만들었다(3회 중 3회).
-    # 반대로 규칙을 빼면 '철수 일정 알려줘'에 오늘 하루로 좁혀 조회한다(4회 중 4회).
+    # "일정 조회의 날짜 범위는…" 처럼 전역으로 적으면 날짜가 선택 인자인
+    # list_shared_schedules 까지 "기간을 알려달라"며 되묻게 된다.
+    # 반대로 규칙을 빼면 '철수 일정 알려줘'에 오늘 하루로 좁혀 조회한다.
+    # 그리고 "언제 되묻는지"만이 아니라 "언제 되묻지 않는지"도 같이 말해야 한다.
     "extract_schedules_of_members_exclude_me 와 "
     "extract_schedules_of_members_include_me 는 날짜가 필수 인자다. "
     "사용자가 기간을 말했거나('7월 14일부터 18일', '이번 주', '7월') 날짜를 추론할 수 있으면 "

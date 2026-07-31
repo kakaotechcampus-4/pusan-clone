@@ -4,9 +4,14 @@ LLM 호출도, MCP subprocess 기동도 필요 없는 부분만 검증한다(멘
 - _personal_schedules_for_current_scope : 실제 임시 SQLite 주입으로 마이그레이션 전환기 읽기 검증
 - _external_member_names_excluding_me   : "나" 제외 규칙(이번 주 가장 조용히 깨지는 규칙)
 - _personal_schedule_rows               : 내 일정 -> 공통 row 스키마 성형, 날짜 경계
+- _is_within_date_range                 : 형식을 못 믿으면 버리지 않고 포함
+- _collect_member_schedules             : 내 일정 포함 여부, rows 를 자르지 않는 것
+- _validate_date_order                  : 조회 tool 3종의 날짜 역전 차단
 - delete_shared_schedule                : 삭제 대상 미지정 시 fail-loud
+- 프롬프트/description 계약             : 주차 범위 선언이 다음 주차로 전파되지 않는지 등
 
-MCP 왕복이 필요한 경로(wrapper 5종의 실제 응답 계약)는 라이브 trace 검증으로 남긴다.
+MCP 왕복이 필요한 경로(wrapper 의 실제 응답 계약)는 create/delete 왕복 테스트와
+라이브 하네스(tests/live_check_week05.py)로 나눠서 본다.
 
 실행: uv run python -m unittest discover tests
 """
