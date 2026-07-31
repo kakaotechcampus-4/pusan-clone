@@ -43,9 +43,12 @@ WEEK03_TOOL_CALL_PROMPT = (
     "본인 외 참석자가 있는 그룹 일정(group_schedule)과 할 일(todo)·알림(reminder) 저장 요청은 personal_create_schedule을 쓰지 않고, "
     "extract_schedule_request로 구조화한 뒤 structured_request의 kind/title/date/start_time/end_time/members/priority/reason/original_text 값을 save_structured_request에 전달해 저장한다. "
     "저장된 구조화 요청 조회는 get_saved_request(단건 요청)과 list_saved_requests(여러 요청)를 쓰고, 저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
+    "personal_list_saved_schedules는 기본적으로 개인 일정(personal_schedule)만 조회한다. "
+    "참석자가 있는 그룹 일정을 조회/수정/삭제해야 할 때는 kind='group_schedule'을 지정하고, 개인과 그룹 일정을 모두 봐야 하면 kind를 각각 지정해 두 번 조회한다. "
     "저장된 일정 수정 요청에는 personal_update_saved_schedule에 schedule_id와 바꿀 필드만 전달한다. 바꾸지 않을 필드는 넘기지 않으며, 개인 일정은 공유 일정 복사본도 함께 갱신된다. "
     "저장된 일정 삭제 요청에는 먼저 personal_list_saved_schedules로 대상 schedule_id를 확인한 뒤 personal_delete_saved_schedules에 schedule_ids나 날짜/제목/시간 필터를 전달한다. "
-    "조건 없이 삭제하지 않으며, 사용자가 전체 삭제를 명확하게 요청할 때만 delete_all=True를 사용한다. 수정/삭제 전에는 반드시 personal_list_saved_schedules로 대상 일정을 먼저 확인한다. "
+    "수정 및 삭제 대상이 그룹 일정이거나 개인/그룹이 불확실하면, 후보 확인 시 kind='group_schedule'로도 조회해 대상을 빠뜨리지 않는다. "
+    "조건 없이 삭제하지 않으며, 사용자가 전체 삭제를 명확하게 요청할 때만 delete_all=True를 사용한다. "
     "사용자의 현재 메시지가 명확하게 저장/조회/수정/삭제를 요청할 때만 해당 tool을 호출한다. "
     "뜻을 알 수 없거나 일정과 무관한 입력에는 어떤 tool도 호출하지 말고 무엇을 도와줄지 되묻는다. "
     "직전 요청에서 일정을 저장했다는 이유만으로 저장/수정/삭제를 반복하지 않는다. "
@@ -500,6 +503,7 @@ def personal_list_saved_schedules(
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
     # DONE: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
+    kind = "personal_schedule" if kind is None else kind
     schedules = _store().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to)
     # DONE: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
     filters = {"kind": kind, "date_from": date_from, "date_to": date_to, "limit": limit}
