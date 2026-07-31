@@ -77,19 +77,33 @@ class _SpyMcpToolSync:
         return self.return_value
 
 
-def _make_stub_app_sqlite_store(schedules: list[dict] | None = None):
-    """AppSQLiteStore(CONFIG.app_db_path) 자리를 대신할, list_schedules()만 흉내 내는 stub 클래스입니다."""
+def _make_stub_app_sqlite_store(schedules_by_kind: dict[str, list[dict]] | list[dict] | None = None):
+    """AppSQLiteStore(CONFIG.app_db_path) 자리를 대신할, list_schedules()만 흉내 내는 stub 클래스입니다.
 
-    stored = list(schedules or [])
+    kind별로 서로 다른 목록을 반환할 수 있도록 {kind: schedules} 매핑을 받습니다. 과거에는
+    kind에 관계없이 "personal_schedule이면 이 목록, 그 외에는 무조건 []"만 흉내 냈기 때문에,
+    _personal_schedules_for_current_scope()가 personal_schedule과 group_schedule을 각각
+    조회해서 합치는 로직에서 group_schedule 쪽 병합은 실제로 검증되지 않았습니다
+    (호출은 되지만 그 반환값이 언제나 빈 리스트였음). 하위 호환을 위해 list를 그대로 넘기면
+    personal_schedule 전용 목록으로 취급합니다.
+    """
+
+    if schedules_by_kind is None:
+        schedules_by_kind = {}
+    elif isinstance(schedules_by_kind, list):
+        schedules_by_kind = {"personal_schedule": schedules_by_kind}
 
     class _StubAppSQLiteStore:
         def __init__(self, *args, **kwargs) -> None:
             pass
 
         def list_schedules(self, limit: int = 12, kind=None, date_from=None, date_to=None) -> list[dict]:
-            if kind not in (None, "personal_schedule"):
-                return []
-            return list(stored)
+            if kind is None:
+                merged: list[dict] = []
+                for values in schedules_by_kind.values():
+                    merged.extend(values)
+                return merged
+            return list(schedules_by_kind.get(kind, []))
 
     return _StubAppSQLiteStore
 
@@ -98,7 +112,7 @@ def _make_stub_app_sqlite_store(schedules: list[dict] | None = None):
 def stub_sqlite_store(monkeypatch):
     """빈 SQLite 저장소로 AppSQLiteStore를 대체합니다. 테스트별로 필요하면 다시 monkeypatch하세요."""
 
-    monkeypatch.setattr(w5, "AppSQLiteStore", _make_stub_app_sqlite_store([]))
+    monkeypatch.setattr(w5, "AppSQLiteStore", _make_stub_app_sqlite_store({}))
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +394,35 @@ def test_personal_schedules_empty_session_id_is_treated_as_default_scope(stub_sq
 # ---------------------------------------------------------------------------
 # 7. 중복/동기화
 # ---------------------------------------------------------------------------
+
+
+def test_personal_schedules_for_current_scope_merges_personal_and_group_kinds(monkeypatch):
+    """_personal_schedules_for_current_scope()가
+    store.list_schedules(kind="personal_schedule")와 store.list_schedules(kind="group_schedule")를
+    각각 조회해 *둘 다* 결과에 합치는지 확인합니다.
+
+    이전까지의 stub_sqlite_store는 kind와 무관하게 personal_schedule 목록만(그 외 kind는 항상 [])
+    반환했기 때문에, personal_schedule과 group_schedule 두 kind가 서로 다른 데이터를 가진 상황이
+    한 번도 만들어지지 않았습니다. 그 결과 group_schedule 쪽 `*store.list_schedules(kind="group_schedule")`
+    병합 부분은 실제로는 검증되지 않은 채(호출만 되고 반환값은 항상 []) 통과해 왔습니다.
+    """
+
+    monkeypatch.setattr(
+        w5,
+        "AppSQLiteStore",
+        _make_stub_app_sqlite_store(
+            {
+                "personal_schedule": [{"schedule_id": "sch_personal", "title": "개인 일정"}],
+                "group_schedule": [{"schedule_id": "sch_group", "title": "그룹 일정"}],
+            }
+        ),
+    )
+
+    result = w5._personal_schedules_for_current_scope()
+
+    titles = [row["title"] for row in result]
+    assert "개인 일정" in titles
+    assert "그룹 일정" in titles
 
 
 def test_personal_schedules_dedup_when_temp_id_matches_stored_schedule_id(monkeypatch):
