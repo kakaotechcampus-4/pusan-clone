@@ -70,6 +70,7 @@ def test_routing_answers_are_exported(
 
     artifact = {
         "schema_version": 1,
+        "review_guide": "tests/evals/ANSWER_REVIEW.md",
         "review_instruction": (
             "user, tool_trace, answer를 함께 읽고 답변의 근거 일치, 누락, 모순, 과장을 검토한다."
         ),
