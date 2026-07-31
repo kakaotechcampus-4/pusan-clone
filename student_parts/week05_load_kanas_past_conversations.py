@@ -23,7 +23,6 @@ from fixed.mcp_client import (
     load_local_mcp_tools,
     load_local_mcp_tools_sync,
 )
-from fixed.runtime_clock import current_app_date_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, join_system_prompt
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
@@ -266,8 +265,8 @@ class CollectMemberSchedulesInput(BaseModel):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
 
     member_names: list[str]
-    date_from: str
-    date_to: str
+    date_from: str = Field(description="조회 시작일(YYYY-MM-DD). 사용자가 기간을 말하지 않았다면 임의로 정하지말고 사용자에게 되묻는다.")
+    date_to: str = Field(description="조회 종료일(YYYY-MM-DD). 값이 비었을 경우 date_from과 같은 날 하루만 조회한다.")
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
@@ -298,7 +297,14 @@ def _collect_member_schedules(
         member_names, date_from, date_to
     )
 
-    normalized_from = normalized_from or current_app_date_iso()
+    if not normalized_from:
+        return{
+            "ok": False,
+            "status": "needs_input",
+            "tool_name": "collect_member_schedules",
+            "reason": "조회 기간이 지정되지 않았습니다. 사용자에게 어느 기간의 일정을 확인할지 물어보세요.",
+            "received": {"date_from": date_from, "date_to": date_to},
+        }
     normalized_to = normalized_to or normalized_from
 
     external_member_names = [
@@ -357,6 +363,7 @@ def _collect_member_schedules(
         "date_to": normalized_to,
         "received": {"date_from": date_from, "date_to": date_to},
         "rows": rows,
+        "rows_meaning": "각 row는 해당 멤버가 바쁜 시간이다. 즉, 각 row가 비어있는건 해당 멤버가 조회 기간에 아무 일정도 없는 한가한 상태라는 뜻이다.",
         "schedule_summary": external_schedule_summary(rows),
     }
 
@@ -522,6 +529,8 @@ def week05_prompt_parts() -> list[str]:
         "공유 일정 저장소에 등록된 row 자체를 확인할 때는 list_shared_schedules를 사용한다. ",
         "사용자가 공유 일정 등록/삭제를 명시적으로 요청할 때만 create_shared_schedule, delete_shared_schedule을 사용한다. 등록 후에는 schedule_id를 답변에 남겨 나중에 삭제할 수 있게 한다. ",
         "외부 도구 결과의 rows가 비어 있으면 일정을 임의로 지어내지 말고 '해당 기간에 기록된 일정이 없습니다'라고 답한다. ",
+        "collect_member_schedules가 needs_input을 반환하면 일정을 추측하지 말고 사용자에게 확인할 기간을 되묻는다. ",
+        "collect_member_schedules의 rows는 '이미 바쁜 시간' 목록이다. rows가 비어 있는 건 가능한 시간이 없는게 아니라 기존 일정이 없다는 것이므로 조율 가능한 기간이 된다. ",
     ]
 
 
