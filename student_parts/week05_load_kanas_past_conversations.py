@@ -287,6 +287,7 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
+    normalized_members = normalize_external_member_names(member_names)
     norm_from, norm_to = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
     rows: list[dict[str, Any]] = []
     
@@ -302,7 +303,7 @@ def _collect_member_schedules(
         })
 
     # 외부 멤버 일정
-    mcp_result = json.loads(call_mcp_tool_sync("extract_schedules_from_history", {"member_names": member_names, "date_from": norm_from, "date_to": norm_to}))
+    mcp_result = json.loads(call_mcp_tool_sync("extract_schedules_from_history", {"member_names": normalized_members, "date_from": norm_from, "date_to": norm_to}))
     rows.extend(mcp_result.get("rows", []))
 
     return {
@@ -420,12 +421,17 @@ def week05_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         "내가 아닌 다른 사람의 과거 대화나 일정을 물어보면 외부 MCP 도구로 조회한다. ",
-
-        "다른 사람의 이전 대화를 찾을 때는 search_previous_conversations로 검색하고, "
-        "특정 대화 전체 내용이 필요하면 그 conversation_id로 load_conversation_messages를 호출한다. ",
-        "다른 사람의 일정('바쁜 시간', '모임 불가한 시간')만 필요하면 extract_schedules_from_history를 사용한다. ",
-        "내 일정과 외부 멤버 일정을 한 번에 모아야 하면 collect_member_schedules를 호출한다. ",
-        "공유 일정 저장소에 등록된 일정을 직접 확인할 때는 list_shared_schedules를 사용한다. ",
+        "일정 조회 대상이 '나' 본인인지 다른 사람(외부 멤버)인지에 따라 도구를 구분한다. "
+        "personal_list_saved_schedules와 list_saved_requests는 '나'의 앱 저장 일정만 조회한다. "
+        "특정 외부 멤버의 일정만 물으면 extract_schedules_from_history에 그 사람 이름을 member_names로 넣어 조회한다. "
+        "예를 들어 '하린이 일정 보여줘'는 personal_list_saved_schedules가 아니라 extract_schedules_from_history(member_names=['하린'])로 조회한다. ",
+        "'나와 하린' 처럼 나와 외부 멤버를 함께, 또는 여러 사람의 일정을 한 번에 정리·비교해야 하면 "
+        "collect_member_schedules를 사용한다. 결과 rows에는 '나'와 외부 멤버 일정이 같은 구조로 들어 있고, "
+        "'개인별로'/'각자'/'각각' 같은 요청은 이 rows를 member_name 기준으로 나눠서 답한다. ",
+        "외부 멤버의 이전 대화 내용 자체가 필요하면 search_previous_conversations(query에는 사람 이름이나 핵심어 하나)로 검색하고, "
+        "특정 대화 전문이 필요하면 그 conversation_id로 load_conversation_messages를 호출한다. "
+        "특정 사람을 찾을 때는 query를 늘리지 말고 member_names에 그 사람 이름을 넣는다. ",
+        "공유 일정 저장소에 등록된 일정을 확인할 때는 list_shared_schedules를 사용한다. ",
         "일정 조회에는 member_names와 date_from, date_to 범위를 전달한다. ",
 
         "공유 일정 저장소에 일정을 직접 등록하거나 갱신해야 하면 create_shared_schedule('source_conversation_id' 항상 포함), "

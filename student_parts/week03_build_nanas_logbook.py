@@ -38,11 +38,10 @@ SQLITE_MEMORY_PROMPT = (
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
 WEEK03_TOOL_CALL_PROMPT = (
     "저장 요청은 kind에 따라 저장 경로를 하나만 선택하며, 같은 요청에 두 경로를 함께 쓰지 않는다. "
-    "개인 일정(personal_schedule) 생성 요청에는 personal_create_schedule 하나만 호출한다. "
+    "본인 외 참석자가 없는 개인 일정(personal_schedule) 생성 요청에만 personal_create_schedule 하나를 호출한다. "
     "이 도구가 임시 메모리와 SQLite 저장을 모두 처리하므로, 같은 요청에 save_structured_request를 추가로 호출하지 않는다. "
-    "그 외(todo/reminder/group_schedule) 저장 요청은 extract_schedule_request로 구조화한 뒤에, "
-    "structured_request의 kind/title/date/start_time/end_time/members/priority/reason/original_text 값을 save_structured_request에 전달해 저장한다. "
-    "extract_schedule_request는 요청당 한 번만 호출한다. "
+    "본인 외 참석자가 있는 그룹 일정(group_schedule)과 할 일(todo)·알림(reminder) 저장 요청은 personal_create_schedule을 쓰지 않고, "
+    "extract_schedule_request로 구조화한 뒤 structured_request의 kind/title/date/start_time/end_time/members/priority/reason/original_text 값을 save_structured_request에 전달해 저장한다. "
     "저장된 구조화 요청 조회는 get_saved_request(단건 요청)과 list_saved_requests(여러 요청)를 쓰고, 저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
     "저장된 일정 수정 요청에는 personal_update_saved_schedule에 schedule_id와 바꿀 필드만 전달한다. 바꾸지 않을 필드는 넘기지 않으며, 개인 일정은 공유 일정 복사본도 함께 갱신된다. "
     "저장된 일정 삭제 요청에는 먼저 personal_list_saved_schedules로 대상 schedule_id를 확인한 뒤 personal_delete_saved_schedules에 schedule_ids나 날짜/제목/시간 필터를 전달한다. "
@@ -454,8 +453,8 @@ def save_structured_request(
         "kind": kind,
         "title": title,
         "date": date,
-        "start_time": start_time,
-        "end_time": end_time,
+        "start_time": start_time or "미정",
+        "end_time": end_time or "미정",
         "members": members,
         "priority": priority,
         "reason": reason,
@@ -465,7 +464,7 @@ def save_structured_request(
     payload = {key: value for key, value in payload.items() if value is not None}
     saved = save_structured_request_payload(payload)
     # DONE: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
-    return json_payload(tool_result("save_structured_request", **saved))
+    return json_payload(saved)
 
 
 @tool(args_schema=SavedRequestListInput)
@@ -501,7 +500,6 @@ def personal_list_saved_schedules(
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
     # DONE: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
-    kind = "personal_schedule" if kind is None else kind
     schedules = _store().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to)
     # DONE: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
     filters = {"kind": kind, "date_from": date_from, "date_to": date_to, "limit": limit}
