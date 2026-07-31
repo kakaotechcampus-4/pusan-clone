@@ -349,8 +349,13 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    return call_mcp_tool_sync("create_shared_schedule",
+        {
+            "member_name": member_name, "title": title,
+            "date": date, "start_time": start_time, "end_time": end_time,
+            "notes": notes, "source_conversation_id": source_conversation_id, "schedule_id": schedule_id
+        }
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -360,8 +365,7 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    return call_mcp_tool_sync("delete_shared_schedule", {"schedule_id": schedule_id,"source_conversation_id": source_conversation_id})
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -397,8 +401,8 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        # create_shared_schedule,
-        # delete_shared_schedule,
+        create_shared_schedule,
+        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -416,12 +420,19 @@ def week05_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         "내가 아닌 다른 사람의 과거 대화나 일정을 물어보면 외부 MCP 도구로 조회한다. ",
+
         "다른 사람의 이전 대화를 찾을 때는 search_previous_conversations로 검색하고, "
         "특정 대화 전체 내용이 필요하면 그 conversation_id로 load_conversation_messages를 호출한다. ",
         "다른 사람의 일정('바쁜 시간', '모임 불가한 시간')만 필요하면 extract_schedules_from_history를 사용한다. ",
         "내 일정과 외부 멤버 일정을 한 번에 모아야 하면 collect_member_schedules를 호출한다. ",
         "공유 일정 저장소에 등록된 일정을 직접 확인할 때는 list_shared_schedules를 사용한다. ",
         "일정 조회에는 member_names와 date_from, date_to 범위를 전달한다. ",
+
+        "공유 일정 저장소에 일정을 직접 등록하거나 갱신해야 하면 create_shared_schedule('source_conversation_id' 항상 포함), "
+        "등록된 공유 일정을 지워야 하면 delete_shared_schedule('schedule_id' 또는 'source_conversation_id' 항상 포함)를 사용한다. ",
+        "이 두 도구는 사용자가 공유 일정 등록/수정/삭제를 명확히 요청했을 때만 호출한다. ",
+        "delete_shared_schedule는 schedule_id 또는 source_conversation_id로 대상을 특정한다. ",
+
         "외부 멤버 일정을 모아 여러 사람의 최종 회의 시간을 확정해달라는 요청이 들어오면 아직 불가능하다고 답변한다. "
     ]
 
