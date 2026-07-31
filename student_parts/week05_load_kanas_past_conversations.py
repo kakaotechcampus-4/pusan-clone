@@ -187,9 +187,16 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 
 
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
-    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
+    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다.
 
-    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
+    schedules 테이블에는 personal_schedule 외의 kind row도 함께 쌓이므로,
+    조회 단계에서 kind를 지정해 내 개인 일정 row만 후보로 남깁니다.
+    """
+
+    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
+        kind="personal_schedule",
+        limit=200,
+    )
     merged: list[dict[str, Any]] = list(saved_schedules)
     seen_ids = {str(row.get("schedule_id") or row.get("id") or "") for row in saved_schedules}
 
@@ -297,7 +304,7 @@ def _collect_member_schedules(
 
     normalized_member_names = normalize_external_member_names(member_names)
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
-        member_names,
+        normalized_member_names,
         date_from,
         date_to,
     )
