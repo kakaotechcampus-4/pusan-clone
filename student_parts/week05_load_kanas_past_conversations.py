@@ -508,7 +508,11 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
 
     결과가 비었다는 것은 "그 기간에 없다"는 뜻이지 "그 멤버에게 일정이 없다"는 뜻이 아닙니다.
     """
-    date_from, date_to = normalize_external_schedule_date_bounds(date_from=date_from, date_to=date_to)
+    date_from, date_to = normalize_external_schedule_date_bounds(
+        member_names=None,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
     # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
     return json_payload(
