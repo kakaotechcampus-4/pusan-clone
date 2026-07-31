@@ -67,11 +67,24 @@ def reset_week05_state(week05):
 
 
 class RecordingAppStore:
-    """개인 일정 조회 인자와 반환 row를 보존하는 SQLite store 더블입니다."""
+    """개인 일정 조회 인자와 반환 row를 보존하는 SQLite store 더블입니다.
 
-    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
+    `rows`는 `list_schedules`가 돌려줄 row, 즉 조회 기간 필터를 통과한 저장 일정입니다.
+    `all_rows`는 `find_schedules`가 보는 전체 저장 row로 기간과 무관하며, 생략하면
+    `rows`와 같습니다. 두 값을 나눠 두면 "DB에는 있지만 조회 기간 밖"인 상태를 만들 수
+    있습니다.
+    """
+
+    def __init__(
+        self,
+        rows: list[dict[str, Any]] | None = None,
+        *,
+        all_rows: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.rows = rows or []
+        self.all_rows = self.rows if all_rows is None else all_rows
         self.list_calls: list[dict[str, Any]] = []
+        self.find_calls: list[dict[str, Any]] = []
 
     def list_schedules(
         self,
@@ -89,6 +102,34 @@ class RecordingAppStore:
             }
         )
         return self.rows
+
+    def find_schedules(
+        self,
+        schedule_ids: list[str] | None = None,
+        date: str | None = None,
+        title: str | None = None,
+        start_time: str | None = None,
+        time_unspecified: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """`schedule_id` 일치 row만 돌려줍니다. 기간 필터는 적용하지 않습니다."""
+
+        self.find_calls.append(
+            {
+                "schedule_ids": list(schedule_ids) if schedule_ids is not None else None,
+                "date": date,
+                "title": title,
+                "start_time": start_time,
+                "time_unspecified": time_unspecified,
+                "limit": limit,
+            }
+        )
+        if schedule_ids is not None and not schedule_ids:
+            return []
+        if schedule_ids is None:
+            return list(self.all_rows)
+        wanted = set(schedule_ids)
+        return [row for row in self.all_rows if row.get("schedule_id") in wanted]
 
 
 class RecordingMcpCaller:
@@ -257,13 +298,22 @@ class TestPersonalSchedulesForCurrentScope:
                 "date_to": "2026-07-31",
             }
         ]
+        # 중복 확인은 현재 대화 임시 일정의 id만 대상으로 한다.
+        # limit=-1은 필수다. 기본값 100으로 조회하면 임시 일정이 그보다 많을 때 초과분이
+        # 잘려 중복을 놓치고, 낡은 임시 사본이 다시 후보로 남는다.
+        assert [
+            (call["schedule_ids"], call["limit"]) for call in store.find_calls
+        ] == [(["personal_current"], -1)]
 
     def test_saved_schedule_wins_when_id_matches_temporary(
         self,
         week05,
         monkeypatch,
     ):
-        """같은 personal id가 겹치면 SQLite 저장 형태 하나만 남깁니다."""
+        """같은 personal id가 겹치면 SQLite 저장 형태 하나만 남깁니다.
+
+        임시 사본은 id 조회로 병합 전에 걸러내므로 결과에는 저장 형태만 남습니다.
+        """
 
         temporary = {
             "id": "personal_same",
@@ -299,6 +349,82 @@ class TestPersonalSchedulesForCurrentScope:
                 "date_to": "2026-07-31",
             }
         ]
+        assert [
+            (call["schedule_ids"], call["limit"]) for call in store.find_calls
+        ] == [(["personal_same"], -1)]
+
+    def test_temporary_copy_is_dropped_when_saved_row_is_outside_the_range(
+        self,
+        week05,
+        monkeypatch,
+    ):
+        """DB 행이 조회 기간 밖이어도 같은 id의 임시 사본은 후보에서 제외합니다.
+
+        `list_schedules`에 기간 필터가 붙은 뒤로 범위 밖 DB 행은 병합 단계에 오지 않습니다.
+        그때 임시 사본을 그대로 두면 다른 날짜로 옮겨진 일정이 옛 날짜로 되살아나므로,
+        기간과 무관한 id 조회로 먼저 걸러내야 합니다.
+        """
+
+        temporary = {
+            "id": "personal_moved",
+            "session_id": "conversation-current",
+            "title": "옮겨진 일정",
+            "date": "2026-07-07",
+        }
+        saved_outside_range = {
+            "schedule_id": "personal_moved",
+            "title": "옮겨진 일정",
+            "date": "2026-07-08",
+        }
+        store = RecordingAppStore([], all_rows=[saved_outside_range])
+        week05.PERSONAL_SCHEDULES.append(temporary)
+        monkeypatch.setattr(week05, "AppSQLiteStore", lambda _path: store)
+        monkeypatch.setattr(
+            week05,
+            "CONFIG",
+            SimpleNamespace(app_db_path="unused.sqlite3"),
+        )
+
+        with conversation_session_scope("conversation-current"):
+            rows = week05._personal_schedules_for_current_scope(
+                "2026-07-01",
+                "2026-07-07",
+            )
+
+        assert rows == []
+        assert [
+            (call["schedule_ids"], call["limit"]) for call in store.find_calls
+        ] == [(["personal_moved"], -1)]
+
+    def test_temporary_only_schedule_survives_when_absent_from_sqlite(
+        self,
+        week05,
+        monkeypatch,
+    ):
+        """SQLite에 없는 임시 일정은 id 조회 필터에서 살아남습니다."""
+
+        temporary = {
+            "id": "personal_unsaved",
+            "session_id": "conversation-current",
+            "title": "아직 저장 안 된 일정",
+            "date": "2026-07-05",
+        }
+        store = RecordingAppStore([])
+        week05.PERSONAL_SCHEDULES.append(temporary)
+        monkeypatch.setattr(week05, "AppSQLiteStore", lambda _path: store)
+        monkeypatch.setattr(
+            week05,
+            "CONFIG",
+            SimpleNamespace(app_db_path="unused.sqlite3"),
+        )
+
+        with conversation_session_scope("conversation-current"):
+            rows = week05._personal_schedules_for_current_scope(
+                "2026-07-01",
+                "2026-07-31",
+            )
+
+        assert rows == [temporary]
 
 
 class TestStructuredRequestFromScheduleRow:
