@@ -71,10 +71,23 @@ class RecordingAppStore:
 
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.rows = rows or []
-        self.list_calls: list[int] = []
+        self.list_calls: list[dict[str, Any]] = []
 
-    def list_schedules(self, limit: int = 12) -> list[dict[str, Any]]:
-        self.list_calls.append(limit)
+    def list_schedules(
+        self,
+        limit: int = 12,
+        kind: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self.list_calls.append(
+            {
+                "limit": limit,
+                "kind": kind,
+                "date_from": date_from,
+                "date_to": date_to,
+            }
+        )
         return self.rows
 
 
@@ -204,7 +217,7 @@ class TestPersonalSchedulesForCurrentScope:
         week05,
         monkeypatch,
     ):
-        """현재 대화 임시 일정과 SQLite 전량을 합치고 다른 대화 임시는 제외합니다."""
+        """현재 대화 임시 일정과 조회 기간의 SQLite 일정을 합칩니다."""
 
         current_temporary = {
             "id": "personal_current",
@@ -230,10 +243,20 @@ class TestPersonalSchedulesForCurrentScope:
         )
 
         with conversation_session_scope("conversation-current"):
-            rows = week05._personal_schedules_for_current_scope()
+            rows = week05._personal_schedules_for_current_scope(
+                "2026-07-01",
+                "2026-07-31",
+            )
 
         assert rows == [current_temporary, saved]
-        assert store.list_calls == [-1]
+        assert store.list_calls == [
+            {
+                "limit": -1,
+                "kind": None,
+                "date_from": "2026-07-01",
+                "date_to": "2026-07-31",
+            }
+        ]
 
     def test_saved_schedule_wins_when_id_matches_temporary(
         self,
@@ -261,11 +284,21 @@ class TestPersonalSchedulesForCurrentScope:
         )
 
         with conversation_session_scope("conversation-current"):
-            rows = week05._personal_schedules_for_current_scope()
+            rows = week05._personal_schedules_for_current_scope(
+                "2026-07-01",
+                "2026-07-31",
+            )
 
         assert rows == [saved]
         assert rows[0]["title"] == "SQLite 버전"
-        assert store.list_calls == [-1]
+        assert store.list_calls == [
+            {
+                "limit": -1,
+                "kind": None,
+                "date_from": "2026-07-01",
+                "date_to": "2026-07-31",
+            }
+        ]
 
 
 class TestStructuredRequestFromScheduleRow:
@@ -426,12 +459,12 @@ class TestLoadConversationMessages:
 
 
 class TestCollectMemberSchedules:
-    def test_merges_rows_excludes_me_and_normalizes_datetime_bounds(
+    def test_merges_rows_and_excludes_me(
         self,
         week05,
         monkeypatch,
     ):
-        """내 일정과 외부 일정을 합치며 '나' 제외와 ISO 날짜 경계를 고정합니다."""
+        """정규화된 범위에서 내 일정과 외부 일정을 합치고 '나'는 외부 조회에서 제외합니다."""
 
         external_row = {
             "member_name": "철수",
@@ -471,8 +504,8 @@ class TestCollectMemberSchedules:
 
         result = week05._collect_member_schedules(
             member_names=["철수", "나"],
-            date_from="2026-07-07T00:00:00",
-            date_to="2026-07-10T23:59:59",
+            date_from="2026-07-07",
+            date_to="2026-07-10",
             personal_schedules=personal_schedules,
         )
 
@@ -582,10 +615,26 @@ class TestCollectMemberSchedulesTool:
             "schedule_summary": "- 나 | 내 일정",
         }
         calls: list[dict[str, Any]] = []
+        personal_schedule_calls: list[tuple[str, str]] = []
+        date_bound_calls: list[dict[str, Any]] = []
+
+        def fake_normalize_date_bounds(**arguments: Any) -> tuple[str, str]:
+            date_bound_calls.append(arguments)
+            return "2026-07-01", "2026-07-31"
+
+        def fake_personal_schedules(date_from: str, date_to: str) -> list[dict[str, Any]]:
+            personal_schedule_calls.append((date_from, date_to))
+            return personal_rows
+
+        monkeypatch.setattr(
+            week05,
+            "normalize_external_schedule_date_bounds",
+            fake_normalize_date_bounds,
+        )
         monkeypatch.setattr(
             week05,
             "_personal_schedules_for_current_scope",
-            lambda: personal_rows,
+            fake_personal_schedules,
         )
 
         def fake_collect(**arguments: Any) -> dict[str, Any]:
@@ -597,11 +646,19 @@ class TestCollectMemberSchedulesTool:
         raw = week05.collect_member_schedules.invoke(
             {
                 "member_names": ["철수"],
-                "date_from": "2026-07-01",
-                "date_to": "2026-07-31",
+                "date_from": "2026-07-01T00:00:00",
+                "date_to": "2026-07-31T23:59:59",
             }
         )
 
+        assert date_bound_calls == [
+            {
+                "member_names": None,
+                "date_from": "2026-07-01T00:00:00",
+                "date_to": "2026-07-31T23:59:59",
+            }
+        ]
+        assert personal_schedule_calls == [("2026-07-01", "2026-07-31")]
         assert calls == [
             {
                 "member_names": ["철수"],
