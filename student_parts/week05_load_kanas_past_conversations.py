@@ -315,11 +315,14 @@ def _collect_member_schedules(
             }
         )
 
-    if normalized_names:
+    external_names = [
+        name for name in normalized_names if name != PERSONAL_SHARED_MEMBER_NAME
+    ]
+    if external_names:
         raw = call_mcp_tool_sync(
             "extract_schedules_from_history",
             {
-                "member_names": normalized_names,
+                "member_names": external_names,
                 "date_from": bound_from,
                 "date_to": bound_to,
             },
@@ -394,8 +397,19 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    return call_mcp_tool_sync(
+        tool_name="create_shared_schedule",
+        args={
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -405,8 +419,13 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    return call_mcp_tool_sync(
+        tool_name="delete_shared_schedule",
+        args={
+            "schedule_id": schedule_id,
+            "source_conversation_id": source_conversation_id,
+        },
+    )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -454,8 +473,8 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        # create_shared_schedule,
-        # delete_shared_schedule,
+        create_shared_schedule,
+        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -473,26 +492,33 @@ def week05_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         "앞선 지시 중 '외부 멤버 일정 조율과 지난 대화 검색은 아직 다루지 않는다'는 더 이상 적용하지 않는다. "
-        "이 에이전트는 외부 SQLite/MCP 서버에 저장된 외부 멤버의 지난 대화 검색과 일정 조회까지 다루며, "
+        "이 에이전트는 외부 SQLite/MCP 서버에 저장된 외부 멤버의 지난 대화 검색과 일정 조회, 공유 일정 등록·삭제까지 다루며, "
         "내 일정과 개인 메모/참고자료는 기존 tool을 그대로 쓴다.",
         "외부 멤버와의 지난 대화 내용을 묻는 질문(예: '철수랑 지난번에 무슨 얘기 했지?')은 "
-        "search_previous_conversations로 후보 대화를 찾고, 대화 원문이 더 필요할 때만 "
+        "search_previous_conversations로 후보 대화를 찾고, 대화 원문이 더 필요할 때만 결과의 conversation_id로 "
         "load_conversation_messages를 호출해 rows를 근거로 답한다. "
         "rows가 비어 있으면 지어내지 말고 관련 대화가 없다고 답한다. "
         "내 채팅 기록 검색은 search_conversation_messages, 외부 멤버 대화 검색은 "
         "search_previous_conversations로 서로 다른 tool이므로 혼동하지 않는다.",
         "외부 멤버의 일정이나 바쁜 시간을 묻는 질문은 extract_schedules_from_history의 rows를 근거로 답한다. "
         "나와 외부 멤버의 일정을 한 번에 모아야 하는 요청은 collect_member_schedules만 호출해 "
-        "rows와 schedule_summary를 근거로 답하고, 내 일정을 다른 조회 tool로 중복 조회하지 않는다.",
+        "rows와 schedule_summary를 근거로 답하고, 내 일정을 다른 조회 tool로 중복 조회하지 않는다."
+        "이 두 tool의 date_from/date_to는 반드시 YYYY-MM-DD로 채워서 호출하고 앞선 지시 중 '날짜나 기간을 말하지 않았으면 date_from/date_to를 비워 전체를 조회한다.'는 "
+        "이 두 tool에는 적용하지 않고 사용자가 기간을 말하지 않았다면 반드시 어떤 기간을 조회할지 되묻고 확인한다.",
         "공유 일정 저장소 조회는 list_shared_schedules를 쓴다. "
-        "공유 저장소에 일정을 등록하거나 삭제해 달라는 요청은 아직 지원하지 않는다고 답하고, "
-        "내 일정 저장 tool로 대신 저장하는 식으로 대체하지 않는다.",
+        "공유 저장소에 일정을 등록하거나 갱신해 달라는 요청은 create_shared_schedule로, "
+        "공유 저장소 일정을 삭제해 달라는 요청은 delete_shared_schedule로 처리하고, "
+        "내 일정 tool로 대체하지 않는다. "
+        "반대로 내 개인 일정 저장 요청을 create_shared_schedule로 처리하지도 않는다. "
+        "기존 공유 일정을 갱신할 때는 조회로 확인한 schedule_id를 그대로 넘겨 같은 row를 갱신한다. "
+        "삭제할 때 어떤 일정인지 특정할 수 없으면 먼저 list_shared_schedules로 확인하고, "
+        "삭제 후에는 deleted_count를 근거로 답하고 0이면 해당 일정을 찾지 못했다고 답한다.",
         "앞선 지시 중 '조회 tool은 이번 요청에서 최대 1번만 호출한다'와 "
         "'tool 결과를 받은 직후 반드시 StructuredRequestBatch 구조화 출력을 최종 결과로 반환한다'는 "
         "search_previous_conversations, load_conversation_messages, extract_schedules_from_history, "
-        "list_shared_schedules, collect_member_schedules에는 적용하지 않는다. "
+        "list_shared_schedules, collect_member_schedules, create_shared_schedule, delete_shared_schedule에는 적용하지 않는다. "
         "단, 같은 tool을 같은 인자로 반복 호출하지 않는다. "
-        "이 에이전트의 범위는 외부 지난 대화 검색·로드, 외부 멤버 일정 추출, 공유 일정 저장소 조회까지 확장된다. "
+        "이 에이전트의 범위는 외부 지난 대화 검색·로드, 외부 멤버 일정 추출, 공유 일정 저장소 조회·등록·삭제까지 확장된다. "
         "여러 사람의 공통 가능 시간 계산과 최종 회의 시간 선택은 아직 다루지 않는다. "
         "공통 가능 시간을 찾아 회의를 잡아 달라는 요청은 collect_member_schedules로 "
         "바쁜 시간을 보여 주는 것까지만 하고, 사용자가 구체적 시각을 직접 정하기 전에는 회의를 생성하지 않는다.",
