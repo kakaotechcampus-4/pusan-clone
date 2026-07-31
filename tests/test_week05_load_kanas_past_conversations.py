@@ -604,10 +604,17 @@ class Week05ToolDescriptionTest(unittest.TestCase):
     def _descriptions(self) -> dict[str, str]:
         return {tool.name: tool.description for tool in week05.week05_tools()}
 
-    def test_extract와_collect가_서로를_구분하는_안내를_갖는다(self):
+    def test_두_조회_tool_이_이름과_설명에서_구분된다(self):
+        """agent 가 보는 이름 자체가 "내 일정 포함 여부"를 말해야 한다(PR #166 리뷰).
+
+        파이썬 함수명(collect_member_schedules 등)은 유지하고 @tool 로 노출 이름만 바꿨다.
+        """
+
         d = self._descriptions()
-        self.assertIn("내 일정은 포함되지 않습니다", d["extract_schedules_from_history"])
-        self.assertIn("extract_schedules_from_history", d["collect_member_schedules"])
+        self.assertIn("extract_schedules_of_members_include_me", d)
+        self.assertIn("extract_schedules_of_members_exclude_me", d)
+        self.assertIn("내 일정은 포함되지 않습니다", d["extract_schedules_of_members_exclude_me"])
+        self.assertIn("extract_schedules_of_members_exclude_me", d["extract_schedules_of_members_include_me"])
 
     def test_대화_검색_description이_query_형태를_안내한다(self):
         # 이름을 query 에 섞으면 LIKE 로 못 찾는다.

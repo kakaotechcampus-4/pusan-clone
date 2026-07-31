@@ -540,7 +540,7 @@ def _collect_member_schedules(
     # 그건 mcp_server 쪽이라 학생 수정 대상이 아니다. 받은 뒤 자르는 건 전송량도 안 줄인다.
     return {
         "ok": True,
-        "tool_name": "collect_member_schedules",
+        "tool_name": "extract_schedules_of_members_include_me",
         "member_names": (
             [PERSONAL_SHARED_MEMBER_NAME, *external_members]
             if include_my_schedules
@@ -590,12 +590,15 @@ def load_conversation_messages(conversation_id: str) -> str:
     return json_payload(payload)
 
 
-@tool(args_schema=ExtractSchedulesFromHistoryInput)
+# agent 가 보는 이름과 파이썬 함수명을 분리한다(baseline week03 의 @tool("personal_create_schedule") 관례).
+# 파이썬 이름을 유지해야 Week 6 이 import 해도 깨지지 않고,
+# 원래 이름 extract_schedules_from_history 는 MCP 서버 tool 이름이라 호출 문자열로 계속 쓴다.
+@tool("extract_schedules_of_members_exclude_me", args_schema=ExtractSchedulesFromHistoryInput)
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
     """다른 사람의 일정/바쁜 시간만 조회합니다. 내 일정은 포함되지 않습니다.
 
     '철수 일정 알려줘', '철수랑 영희가 언제 바쁜지'처럼 조회 대상에 '나'가 없을 때 씁니다.
-    사람 수는 상관없습니다. 내 일정도 함께 봐야 하면 collect_member_schedules 를 쓰세요.
+    사람 수는 상관없습니다. 내 일정도 함께 봐야 하면 extract_schedules_of_members_include_me 를 쓰세요.
     """
 
     # 날짜 형식 정리도 외부 store/MCP 경계에서 한 번만 한다(normalize_external_schedule_date_bounds).
@@ -672,8 +675,8 @@ def list_shared_schedules(
 
     앱에 일정을 저장하면 공유 저장소에도 복사본이 생기는데, 그게 제대로 등록됐는지 볼 때 씁니다.
     저장소 자체를 확인할 때는 member_names 에 "나"를 포함해 조회합니다.
-    사람의 일정이 궁금한 것뿐이라면 extract_schedules_from_history 나
-    collect_member_schedules 를 쓰세요.
+    사람의 일정이 궁금한 것뿐이라면 extract_schedules_of_members_exclude_me 나
+    extract_schedules_of_members_include_me 를 쓰세요.
     필터는 전부 선택입니다. 기간이나 멤버를 모르면 되묻지 말고 그대로 호출하세요 —
     필터 없이 부르면 실습용 기본 공유 일정이 반환됩니다.
     """
@@ -692,7 +695,7 @@ def list_shared_schedules(
     )
 
 
-@tool(args_schema=CollectMemberSchedulesInput)
+@tool("extract_schedules_of_members_include_me", args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(
     member_names: list[str],
     date_from: str,
@@ -704,7 +707,7 @@ def collect_member_schedules(
     '서연이랑 7월 15일에 만날 수 있을까', '철수랑 언제 되지'처럼 다른 사람과 시간이 되는지
     묻는 것도 이 tool입니다. 상대 일정은 앱에 없으므로 내 일정만 보고 답하면 안 됩니다.
     include_my_schedules=true 면 내 일정이 결과에 포함됩니다.
-    다른 사람 일정만 필요하면 extract_schedules_from_history 를 쓰세요.
+    다른 사람 일정만 필요하면 extract_schedules_of_members_exclude_me 를 쓰세요.
     """
 
     payload = _collect_member_schedules(
@@ -761,7 +764,8 @@ WEEK05_EXTERNAL_MEMBER_PROMPT = (
     # "일정 조회의 날짜 범위는…" 처럼 전역으로 적었더니 날짜가 선택 인자인
     # list_shared_schedules 까지 "기간을 알려달라"며 되묻게 만들었다(3회 중 3회).
     # 반대로 규칙을 빼면 '철수 일정 알려줘'에 오늘 하루로 좁혀 조회한다(4회 중 4회).
-    "extract_schedules_from_history 와 collect_member_schedules 는 날짜가 필수 인자다. "
+    "extract_schedules_of_members_exclude_me 와 "
+    "extract_schedules_of_members_include_me 는 날짜가 필수 인자다. "
     "사용자가 기간을 말했거나('7월 14일부터 18일', '이번 주', '7월') 날짜를 추론할 수 있으면 "
     "확인하지 말고 그대로 조회한다. 기간을 전혀 말하지 않았을 때만 "
     "오늘이나 임의의 날짜로 정하지 말고 어느 기간을 볼지 되묻는다 — "

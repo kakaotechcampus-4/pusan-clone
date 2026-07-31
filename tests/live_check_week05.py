@@ -77,12 +77,12 @@ def no_my_schedule(calls: list[Call], _answer: str) -> tuple[bool, str]:
     """다른 사람만 물었을 때 내 일정이 딸려오지 않아야 한다."""
 
     for call in calls:
-        if call.name == "collect_member_schedules" and call.arg("include_my_schedules"):
-            return False, "collect(include_my_schedules=True) — 안 물어본 내 일정 포함"
-        if call.name == "extract_schedules_from_history":
+        if call.name == "extract_schedules_of_members_include_me" and call.arg("include_my_schedules"):
+            return False, "include_me(include_my_schedules=True) — 안 물어본 내 일정 포함"
+        if call.name == "extract_schedules_of_members_exclude_me":
             return True, "extract"
-    if any(c.name == "collect_member_schedules" for c in calls):
-        return True, "collect(include_my_schedules=False)"
+    if any(c.name == "extract_schedules_of_members_include_me" for c in calls):
+        return True, "include_me(False)"
     # 아무 tool도 안 불렀다면 조회 자체를 안 한 것이다. "내 일정이 안 섞였다"고 볼 수 없다.
     return False, f"{[c.name for c in calls] or '(호출 없음)'}"
 
@@ -91,10 +91,10 @@ def with_my_schedule(calls: list[Call], _answer: str) -> tuple[bool, str]:
     """나와 남의 시간을 맞추는 요청이면 내 일정이 들어가야 한다."""
 
     for call in calls:
-        if call.name == "collect_member_schedules":
+        if call.name == "extract_schedules_of_members_include_me":
             ok = bool(call.arg("include_my_schedules"))
-            return ok, f"collect(include_my_schedules={call.arg('include_my_schedules')})"
-    return False, f"{[c.name for c in calls] or '(호출 없음)'} — collect 미호출"
+            return ok, f"include_me(include_my_schedules={call.arg('include_my_schedules')})"
+    return False, f"{[c.name for c in calls] or '(호출 없음)'} — include_me 미호출"
 
 
 def short_query(calls: list[Call], _answer: str) -> tuple[bool, str]:
