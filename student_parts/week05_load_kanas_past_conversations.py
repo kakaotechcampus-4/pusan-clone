@@ -350,9 +350,9 @@ def extract_schedules_from_history(member_names: list[str], date_from: str, date
         "date_to": date_to,
     }
     
-    sync = call_mcp_tool_sync("extract_schedules_from_history", args)
+    result = call_mcp_tool_sync("extract_schedules_from_history", args)
     
-    return sync
+    return result
 
 
 @tool(args_schema=CreateSharedScheduleInput)
