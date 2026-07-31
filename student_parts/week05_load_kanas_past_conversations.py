@@ -311,7 +311,6 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    date_from, date_to = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
 
     res = call_mcp_tool_sync("extract_schedules_from_history", {
         "member_names" : [
@@ -509,6 +508,7 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
 
     결과가 비었다는 것은 "그 기간에 없다"는 뜻이지 "그 멤버에게 일정이 없다"는 뜻이 아닙니다.
     """
+    date_from, date_to = normalize_external_schedule_date_bounds(date_from=date_from, date_to=date_to)
 
     # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
     return json_payload(
