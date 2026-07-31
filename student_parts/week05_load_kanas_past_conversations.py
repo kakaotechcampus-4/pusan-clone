@@ -345,10 +345,13 @@ def _collect_member_schedules(
             }
         )
 
+    external_members = [
+        name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME
+    ]
     external_payload = call_external_tool_payload(
         "extract_schedules_from_history",
         {
-            "member_names": normalized_members,
+            "member_names": external_members,
             "date_from": normalized_date_from,
             "date_to": normalized_date_to,
         },

@@ -165,6 +165,33 @@ def test_collect_member_schedules_merges_my_saved_schedule_with_external_member(
     assert "팀 회고" in titles
 
 
+def test_collect_member_schedules_with_na_in_member_names_does_not_duplicate(external_db, app_db):
+    """member_names에 "나"가 들어오면 외부 저장소에도 자동 동기화된 "나" row가 있어
+
+    별도로 제외하지 않으면 내 SQLite row와 외부 row가 겹쳐서 두 번 나온다.
+    """
+
+    AppSQLiteStore(app_db).save_structured_request(
+        {
+            "kind": "personal_schedule",
+            "title": "팀 회고",
+            "date": "2026-07-20",
+            "start_time": "10:00",
+            "end_time": "11:00",
+        }
+    )
+
+    result = json.loads(
+        collect_member_schedules.invoke(
+            {"member_names": ["나", "서연"], "date_from": "2026-07-01", "date_to": "2026-07-31"}
+        )
+    )
+
+    assert result["ok"] is True
+    my_rows = [row for row in result["rows"] if row["member_name"] == "나" and row["title"] == "팀 회고"]
+    assert len(my_rows) == 1
+
+
 def test_collect_member_schedules_includes_unsaved_week1_temp_schedule(
     external_db, app_db, clean_personal_schedules
 ):
