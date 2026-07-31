@@ -8,6 +8,7 @@ __pycache__/
 
 data/
 .pytest_cache/
+.eval-artifacts/
 .mypy_cache/
 .ruff_cache/
 .coverage

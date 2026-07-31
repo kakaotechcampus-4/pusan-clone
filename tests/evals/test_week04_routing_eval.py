@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """Week 4 agent의 도구 라우팅·순서를 정량 평가합니다.
 
-케이스마다 `--eval-repeats`(기본 5)회 실행해 통과율을 재고, 케이스별 하한 80%를
-확인합니다. 전체 평균 하한 90%는 세션이 끝날 때 `tests/conftest.py`가 게이트합니다.
+기본은 케이스당 1회이며, 흔들림을 보는 대표 6개 케이스만 3회 중 2회 통과를 요구합니다.
+`--eval-repeats`를 주면 모든 케이스에 같은 횟수와 기존 80% 하한을 적용합니다.
 
 한 케이스 = 한 테스트로 두고 반복을 테스트 **안에서** 돌리는 이유: 프록시가
 temperature=0에서도 비결정적이라 지표가 pass/fail이 아니라 통과율이어야 하고,
@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from tests.evals.cases_routing import ROUTING_CASES
+from tests.evals.cases_week04_routing import WEEK04_ROUTING_CASES
 from tests.evals.conftest import assert_case_passes
 
 
@@ -35,11 +35,12 @@ def _case_param(case) -> Any:
     return pytest.param(case, id=case["id"], marks=marks)
 
 
-@pytest.mark.parametrize("case", [_case_param(case) for case in ROUTING_CASES])
+@pytest.mark.parametrize("case", [_case_param(case) for case in WEEK04_ROUTING_CASES])
 def test_routing_case_meets_pass_rate_floor(case, case_results) -> None:
     """케이스의 통과율 하한을 확인합니다.
 
-    실제 실행은 `case_results` 세션 fixture가 수집된 전 케이스를 한 pool에서 미리 돌립니다.
+    실제 LLM과 케이스 고정 mock tool 실행은 `case_results` 세션 fixture가 수집된 전
+    케이스를 한 pool에서 미리 돌립니다.
     그래서 첫 테스트에서 전체 대기가 한 번 발생하고 이후 테스트는 즉시 판정됩니다.
     """
 

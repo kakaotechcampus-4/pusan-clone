@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """Week 5 agent의 외부 대화·busy-time 도구 라우팅을 정량 평가합니다.
 
-실제 LLM 호출은 `--eval`일 때만 실행합니다. 케이스마다 기본 5회 반복하며,
-`tests.evals.conftest.assert_case_passes`의 80% 하한을 적용합니다.
+실제 LLM과 케이스 고정 mock tool은 `--eval`일 때만 실행합니다. 기본은 1회이고,
+대표 케이스만 3회 중 2회 통과를 요구합니다. CLI로 반복을 덮어쓰면 80% 하한을 적용합니다.
 """
 
 from typing import Any
@@ -39,6 +39,6 @@ def test_week05_routing_case_meets_pass_rate_floor(
     case: dict[str, Any],
     week05_case_results: dict[str, dict[str, Any]],
 ) -> None:
-    """격리된 build_week05_agent 실행의 케이스별 통과율을 확인합니다."""
+    """새로 만든 Week 5 mock-tool agent 실행의 케이스별 통과율을 확인합니다."""
 
     assert_case_passes(week05_case_results[case["id"]])

@@ -16,6 +16,15 @@ from __future__ import annotations
         "max_calls":  {"search_saved_requests": 1},          # 호출 횟수 상한
         "order":      ["extract_schedule_request", "save_structured_request"],
         "args": {"search_saved_requests": {"query": {"max_words": 3}}},
+        "arg_matches_result": [
+            {
+                "tool": "load_conversation_messages",
+                "argument": "conversation_id",
+                "source_tool": "search_previous_conversations",
+                "source_path": "rows",
+                "source_field": "conversation_id",
+            }
+        ],
         "result_contains": [
             {
                 "tool": "list_saved_requests",
@@ -36,6 +45,18 @@ from __future__ import annotations
 """
 
 from typing import Any
+
+
+MUTATING_TOOL_NAMES = {
+    "add_personal_reference",
+    "save_structured_request",
+    "personal_create_schedule",
+    "personal_delete_schedule",
+    "personal_update_saved_schedule",
+    "personal_delete_saved_schedules",
+    "create_shared_schedule",
+    "delete_shared_schedule",
+}
 
 
 def tool_call_names(events: list[dict[str, Any]]) -> list[str]:
@@ -76,6 +97,30 @@ def _word_count(value: Any) -> int:
     """인자 값을 공백 기준 단어 수로 셉니다."""
 
     return len(str(value).split())
+
+
+def _expected_mutating_tools(expect: dict[str, Any]) -> set[str]:
+    """케이스가 명시적으로 허용한 변경 tool 이름을 모읍니다."""
+
+    mentioned = {
+        *expect.get("called", []),
+        *expect.get("called_any", []),
+        *expect.get("order", []),
+        *expect.get("args", {}),
+    }
+    for key in (
+        "arg_matches_result",
+        "result_contains",
+        "result_contains_any",
+        "result_empty",
+        "result_equals",
+    ):
+        mentioned.update(
+            spec["tool"]
+            for spec in expect.get(key, [])
+            if isinstance(spec, dict) and isinstance(spec.get("tool"), str)
+        )
+    return mentioned.intersection(MUTATING_TOOL_NAMES)
 
 
 def _check_argument(tool_name: str, argument: str, value: Any, checks: dict[str, Any]) -> list[str]:
@@ -134,6 +179,15 @@ def check_case(
         if count > int(maximum):
             reasons.append(f"{tool_name}은 최대 {maximum}회 호출돼야 하는데 {count}회 호출됐다")
 
+    expected_mutations = _expected_mutating_tools(expect)
+    explicitly_forbidden = set(expect.get("not_called", []))
+    for tool_name in MUTATING_TOOL_NAMES:
+        count = called.count(tool_name)
+        if count and tool_name not in expected_mutations and tool_name not in explicitly_forbidden:
+            reasons.append(f"예상하지 않은 변경 tool {tool_name}이 호출됐다")
+        if count > 1:
+            reasons.append(f"변경 tool {tool_name}이 한 요청에서 {count}회 중복 호출됐다")
+
     reasons.extend(_check_order(expect.get("order", []), called))
 
     for tool_name, argument_checks in expect.get("args", {}).items():
@@ -143,6 +197,9 @@ def check_case(
             continue
         for argument, checks in argument_checks.items():
             reasons.extend(_check_argument(tool_name, argument, arguments.get(argument), checks))
+
+    for spec in expect.get("arg_matches_result", []):
+        reasons.extend(_check_argument_matches_result(events, spec))
 
     del answer
     for spec in expect.get("result_contains", []):
@@ -162,6 +219,37 @@ def check_case(
             reasons.append(f"tool result 값이 기대와 다르다: {spec!r}")
 
     return reasons
+
+
+def _check_argument_matches_result(
+    events: list[dict[str, Any]],
+    spec: dict[str, Any],
+) -> list[str]:
+    """호출 인자가 앞선 검색 결과 row의 식별자를 실제로 이어받았는지 검사합니다."""
+
+    tool_name = str(spec["tool"])
+    argument = str(spec["argument"])
+    arguments = first_call_arguments(events, tool_name)
+    if arguments is None:
+        return [f"{tool_name}이 호출되지 않아 결과 ID 연결을 검사할 수 없다"]
+
+    source_values: list[Any] = []
+    for content in tool_result_contents(events, str(spec["source_tool"])):
+        exists, rows = _resolve_path(content, str(spec["source_path"]))
+        if exists and isinstance(rows, list):
+            source_values.extend(
+                row.get(str(spec["source_field"]))
+                for row in rows
+                if isinstance(row, dict) and str(spec["source_field"]) in row
+            )
+
+    value = arguments.get(argument)
+    if value not in source_values:
+        return [
+            f"{tool_name}.{argument}={value!r}이 "
+            f"{spec['source_tool']} 결과 ID {source_values!r}와 연결되지 않았다"
+        ]
+    return []
 
 
 def _resolve_path(content: dict[str, Any], path: str) -> tuple[bool, Any]:

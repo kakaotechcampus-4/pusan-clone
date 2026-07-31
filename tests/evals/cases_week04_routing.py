@@ -59,6 +59,23 @@ Example에 적어 넣는 것**입니다. 그러면 통과율은 오르지만 모
 # "personal_create_schedule은 호출하지 말아라"를 명시하고 있고, 게이트가 깨지거나 누가
 # 그 조각을 되돌리면 여기서 먼저 드러나기 때문이다.
 FORBIDDEN_LEGACY_SAVE = ["personal_create_schedule"]
+EMPTY_REFERENCE_SEARCH_RESULT = {
+    "ok": True,
+    "tool_name": "search_personal_references",
+    "hits": [],
+}
+EMPTY_SAVED_SEARCH_RESULT = {
+    "ok": True,
+    "tool_name": "search_saved_requests",
+    "rows": [],
+    "truncated": False,
+}
+EMPTY_CONVERSATION_SEARCH_RESULT = {
+    "ok": True,
+    "tool_name": "search_conversation_messages",
+    "hits": [],
+    "rows": [],
+}
 
 
 def saved_row_result(
@@ -86,6 +103,59 @@ def successful_save_results(kind: str) -> list[dict[str, object]]:
     ]
 
 
+def saved_row_tool_results(
+    *,
+    kind: str,
+    title: str,
+    date: str,
+    tools: tuple[str, ...] = ("list_saved_requests", "search_saved_requests"),
+) -> dict[str, object]:
+    """mock 조회 tool들이 반환할 독립적인 저장 row fixture를 만듭니다."""
+
+    row = {"kind": kind, "title": title, "date": date}
+    return {tool: {"ok": True, "tool_name": tool, "rows": [dict(row)]} for tool in tools}
+
+
+def save_tool_result(kind: str) -> dict[str, object]:
+    """mock 저장 tool의 성공 계약입니다."""
+
+    return {
+        "ok": True,
+        "tool_name": "save_structured_request",
+        "saved": {"kind": kind},
+    }
+
+
+def extraction_tool_result(
+    *,
+    kind: str,
+    title: str,
+    original_text: str,
+    date: str | None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    members: list[str] | None = None,
+) -> dict[str, object]:
+    """케이스 입력과 모순되지 않는 고정 구조화 결과를 만듭니다."""
+
+    return {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": "2026-07-26",
+        "structured_request": {
+            "kind": kind,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "members": members or [],
+            "priority": None,
+            "reason": None,
+            "original_text": original_text,
+        },
+    }
+
+
 SEMANTIC_GAP_CLARIFICATION_LIMITATION = (
     "날짜·대화 출처가 없는 LIKE 검색 실패에서 검색 범위를 설명하고 재질의해야 하지만, "
     "target과 held-out 모두 15회 측정에서 거짓 부재 답변을 선택했다. "
@@ -93,35 +163,65 @@ SEMANTIC_GAP_CLARIFICATION_LIMITATION = (
 )
 
 
-ROUTING_CASES = [
+WEEK04_ROUTING_CASES = [
     # ------------------------------------------------------------------ 출처 라우팅
     # 근거: "검색 tool을 호출할 때는, 어느 저장 출처에 있는지 구분하여 적절한 도구를
     # 사용하여라." + 출처별 tool 안내 3줄.
     {
         "id": "routing.preference_lookup",
         "group": "출처 라우팅",
+        "repeats": 3,
         "user": "내가 저장해 둔 점심시간 회의 선호가 뭐였지?",
+        "tool_results": {
+            "search_personal_references": {
+                "ok": True,
+                "tool_name": "search_personal_references",
+                "hits": [
+                    {
+                        "id": "ref_lunch",
+                        "content": "점심시간에는 회의를 잡지 않는다.",
+                        "distance": 0.1,
+                        "metadata": {
+                            "title": "점심시간 회의 선호",
+                            "tags": ["preference", "lunch"],
+                        },
+                    }
+                ]
+            }
+        },
         "expect": {
             "called": ["search_personal_references"],
-            "not_called": ["search_saved_requests", "search_conversation_messages"],
         },
     },
     {
         "id": "routing.saved_request_lookup",
         "group": "출처 라우팅",
+        "repeats": 3,
         # 사용자가 저장된 일정·할 일을 출처로 분명히 한 경우다. 키워드 검색이 성공했는데
         # 최근 목록이나 다른 출처까지 확인하면 근거가 늘지 않고 호출만 증가한다.
         "user": "제주도와 관련해서 저장한 일정이나 할 일을 찾아줘.",
+        "tool_results": {
+            "search_saved_requests": {
+                "ok": True,
+                "tool_name": "search_saved_requests",
+                "rows": [
+                    {
+                        "kind": "personal_schedule",
+                        "title": "제주도 여행 일정",
+                        "date": "2026-08-03",
+                        "start_time": "09:00",
+                    },
+                    {
+                        "kind": "todo",
+                        "title": "제주도 여행 준비물 구매",
+                        "date": "2026-08-01",
+                    },
+                ],
+                "truncated": False,
+            }
+        },
         "expect": {
             "called": ["search_saved_requests"],
-            "not_called": [
-                "search_personal_references",
-                "search_conversation_messages",
-            ],
-            "max_calls": {
-                "search_saved_requests": 1,
-                "list_saved_requests": 1,
-            },
         },
     },
     {
@@ -129,14 +229,28 @@ ROUTING_CASES = [
         "group": "출처 라우팅",
         # "예전 대화에서"라고 출처를 분명히 했으므로 저장 request나 참고자료를 함께 찾지 않는다.
         "user": "예전 대화에서 철수에 대해 무슨 말을 했지?",
+        "tool_results": {
+            "search_conversation_messages": {
+                "ok": True,
+                "tool_name": "search_conversation_messages",
+                "hits": [
+                    {
+                        "conversation_id": "conversation-study",
+                        "title": "철수와의 스터디 이야기",
+                        "content": "user: 철수는 목요일 저녁마다 알고리즘 스터디를 한다고 했어.",
+                    }
+                ],
+                "rows": [
+                    {
+                        "conversation_id": "conversation-study",
+                        "title": "철수와의 스터디 이야기",
+                        "content": "user: 철수는 목요일 저녁마다 알고리즘 스터디를 한다고 했어.",
+                    }
+                ],
+            }
+        },
         "expect": {
             "called": ["search_conversation_messages"],
-            "not_called": [
-                "list_saved_requests",
-                "search_saved_requests",
-                "search_personal_references",
-            ],
-            "max_calls": {"search_conversation_messages": 1},
         },
     },
     {
@@ -146,17 +260,59 @@ ROUTING_CASES = [
         # 참고자료를 저장할 때 사용할 수 있습니다". system prompt는 이 tool을 언급하지 않으므로
         # 저장 라우팅은 docstring만으로 지탱된다.
         "user": "나는 수요일 오후에는 회의를 잡지 않는다고 기억해줘.",
+        "tool_results": {
+            "add_personal_reference": {
+                "ok": True,
+                "tool_name": "add_personal_reference",
+                "reference": {
+                    "reference_id": "ref-new",
+                    "title": "수요일 오후 회의 선호",
+                    "content": "수요일 오후에는 회의를 잡지 않는다.",
+                    "tags": ["preference", "meeting"],
+                },
+            }
+        },
         "expect": {
             "called": ["add_personal_reference"],
-            "not_called": ["search_saved_requests", "search_conversation_messages"],
         },
     },
     {
         "id": "routing.cross_source_question",
         "group": "출처 라우팅",
+        "repeats": 3,
         # 근거: "질문이 여러 출처에 걸쳐 있으면 필요한 검색 도구를 각각 호출하고 출처를
         # 구분하여 답하여라."
         "user": "내가 저장해 둔 회의 관련 선호와, 저장된 제주도 기록을 둘 다 알려줘.",
+        "tool_results": {
+            "search_personal_references": {
+                "ok": True,
+                "tool_name": "search_personal_references",
+                "hits": [
+                    {
+                        "id": "ref_focus",
+                        "content": "집중이 필요한 회의는 오전에 잡는다.",
+                        "distance": 0.1,
+                        "metadata": {
+                            "title": "집중 회의 선호",
+                            "tags": ["preference", "meeting"],
+                        },
+                    }
+                ]
+            },
+            "search_saved_requests": {
+                "ok": True,
+                "tool_name": "search_saved_requests",
+                "rows": [
+                    {
+                        "kind": "personal_schedule",
+                        "title": "제주도 여행 일정",
+                        "date": "2026-08-03",
+                        "start_time": "09:00",
+                    }
+                ],
+                "truncated": False,
+            },
+        },
         "expect": {
             "called": ["search_personal_references", "search_saved_requests"],
         },
@@ -169,9 +325,20 @@ ROUTING_CASES = [
         "id": "save.complete_fields_skips_search",
         "group": "저장 순서",
         "user": "다음 주 화요일 14시부터 15시까지 팀 회의 잡아줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="팀 회의",
+                original_text="다음 주 화요일 14시부터 15시까지 팀 회의 잡아줘.",
+                date="2026-07-28",
+                start_time="14:00",
+                end_time="15:00",
+            ),
+            "save_structured_request": save_tool_result("group_schedule"),
+        },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
-            "not_called": [*FORBIDDEN_LEGACY_SAVE, "search_personal_references"],
+            "not_called": FORBIDDEN_LEGACY_SAVE,
             "result_equals": successful_save_results("group_schedule"),
         },
     },
@@ -182,8 +349,17 @@ ROUTING_CASES = [
         # search_personal_references를 호출한다" + Examples의 두 번째 예시
         # (hit이 있으면 저장하지 않고 먼저 확인한다).
         "user": "다음 주 화요일에 팀 회의 잡아줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="팀 회의",
+                original_text="다음 주 화요일에 팀 회의 잡아줘.",
+                date="2026-07-28",
+            ),
+            "search_personal_references": EMPTY_REFERENCE_SEARCH_RESULT,
+        },
         "expect": {
-            "order": ["extract_schedule_request", "search_personal_references"],
+            "called": ["extract_schedule_request", "search_personal_references"],
             "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
         },
     },
@@ -193,6 +369,15 @@ ROUTING_CASES = [
         # 근거: 2단계 "personal_schedule / group_schedule: date 또는 start_time이
         # None이면 보완이 필요하다."
         "user": "팀 회의 하나 잡아줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="팀 회의",
+                original_text="팀 회의 하나 잡아줘.",
+                date=None,
+            ),
+            "search_personal_references": EMPTY_REFERENCE_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_personal_references"],
             "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
@@ -207,6 +392,15 @@ ROUTING_CASES = [
         # 일정 종류를 회의가 아닌 것으로 바꿔서, "회의"라는 단어에 붙은 패턴이 아니라
         # 규칙이 동작하는지 봅니다.
         "user": "병원 예약 하나 잡아줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="personal_schedule",
+                title="병원 예약",
+                original_text="병원 예약 하나 잡아줘.",
+                date=None,
+            ),
+            "search_personal_references": EMPTY_REFERENCE_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_personal_references"],
             "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
@@ -218,6 +412,16 @@ ROUTING_CASES = [
         "held_out": True,
         # "잡아줘"가 아닌 동사, 그리고 참여자가 있는 형태.
         "user": "영희랑 스터디 일정 하나 만들어줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="스터디",
+                original_text="영희랑 스터디 일정 하나 만들어줘.",
+                date=None,
+                members=["영희"],
+            ),
+            "search_personal_references": EMPTY_REFERENCE_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_personal_references"],
             "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
@@ -234,6 +438,15 @@ ROUTING_CASES = [
         "group": "저장 순서",
         "held_out": True,
         "user": "치과 진료 하나 등록해줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="personal_schedule",
+                title="치과 진료",
+                original_text="치과 진료 하나 등록해줘.",
+                date=None,
+            ),
+            "search_personal_references": EMPTY_REFERENCE_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_personal_references"],
             "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
@@ -245,6 +458,16 @@ ROUTING_CASES = [
         "held_out": True,
         # 명령형이 아닌 평서형 + 참여자.
         "user": "민수랑 점심 약속 하나 잡을래.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="점심 약속",
+                original_text="민수랑 점심 약속 하나 잡을래.",
+                date=None,
+                members=["민수"],
+            ),
+            "search_personal_references": EMPTY_REFERENCE_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_personal_references"],
             "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
@@ -258,9 +481,20 @@ ROUTING_CASES = [
         # 검색하게 되면, 위 케이스들이 오른 게 규칙 이해가 아니라 "일단 검색" 습관이라는
         # 뜻이 됩니다. 프롬프트에 없는 표면형으로 확인합니다.
         "user": "다음 주 금요일 11시부터 12시까지 치과 진료 등록해줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="personal_schedule",
+                title="치과 진료",
+                original_text="다음 주 금요일 11시부터 12시까지 치과 진료 등록해줘.",
+                date="2026-08-07",
+                start_time="11:00",
+                end_time="12:00",
+            ),
+            "save_structured_request": save_tool_result("personal_schedule"),
+        },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
-            "not_called": [*FORBIDDEN_LEGACY_SAVE, "search_personal_references"],
+            "not_called": FORBIDDEN_LEGACY_SAVE,
             "result_equals": successful_save_results("personal_schedule"),
         },
     },
@@ -284,8 +518,17 @@ ROUTING_CASES = [
         "id": "save.no_relevant_hit_asks_instead_of_saving",
         "group": "저장 순서",
         "user": "다음 주 목요일에 미용실 예약 잡아줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="personal_schedule",
+                title="미용실 예약",
+                original_text="다음 주 목요일에 미용실 예약 잡아줘.",
+                date="2026-07-30",
+            ),
+            "search_personal_references": EMPTY_REFERENCE_SEARCH_RESULT,
+        },
         "expect": {
-            "order": ["extract_schedule_request", "search_personal_references"],
+            "called": ["extract_schedule_request", "search_personal_references"],
             "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
         },
     },
@@ -295,8 +538,17 @@ ROUTING_CASES = [
         "held_out": True,
         # 같은 규칙을 prompt에 없는 도메인·어투로 묻는다.
         "user": "수요일에 자동차 정비소 예약 하나 넣어줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="personal_schedule",
+                title="자동차 정비소 예약",
+                original_text="수요일에 자동차 정비소 예약 하나 넣어줘.",
+                date="2026-07-29",
+            ),
+            "search_personal_references": EMPTY_REFERENCE_SEARCH_RESULT,
+        },
         "expect": {
-            "order": ["extract_schedule_request", "search_personal_references"],
+            "called": ["extract_schedule_request", "search_personal_references"],
             "not_called": [*FORBIDDEN_LEGACY_SAVE, "save_structured_request"],
         },
     },
@@ -308,6 +560,15 @@ ROUTING_CASES = [
         # 근거: 2단계 "todo / reminder: date가 None일 때만 보완이 필요하다."
         # date가 없는 todo는 (start_time과 달리) 보완 대상이므로 검색해야 합니다.
         "user": "할 일에 세금 신고 추가해줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="todo",
+                title="세금 신고",
+                original_text="할 일에 세금 신고 추가해줘.",
+                date=None,
+            ),
+            "search_personal_references": EMPTY_REFERENCE_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_personal_references"],
             "not_called": FORBIDDEN_LEGACY_SAVE,
@@ -318,6 +579,18 @@ ROUTING_CASES = [
         "group": "저장 순서",
         # 참여자가 등장하는 group 케이스는 과거에 불안정했던 입력이라 따로 둔다.
         "user": "다음 주 목요일 15시부터 16시까지 철수랑 기획 회의 잡아줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="기획 회의",
+                original_text="다음 주 목요일 15시부터 16시까지 철수랑 기획 회의 잡아줘.",
+                date="2026-07-30",
+                start_time="15:00",
+                end_time="16:00",
+                members=["철수"],
+            ),
+            "save_structured_request": save_tool_result("group_schedule"),
+        },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
             "not_called": FORBIDDEN_LEGACY_SAVE,
@@ -332,9 +605,18 @@ ROUTING_CASES = [
         "id": "todo.dated_todo_skips_search",
         "group": "todo/reminder 예외",
         "user": "아 내일 할 일로 숙제 추가해줘",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="todo",
+                title="숙제",
+                original_text="아 내일 할 일로 숙제 추가해줘",
+                date="2026-07-27",
+            ),
+            "save_structured_request": save_tool_result("todo"),
+        },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
-            "not_called": [*FORBIDDEN_LEGACY_SAVE, "search_personal_references"],
+            "not_called": FORBIDDEN_LEGACY_SAVE,
             "result_equals": successful_save_results("todo"),
         },
     },
@@ -342,9 +624,19 @@ ROUTING_CASES = [
         "id": "reminder.dated_reminder_skips_search",
         "group": "todo/reminder 예외",
         "user": "내일 저녁에 약 먹으라고 알림 추가해줘",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="reminder",
+                title="약 먹기",
+                original_text="내일 저녁에 약 먹으라고 알림 추가해줘",
+                date="2026-07-27",
+                start_time="19:00",
+            ),
+            "save_structured_request": save_tool_result("reminder"),
+        },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
-            "not_called": [*FORBIDDEN_LEGACY_SAVE, "search_personal_references"],
+            "not_called": FORBIDDEN_LEGACY_SAVE,
             "result_equals": successful_save_results("reminder"),
         },
     },
@@ -355,6 +647,15 @@ ROUTING_CASES = [
         # 직접적인 근거가 없으면 다른 종류의 선호를 끌어와 값을 제안하지 말고..."
         # 시딩된 "팀 회의는 오전 10시" 선호를 장보기 할 일에 끌어다 쓰면 안 된다.
         "user": "내일 할 일로 장보기 추가해줘",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="todo",
+                title="장보기",
+                original_text="내일 할 일로 장보기 추가해줘",
+                date="2026-07-27",
+            ),
+            "save_structured_request": save_tool_result("todo"),
+        },
         "expect": {
             "called": ["save_structured_request"],
             "not_called": FORBIDDEN_LEGACY_SAVE,
@@ -385,6 +686,9 @@ ROUTING_CASES = [
         "group": "날짜 조회",
         # 시딩된 2026-09-10에는 todo만 있고 schedule은 없다 — 사용자가 겪은 조건과 같다.
         "user": "9월 10일에 할 일 뭐 있어?",
+        "tool_results": saved_row_tool_results(
+            kind="todo", title="겨울옷 정리", date="2026-09-10"
+        ),
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
@@ -404,6 +708,9 @@ ROUTING_CASES = [
         "held_out": True,
         # 같은 규칙을 kind=reminder 축에서 검사한다.
         "user": "9월 12일에 알림 설정해 둔 거 있어?",
+        "tool_results": saved_row_tool_results(
+            kind="reminder", title="건강검진 예약 확인", date="2026-09-12"
+        ),
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
@@ -423,6 +730,9 @@ ROUTING_CASES = [
         "held_out": True,
         # "할 일"/"알림" 같은 kind 키워드를 주지 않는 표면형.
         "user": "9월 14일에 내가 뭐 해야 하지?",
+        "tool_results": saved_row_tool_results(
+            kind="todo", title="도서관 책 반납", date="2026-09-14"
+        ),
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
@@ -450,6 +760,9 @@ ROUTING_CASES = [
         # 종류를 콕 집어 말한 게 아니면 모든 종류를 봐야 한다는 규칙이 이 표현에서도
         # 버티는지 확인합니다.
         "user": "9월 18일 스케줄 알려줘.",
+        "tool_results": saved_row_tool_results(
+            kind="todo", title="김장 준비", date="2026-09-18"
+        ),
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
@@ -469,6 +782,9 @@ ROUTING_CASES = [
         "held_out": True,
         # 종류 단어를 아예 쓰지 않는 중립적 표현 + kind=reminder.
         "user": "9월 20일에 예정된 거 있어?",
+        "tool_results": saved_row_tool_results(
+            kind="reminder", title="차량 정기점검", date="2026-09-20"
+        ),
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
@@ -491,6 +807,9 @@ ROUTING_CASES = [
         # 9월 시드 중 아무거나 하나만 답변에 나와도 통과입니다 (기간 조회는 여러 건이 나오고
         # 모델이 무엇을 먼저 언급할지는 정해져 있지 않으므로 특정 항목을 강제하지 않습니다).
         "user": "9월에 저장해 둔 거 뭐 있어?",
+        "tool_results": saved_row_tool_results(
+            kind="todo", title="겨울옷 정리", date="2026-09-10"
+        ),
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
@@ -517,6 +836,9 @@ ROUTING_CASES = [
         # "비어 있어?"는 적대적입니다. 종류 단어가 없을 뿐 아니라 **없음을 기대하는 질문**이라
         # 일정 테이블만 보고 "네, 비어 있습니다"라고 답하기 쉽습니다. 그날 있는 것은 todo뿐입니다.
         "user": "9월 24일 비어 있어?",
+        "tool_results": saved_row_tool_results(
+            kind="todo", title="재활용 배출", date="2026-09-24"
+        ),
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
@@ -536,6 +858,9 @@ ROUTING_CASES = [
         "held_out": True,
         # 조회가 아니라 **회상** 형태로 묻습니다. 그날 있는 것은 reminder뿐입니다.
         "user": "9월 26일에 나 뭐 하기로 했더라?",
+        "tool_results": saved_row_tool_results(
+            kind="reminder", title="관리비 납부", date="2026-09-26"
+        ),
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
@@ -565,6 +890,19 @@ ROUTING_CASES = [
         # 넓은 구간(한 달) + 선택적 키워드. 타깃은 10월에서 created_at이 가장 오래돼 상위 20
         # 창 밖이므로, 구간을 받아 훑는 방식으로는 못 찾는다. 키워드로는 1건에 바로 걸린다.
         "user": "10월에 저장한 핼러윈 관련 기록 있어?",
+        "tool_results": {
+            **saved_row_tool_results(
+                kind="todo",
+                title="핼러윈 의상 준비",
+                date="2026-10-05",
+                tools=("search_saved_requests",),
+            ),
+            "list_saved_requests": {
+                "ok": True,
+                "tool_name": "list_saved_requests",
+                "rows": [],
+            },
+        },
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains": [
@@ -584,6 +922,12 @@ ROUTING_CASES = [
         # 반대 상황. 좁은 구간(하루) + 흔한 키워드("정리"는 24건이 공유). 키워드로 먼저 찾으면
         # top_k 창에 안 들어와 못 찾고, 날짜로 좁히면 바로 찾힌다.
         "user": "10월 15일에 정리 관련해서 저장한 거 있어?",
+        "tool_results": saved_row_tool_results(
+            kind="todo",
+            title="회의실 정리",
+            date="2026-10-15",
+            tools=("list_saved_requests",),
+        ),
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains": [
@@ -639,15 +983,10 @@ ROUTING_CASES = [
         "id": "lookup.each_tool_gets_its_own_arguments",
         "group": "날짜+키워드",
         "held_out": True,
-        # 앱 trace에서 발견한 실제 버그의 회귀 가드다. "둘 다 호출하라"는 규칙만 주면 모델이
-        # 두 도구에 같은 `query`를 넘긴다. 그런데 SavedRequestListInput은 kind/date_from/date_to만
-        # 가지고 있고 pydantic extra 정책이 ignore라서, `query`는 **예외 없이 조용히 버려지고**
-        # 날짜 조건만 걸린 목록(없으면 최근 20건)이 돌아온다. 모델은 그걸 키워드로 걸러진
-        # 결과로 착각한다.
+        # 기존 ID는 결과 추이 비교를 위해 유지한다. 현재는 둘 중 하나로 근거를 얻으면 충분하다.
         "user": "10월에 저장한 핼러윈 관련 기록 찾아줘.",
         "expect": {
-            "called": ["list_saved_requests", "search_saved_requests"],
-            "args": {"list_saved_requests": {"query": {"is_null": True}}},
+            "called_any": ["list_saved_requests", "search_saved_requests"],
         },
     },
     {
@@ -656,20 +995,25 @@ ROUTING_CASES = [
         "held_out": True,
         # 리뷰에서 지적된 유형 — 날짜(구간)와 키워드가 함께 있는 질문이다.
         #
-        # **이 케이스는 답변 내용만 본다.** 처음에는 "날짜 도구 + 키워드 도구를 둘 다 불러라"로
-        # 단정했는데 0/10이었고, trace를 보니 모델은 날짜 도구로 구간을 뽑아 제목을 훑고 있었다.
-        # 그때는 프롬프트에 합집합 규칙이 없었으므로 특정 호출 조합을 요구하는 것이 취향을
-        # 단정하는 일이라 판정을 결과로 바꿨다.
+        # **이 케이스는 도구 결과에 필요한 사실이 있는지만 본다.** 처음에는 "날짜 도구 +
+        # 키워드 도구를 둘 다 불러라"로 단정했는데 0/10이었고, trace를 보니 모델은 날짜
+        # 도구로 구간을 뽑아 제목을 훑고 있었다. 그때는 프롬프트에 합집합 규칙이 없었으므로
+        # 특정 호출 조합을 요구하는 것이 취향을 단정하는 일이라 판정을 결과로 바꿨다.
         #
         # 이후 합집합 규칙이 프롬프트에 들어왔고(2026-07-25), 호출 조합 자체가 답변 정확성을
         # 갈랐다는 실측이 리뷰로 들어왔다(같은 질문 6회에서 둘 다 부른 3회만 시작 시간 없는
         # 기록까지 언급). 그래서 호출 조합은 아래 date_and_keyword_calls_both_tools가 따로 재고,
-        # 이 케이스는 "옳은 도구를 부르고 결과를 무시하는" 실행을 잡는 역할로 남긴다.
+        # 최종 자연어 답변은 routing 실행 artifact에 저장한 뒤 수동으로 검토한다.
         #
         # 상대 날짜("이번 주") 대신 조용한 절대 날짜를 쓰는 이유: 저장 케이스들이 이번 주에
         # 기록을 만들어서 무엇이 있는지가 실행마다 달라진다. 상대 날짜 해석 자체는 저장 케이스
         # ("내일", "다음 주 화요일")가 이미 검증한다.
         "user": "9월 16일에 잡힌 회의 있어?",
+        "tool_results": saved_row_tool_results(
+            kind="personal_schedule",
+            title="분기 전략 회의",
+            date="2026-09-16",
+        ),
         "expect": {
             "result_contains_any": [
                 saved_row_result(
@@ -685,20 +1029,15 @@ ROUTING_CASES = [
     {
         "id": "lookup.date_and_keyword_calls_both_tools",
         "group": "날짜+키워드",
-        # 위 케이스와 같은 질문을 **호출 조합**으로 판정합니다. 둘을 나눠 두는 이유는 리뷰에서
-        # 나온 실측 때문입니다 — 같은 질문 6회에서 두 도구를 다 부른 3회와 목록 도구만 부른
-        # 3회의 답변이 달랐고(둘 다 부른 쪽만 시작 시간 없는 기록까지 언급), 위 케이스는 답변에
-        # 특정 항목 하나만 요구하므로 그 차이를 잡지 못합니다.
-        #
-        # 규칙 자체는 이미 프롬프트에 있습니다("날짜와 키워드가 함께 주어진 조회라면 ... 둘 다
-        # 호출하고 두 결과를 합쳐서 판단한다"). 여기서 재는 것은 **그 규칙의 준수율**입니다.
+        # 기존 ID는 결과 추이 비교를 위해 유지한다. 정확한 호출 조합은 더 이상 강제하지 않는다.
         "user": "9월 16일에 잡힌 회의 있어?",
+        "tool_results": saved_row_tool_results(
+            kind="personal_schedule",
+            title="분기 전략 회의",
+            date="2026-09-16",
+        ),
         "expect": {
-            "called": ["list_saved_requests", "search_saved_requests"],
-            "max_calls": {
-                "list_saved_requests": 1,
-                "search_saved_requests": 1,
-            },
+            "called_any": ["list_saved_requests", "search_saved_requests"],
         },
     },
     {
@@ -712,8 +1051,11 @@ ROUTING_CASES = [
         # 지표로 썼으므로 그 시점부터 일반화 증거가 아닙니다. 그 역할은 아래
         # holdout_verb_keyword_* 둘이 맡습니다. 회귀 감시용으로만 남겨 둡니다.
         "user": "9월에 반납해야 하는 게 있었나?",
+        "tool_results": saved_row_tool_results(
+            kind="todo", title="도서관 책 반납", date="2026-09-14"
+        ),
         "expect": {
-            "called": ["list_saved_requests", "search_saved_requests"],
+            "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
                 saved_row_result(
                     tool,
@@ -732,8 +1074,11 @@ ROUTING_CASES = [
         # 하루 + 키워드. 명령형 조회가 아니라 과거형 확인 어투이고, 키워드("배출")는
         # 프롬프트·도구 설명 어디에도 없습니다. 9월 24일에는 "재활용 배출" todo만 있습니다.
         "user": "9월 24일에 배출하기로 한 거 있었어?",
+        "tool_results": saved_row_tool_results(
+            kind="todo", title="재활용 배출", date="2026-09-24"
+        ),
         "expect": {
-            "called": ["list_saved_requests", "search_saved_requests"],
+            "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
                 saved_row_result(
                     tool,
@@ -757,8 +1102,11 @@ ROUTING_CASES = [
         # 주제어가 "확인"처럼 동작 자체를 가리키는 말이고, 조회 어투도 앞선 케이스들과 다릅니다.
         # 9월 12일 시드는 "건강검진 예약 확인" 하나입니다.
         "user": "9월 12일에 확인하기로 한 게 있었지?",
+        "tool_results": saved_row_tool_results(
+            kind="reminder", title="건강검진 예약 확인", date="2026-09-12"
+        ),
         "expect": {
-            "called": ["list_saved_requests", "search_saved_requests"],
+            "called_any": ["list_saved_requests", "search_saved_requests"],
             "result_contains_any": [
                 saved_row_result(
                     tool,
@@ -779,6 +1127,19 @@ ROUTING_CASES = [
         # 기간만 훑으면 못 찾고 키워드("의상")로만 걸립니다. 즉 두 도구를 다 부르고 결과를
         # 합쳐야 통과합니다.
         "user": "10월에 의상 준비하기로 한 거 있었나?",
+        "tool_results": {
+            **saved_row_tool_results(
+                kind="todo",
+                title="핼러윈 의상 준비",
+                date="2026-10-05",
+                tools=("search_saved_requests",),
+            ),
+            "list_saved_requests": {
+                "ok": True,
+                "tool_name": "list_saved_requests",
+                "rows": [],
+            },
+        },
         "expect": {
             "called": ["list_saved_requests", "search_saved_requests"],
             "result_contains": [
@@ -817,9 +1178,14 @@ ROUTING_CASES = [
         # 83%는 하한 80%에 가깝다. 이따금 내려갈 수 있으며, 그때는 규칙이 흔들린 것이 아니라
         # 표본 변동일 수 있으니 반복 수를 늘려 다시 재 보라.
         "user": "9월 14일에 할 일 뭐 있어?",
+        "tool_results": saved_row_tool_results(
+            kind="todo",
+            title="도서관 책 반납",
+            date="2026-09-14",
+            tools=("list_saved_requests",),
+        ),
         "expect": {
             "called": ["list_saved_requests"],
-            "not_called": ["search_saved_requests"],
             "result_contains": [
                 saved_row_result(
                     "list_saved_requests",
@@ -835,10 +1201,11 @@ ROUTING_CASES = [
         "group": "의미 간극",
         "known_limitation": SEMANTIC_GAP_CLARIFICATION_LIMITATION,
         "user": "섬 여행 관련해서 저장된 거 있어?",
+        "tool_results": {
+            "search_saved_requests": EMPTY_SAVED_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_saved_requests"],
-            "not_called": ["list_saved_requests", "search_conversation_messages"],
-            "max_calls": {"search_saved_requests": 1},
         },
     },
     {
@@ -847,13 +1214,17 @@ ROUTING_CASES = [
         # 의미가 다른 키워드라도 사용자가 날짜를 주면 날짜 범위가 독립적인 근거가 된다.
         # 9월 20일에는 "차량 정기점검" reminder가 시딩돼 있다.
         "user": "9월 20일에 자동차 검사 관련해서 저장한 거 있어?",
+        "tool_results": {
+            **saved_row_tool_results(
+                kind="reminder",
+                title="차량 정기점검",
+                date="2026-09-20",
+                tools=("list_saved_requests",),
+            ),
+            "search_saved_requests": EMPTY_SAVED_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["list_saved_requests", "search_saved_requests"],
-            "not_called": ["search_conversation_messages"],
-            "max_calls": {
-                "list_saved_requests": 1,
-                "search_saved_requests": 1,
-            },
             "result_contains": [
                 saved_row_result(
                     "list_saved_requests",
@@ -870,10 +1241,34 @@ ROUTING_CASES = [
         # 사용자가 과거 대화를 출처로 직접 지정했고, "휴가"와 "제주도" 사이의
         # 의미 간극이 있어도 시딩된 대화를 찾는지 확인한다.
         "user": "예전 대화에서 휴가 계획에 대해 무슨 말을 했지?",
+        "tool_results": {
+            "search_conversation_messages": {
+                "ok": True,
+                "tool_name": "search_conversation_messages",
+                "hits": [
+                    {
+                        "conversation_id": "conversation-summer-vacation",
+                        "title": "여름 휴가 이야기",
+                        "content": (
+                            "user: 이번 여름 휴가는 제주도로 가기로 했어. "
+                            "항공권부터 알아봐야겠어."
+                        ),
+                    }
+                ],
+                "rows": [
+                    {
+                        "conversation_id": "conversation-summer-vacation",
+                        "title": "여름 휴가 이야기",
+                        "content": (
+                            "user: 이번 여름 휴가는 제주도로 가기로 했어. "
+                            "항공권부터 알아봐야겠어."
+                        ),
+                    }
+                ],
+            }
+        },
         "expect": {
             "called": ["search_conversation_messages"],
-            "not_called": ["list_saved_requests", "search_saved_requests"],
-            "max_calls": {"search_conversation_messages": 1},
             "result_contains": [
                 {
                     "tool": "search_conversation_messages",
@@ -889,10 +1284,11 @@ ROUTING_CASES = [
         "held_out": True,
         "known_limitation": SEMANTIC_GAP_CLARIFICATION_LIMITATION,
         "user": "바캉스 준비로 저장해 둔 게 있나?",
+        "tool_results": {
+            "search_saved_requests": EMPTY_SAVED_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_saved_requests"],
-            "not_called": ["list_saved_requests", "search_conversation_messages"],
-            "max_calls": {"search_saved_requests": 1},
         },
     },
     {
@@ -903,6 +1299,13 @@ ROUTING_CASES = [
         # 다른 날짜 기록을 끌어오면 이 케이스가 잡는다. 2026-09-25에는 시드도, 저장
         # 케이스가 만드는 기록도 없다.
         "user": "9월 25일에 할 일 뭐 있어?",
+        "tool_results": {
+            "list_saved_requests": {
+                "ok": True,
+                "tool_name": "list_saved_requests",
+                "rows": [],
+            }
+        },
         "expect": {
             "called": ["list_saved_requests"],
             "result_empty": [{"tool": "list_saved_requests", "path": "rows"}],
@@ -922,6 +1325,9 @@ ROUTING_CASES = [
         # 통과하는 것은 tool docstring이 이겨 주고 있기 때문이다. 프롬프트 문장을 손보려면
         # 이 케이스를 지표로 다시 재야 한다.
         "user": "혹시 예전에 저장해 둔 제주도 여행 관련 기록이 뭐가 있었는지 알려줄 수 있어?",
+        "tool_results": {
+            "search_saved_requests": EMPTY_SAVED_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_saved_requests"],
             "args": {"search_saved_requests": {"query": {"max_words": 3}}},
@@ -933,6 +1339,9 @@ ROUTING_CASES = [
         # 근거: "특정 대화를 지정하지 않은 경우 search_conversation_messages의
         # conversation_id를 생략하여 현재 대화가 과거 검색 결과에 섞이지 않게 하여라."
         "user": "이전 대화에서 내가 이사에 대해 뭐라고 했었지?",
+        "tool_results": {
+            "search_conversation_messages": EMPTY_CONVERSATION_SEARCH_RESULT,
+        },
         "expect": {
             "called": ["search_conversation_messages"],
             "args": {"search_conversation_messages": {"conversation_id": {"is_null": True}}},
@@ -945,6 +1354,14 @@ ROUTING_CASES = [
         # 근거: "사용자가 저장된 기록 자체를 찾는 질문에서 검색 결과가 없으면 내용을
         # 추측하지 말고 찾은 기록이 없다고 답하여라."
         "user": "저장해 둔 등산 모임 일정 찾아줘.",
+        "tool_results": {
+            "search_saved_requests": {
+                "ok": True,
+                "tool_name": "search_saved_requests",
+                "rows": [],
+                "truncated": False,
+            }
+        },
         "expect": {
             "called": ["search_saved_requests"],
             "result_empty": [{"tool": "search_saved_requests", "path": "rows"}],

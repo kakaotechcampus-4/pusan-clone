@@ -8,7 +8,6 @@ import student_parts.week02_structure_natural_language_requests as week02
 
 
 EVAL_MARKER = "eval"
-ANSWER_EVAL_MARKER = "answer_eval"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -24,19 +23,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--eval",
         action="store_true",
         default=False,
-        help="실제 LLM/embedding API를 호출하는 평가만 실행합니다 (기본값은 제외).",
-    )
-    group.addoption(
-        "--eval-answers",
-        action="store_true",
-        default=False,
-        help="LLM judge가 최종 답변의 정합성을 판정하는 비차단 평가만 실행합니다.",
+        help="실제 LLM routing 평가를 실행하고 최종 답변 artifact를 저장합니다.",
     )
     group.addoption(
         "--eval-repeats",
         type=int,
-        default=5,
-        help="케이스당 반복 실행 횟수입니다 (기본 5).",
+        default=None,
+        help="모든 케이스의 반복 횟수를 덮어씁니다 (기본: 케이스별 1회 또는 3회).",
     )
     group.addoption(
         "--eval-workers",
@@ -55,11 +48,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
     config.addinivalue_line(
         "markers",
-        "eval: 실제 LLM API를 호출하는 동작 평가 (기본 실행에서 제외, --eval로 실행)",
-    )
-    config.addinivalue_line(
-        "markers",
-        "answer_eval: LLM judge가 최종 답변을 판정하는 비차단 평가 (--eval-answers로 실행)",
+        "eval: 실제 LLM과 mock tool을 쓰는 동작 평가 (기본 실행에서 제외, --eval로 실행)",
     )
 
 
@@ -67,24 +56,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """`--eval` 여부에 따라 평가 테스트와 일반 테스트 중 한쪽만 남깁니다."""
 
     run_eval = bool(config.getoption("--eval"))
-    run_answer_eval = bool(config.getoption("--eval-answers"))
-    selecting_eval = run_eval or run_answer_eval
     # collection-only는 API를 호출하지 않으므로 eval 케이스 목록 자체를 점검할 수 있게 둡니다.
-    if config.option.collectonly and not selecting_eval:
+    if config.option.collectonly and not run_eval:
         return
 
     selected: list[pytest.Item] = []
     deselected: list[pytest.Item] = []
     for item in items:
         is_eval = item.get_closest_marker(EVAL_MARKER) is not None
-        is_answer_eval = item.get_closest_marker(ANSWER_EVAL_MARKER) is not None
-        if selecting_eval:
-            should_select = (
-                (run_eval and is_eval and not is_answer_eval)
-                or (run_answer_eval and is_answer_eval)
-            )
-        else:
-            should_select = not is_eval and not is_answer_eval
+        should_select = is_eval if run_eval else not is_eval
         (selected if should_select else deselected).append(item)
 
     if deselected:

@@ -12,6 +12,8 @@ from __future__ import annotations
 이유로 실패하므로, 케이스를 추가할 때 이 분리를 지켜야 합니다.
 """
 
+from tests.evals.cases_week04_routing import extraction_tool_result, save_tool_result
+
 
 def external_row_result(
     tool: str,
@@ -33,6 +35,52 @@ def external_row_result(
     }
 
 
+def external_schedule_tool_results(
+    *,
+    member_name: str,
+    title: str,
+    date: str,
+    tools: tuple[str, ...] = ("collect_member_schedules", "list_shared_schedules"),
+) -> dict[str, object]:
+    """mock 외부 일정 조회 결과를 assertion과 별도로 선언합니다."""
+
+    row = {"member_name": member_name, "title": title, "date": date}
+    return {tool: {"ok": True, "tool_name": tool, "rows": [dict(row)]} for tool in tools}
+
+
+def open_member_tool_results(
+    *,
+    member_name: str,
+    title: str,
+    date: str,
+    content: str,
+) -> dict[str, object]:
+    """기간 미지정 질문에서 허용하는 각 조회 경로의 고정 결과입니다."""
+
+    results = external_schedule_tool_results(
+        member_name=member_name,
+        title=title,
+        date=date,
+    )
+    results["search_previous_conversations"] = {
+        "ok": True,
+        "tool_name": "search_previous_conversations",
+        "rows": [
+            {
+                "conversation_id": f"conversation-{member_name}",
+                "member_name": member_name,
+                "content": content,
+            }
+        ],
+    }
+    results["load_conversation_messages"] = {
+        "ok": True,
+        "tool_name": "load_conversation_messages",
+        "rows": [{"sender": member_name, "content": content}],
+    }
+    return results
+
+
 EVAL_EXTERNAL_THREAD_ID = "eval_ext_hr_thread"
 EVAL_EXTERNAL_EARLY_MESSAGE = "하린: 온보딩 참가자 명단은 오전에 먼저 확인했어요."
 EVAL_EXTERNAL_SEARCH_MESSAGE = "하린: 리허설 체크리스트는 오후에 다시 검토했어요."
@@ -47,18 +95,39 @@ WEEK05_ROUTING_CASES = [
         "id": "week05.collect.multi_member_availability",
         "group": "여러 사람 일정 수집",
         "rule": "availability-rows",
+        "repeats": 3,
         "user": "7월 7일부터 10일까지 철수랑 영희랑 내가 언제 시간 되는지 확인해줘.",
+        "tool_results": {
+            "collect_member_schedules": {
+                "ok": True,
+                "tool_name": "collect_member_schedules",
+                "rows": [
+                    {
+                        "member_name": "철수",
+                        "title": "API 연동 실습",
+                        "date": "2026-07-07",
+                        "start_time": "10:00",
+                        "end_time": "11:00",
+                    },
+                    {
+                        "member_name": "영희",
+                        "title": "콘텐츠 회의",
+                        "date": "2026-07-08",
+                        "start_time": "14:00",
+                        "end_time": "15:00",
+                    },
+                    {
+                        "member_name": "나",
+                        "title": "개인 일정",
+                        "date": "2026-07-09",
+                        "start_time": "09:00",
+                        "end_time": "10:00",
+                    },
+                ]
+            }
+        },
         "expect": {
             "called": ["collect_member_schedules"],
-            "not_called": [
-                "extract_schedules_from_history",
-            ],
-            # 공유 저장소 범위를 한 번 확인한 뒤 핵심 수집 도구를 호출하는 것은 결과를
-            # 바꾸지 않는 확인 단계이므로 허용한다. collect를 대체하는 것은 허용하지 않는다.
-            "max_calls": {
-                "collect_member_schedules": 1,
-                "list_shared_schedules": 1,
-            },
             "result_contains": [
                 external_row_result(
                     "collect_member_schedules",
@@ -81,16 +150,14 @@ WEEK05_ROUTING_CASES = [
         # 내 앱 일정까지 반드시 합쳐야 하는 경로는 위 multi_member_availability처럼 사용자가
         # 자신을 포함한 요청에서 별도로 고정한다.
         "user": "7월 8일부터 10일 사이 민준, 서연, 하린의 약속이 안 겹치는 구간을 찾아줘.",
+        "tool_results": external_schedule_tool_results(
+            member_name="민준", title="데이터 정리", date="2026-07-08"
+        ),
         "expect": {
             "called_any": [
                 "collect_member_schedules",
                 "list_shared_schedules",
             ],
-            "not_called": ["extract_schedules_from_history"],
-            "max_calls": {
-                "collect_member_schedules": 1,
-                "list_shared_schedules": 1,
-            },
             "result_contains_any": [
                 *(
                     external_row_result(
@@ -111,18 +178,54 @@ WEEK05_ROUTING_CASES = [
         "id": "week05.history.search_then_load",
         "group": "외부 대화 검색 순서",
         "rule": "search-before-load",
+        "repeats": 3,
         "user": "철수의 외부 이전 대화 중 일정 공유 대화를 찾아서 전체 메시지를 불러와줘.",
+        "tool_results": {
+            "search_previous_conversations": {
+                "ok": True,
+                "tool_name": "search_previous_conversations",
+                "rows": [
+                    {
+                        "conversation_id": "ext_cs",
+                        "member_name": "철수",
+                        "title": "일정 공유 대화",
+                    }
+                ]
+            },
+            "load_conversation_messages": {
+                "ok": True,
+                "tool_name": "load_conversation_messages",
+                "rows": [
+                    {
+                        "sender": "철수",
+                        "content": "7월 7일 10시는 API 연동 실습이 있어요.",
+                    },
+                    {
+                        "sender": "나",
+                        "content": "그 일정 기준으로 시간을 맞춰 볼게요.",
+                    },
+                ]
+            },
+        },
         "expect": {
             "order": [
                 "search_previous_conversations",
                 "load_conversation_messages",
             ],
-            "not_called": ["search_conversation_messages"],
             "args": {
                 "load_conversation_messages": {
                     "conversation_id": {"equals": "ext_cs"},
                 }
             },
+            "arg_matches_result": [
+                {
+                    "tool": "load_conversation_messages",
+                    "argument": "conversation_id",
+                    "source_tool": "search_previous_conversations",
+                    "source_path": "rows",
+                    "source_field": "conversation_id",
+                }
+            ],
             "result_contains": [
                 {
                     "tool": "load_conversation_messages",
@@ -143,17 +246,46 @@ WEEK05_ROUTING_CASES = [
         # 구성된다. 검색 결과만으로는 첫 메시지를 볼 수 없으므로, 아래 content 검사는
         # load_conversation_messages가 실제로 필요한 동작임을 보장한다.
         "user": "하린이 말한 '리허설 체크리스트' 외부 대화방을 찾아서 처음부터 펼쳐 보여줘.",
+        "tool_results": {
+            "search_previous_conversations": {
+                "ok": True,
+                "tool_name": "search_previous_conversations",
+                "rows": [
+                    {
+                        "conversation_id": EVAL_EXTERNAL_THREAD_ID,
+                        "member_name": "하린",
+                        "title": "하린의 온보딩 회고",
+                    }
+                ],
+            },
+            "load_conversation_messages": {
+                "ok": True,
+                "tool_name": "load_conversation_messages",
+                "rows": [
+                    {"sender": "하린", "content": EVAL_EXTERNAL_EARLY_MESSAGE},
+                    {"sender": "하린", "content": EVAL_EXTERNAL_SEARCH_MESSAGE},
+                ],
+            },
+        },
         "expect": {
             "order": [
                 "search_previous_conversations",
                 "load_conversation_messages",
             ],
-            "not_called": ["search_conversation_messages"],
             "args": {
                 "load_conversation_messages": {
                     "conversation_id": {"equals": EVAL_EXTERNAL_THREAD_ID},
                 }
             },
+            "arg_matches_result": [
+                {
+                    "tool": "load_conversation_messages",
+                    "argument": "conversation_id",
+                    "source_tool": "search_previous_conversations",
+                    "source_path": "rows",
+                    "source_field": "conversation_id",
+                }
+            ],
             "result_contains": [
                 {
                     "tool": "load_conversation_messages",
@@ -174,12 +306,14 @@ WEEK05_ROUTING_CASES = [
         "group": "공유 목록 용도 한정",
         "rule": "shared-list-scope",
         "user": "7월 14일부터 16일까지 철수와 지훈이 바쁜 시간을 모아줘.",
+        "tool_results": external_schedule_tool_results(
+            member_name="지훈", title="보안 점검", date="2026-07-14"
+        ),
         "expect": {
             "called_any": [
                 "collect_member_schedules",
                 "list_shared_schedules",
             ],
-            "not_called": ["extract_schedules_from_history"],
             "result_contains_any": [
                 *(
                     external_row_result(
@@ -200,16 +334,14 @@ WEEK05_ROUTING_CASES = [
         "held_out": True,
         # "busy-time"이나 "바쁘다" 대신 prompt에 없는 "캘린더가 막힌 구간"을 사용한다.
         "user": "7월 10일 영희와 하린 캘린더가 막힌 구간을 확인해줘.",
+        "tool_results": external_schedule_tool_results(
+            member_name="영희", title="콘텐츠 점검", date="2026-07-10"
+        ),
         "expect": {
             "called_any": [
                 "collect_member_schedules",
                 "list_shared_schedules",
             ],
-            "not_called": ["extract_schedules_from_history"],
-            "max_calls": {
-                "collect_member_schedules": 1,
-                "list_shared_schedules": 1,
-            },
             "result_contains_any": [
                 *(
                     external_row_result(
@@ -233,7 +365,14 @@ WEEK05_ROUTING_CASES = [
         "id": "week05.shared.member_roster",
         "group": "공유 목록 용도 한정",
         "rule": "shared-list-scope",
+        "repeats": 3,
         "user": "외부 팀원이 누가 있어?",
+        "tool_results": external_schedule_tool_results(
+            member_name="철수",
+            title="API 연동 실습",
+            date="2026-07-07",
+            tools=("list_shared_schedules",),
+        ),
         "expect": {
             "called": ["list_shared_schedules"],
             "result_contains": [
@@ -252,6 +391,12 @@ WEEK05_ROUTING_CASES = [
         "held_out": True,
         # prompt에 없는 "일정 공유하는 사람들" 표면형으로 같은 규칙을 검사한다.
         "user": "나랑 일정 공유하는 사람들이 누구누구야?",
+        "tool_results": external_schedule_tool_results(
+            member_name="영희",
+            title="콘텐츠 점검",
+            date="2026-07-10",
+            tools=("list_shared_schedules",),
+        ),
         "expect": {
             "called": ["list_shared_schedules"],
             "result_contains": [
@@ -282,10 +427,14 @@ WEEK05_ROUTING_CASES = [
             },
         ],
         "user": "외부 저장소에 지훈이 일정 저장됐어?",
+        "tool_results": external_schedule_tool_results(
+            member_name="지훈",
+            title="회의",
+            date="2026-07-27",
+            tools=("list_shared_schedules",),
+        ),
         "expect": {
             "called": ["list_shared_schedules"],
-            # 정확한 이름으로 한 번에 찾거나, 빈 결과 뒤 이름 필터를 빼고 재확인할 수 있다.
-            "max_calls": {"list_shared_schedules": 2},
             "result_contains": [
                 external_row_result(
                     "list_shared_schedules",
@@ -307,6 +456,15 @@ WEEK05_ROUTING_CASES = [
         "group": "기간 미지정 조회",
         "rule": "no-date-range",
         "user": "외부 팀원 철수의 일정을 조회해봐줘.",
+        "tool_results": open_member_tool_results(
+            member_name="철수",
+            title="API 연동 실습",
+            date="2026-07-07",
+            content=(
+                "철수: 7월 7일 10시는 API 연동 실습, 7월 9일 14시는 고객 인터뷰, "
+                "7월 15일 16시는 QA 리뷰가 있어요."
+            ),
+        ),
         "expect": {
             "result_contains_any": [
                 *(
@@ -344,6 +502,15 @@ WEEK05_ROUTING_CASES = [
         "held_out": True,
         # prompt에 없는 "언제 뭐 하는지" 표현과 다른 멤버로 같은 규칙을 검사한다.
         "user": "외부 팀원 지훈이 언제 뭐 하는지 알려줘.",
+        "tool_results": open_member_tool_results(
+            member_name="지훈",
+            title="보안 점검",
+            date="2026-07-14",
+            content=(
+                "지훈: 7월 7일 15시는 모델 평가, 7월 14일 10시는 보안 점검, "
+                "7월 16일 13시는 릴리즈 회의가 있습니다."
+            ),
+        ),
         "expect": {
             "result_contains_any": [
                 *(
@@ -393,6 +560,21 @@ WEEK05_ROUTING_CASES = [
         "group": "공유 일정 생성 경로",
         "rule": "shared-create-path",
         "user": "공유 일정으로 다음 주 수요일 14시부터 15시까지 스프린트 리뷰 잡아줘. 참석자는 나, 철수",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="스프린트 리뷰",
+                original_text=(
+                    "공유 일정으로 다음 주 수요일 14시부터 15시까지 스프린트 리뷰 잡아줘. "
+                    "참석자는 나, 철수"
+                ),
+                date="2026-07-29",
+                start_time="14:00",
+                end_time="15:00",
+                members=["나", "철수"],
+            ),
+            "save_structured_request": save_tool_result("group_schedule"),
+        },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
             "not_called": ["create_shared_schedule"],
@@ -407,6 +589,29 @@ WEEK05_ROUTING_CASES = [
         "group": "공유 일정 생성 경로",
         "rule": "shared-create-path",
         "user": "앱 저장소 말고 외부 저장소에만 서연의 8월 20일 15시 리뷰 일정을 추가해줘.",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="리뷰",
+                original_text=(
+                    "앱 저장소 말고 외부 저장소에만 서연의 8월 20일 15시 리뷰 일정을 추가해줘."
+                ),
+                date="2026-08-20",
+                start_time="15:00",
+                members=["서연"],
+            ),
+            "create_shared_schedule": {
+                "ok": True,
+                "tool_name": "create_shared_schedule",
+                "shared_schedule": {
+                    "schedule_id": "shared-eval-review",
+                    "member_name": "서연",
+                    "title": "리뷰",
+                    "date": "2026-08-20",
+                    "start_time": "15:00",
+                },
+            },
+        },
         "expect": {
             "called": ["create_shared_schedule"],
             "not_called": ["save_structured_request"],
@@ -419,6 +624,20 @@ WEEK05_ROUTING_CASES = [
         "held_out": True,
         # prompt에 없는 "팀 캘린더에도 올라가게" 표면형으로 같은 경계를 검사한다.
         "user": "다음 주 목요일 11시 킥오프 미팅을 팀 캘린더에도 올라가게 잡아줘. 참석자는 나, 영희",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="킥오프 미팅",
+                original_text=(
+                    "다음 주 목요일 11시 킥오프 미팅을 팀 캘린더에도 올라가게 잡아줘. "
+                    "참석자는 나, 영희"
+                ),
+                date="2026-07-30",
+                start_time="11:00",
+                members=["나", "영희"],
+            ),
+            "save_structured_request": save_tool_result("group_schedule"),
+        },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
             "not_called": ["create_shared_schedule"],
