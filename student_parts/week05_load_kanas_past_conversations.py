@@ -491,7 +491,7 @@ def week05_prompt_parts() -> list[str]:
         "load_conversation_messages로 전체 메시지를 확인한다. "
         "여러 사람의 일정을 한 번에 파악해야 하면 collect_member_schedules를 사용해 "
         "내 일정과 외부 멤버 일정을 함께 조회한다. "
-        "공유 일정 저장소에 새 일정을 등록하거나 삭제해야 하면 create_shared_schedule/ delete_shared_schedule을 사용한다."
+        "공유 일정 저장소에 새 일정을 등록하거나 삭제해야 하면 create_shared_schedule/ delete_shared_schedule을 사용한다. "
         "외부 멤버의 이름이나 날짜는 사용자가 말한 그대로 tool에 전달한다."
     ]
 
