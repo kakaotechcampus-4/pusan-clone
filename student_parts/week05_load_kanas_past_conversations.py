@@ -281,6 +281,18 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     )
 
 
+def _to_row(s: dict[str, Any]) -> dict[str, Any]:
+    """personal_schedules의 단일 항목을 공통 row 구조로 변환합니다."""
+    return {
+        "member_name": "나",
+        "title": s.get("title"),
+        "date": s.get("date"),
+        "start_time": s.get("start_time", "미정"),
+        "end_time": s.get("end_time", "미정"),
+        "notes": s.get("notes", ""),
+    }
+
+
 def _collect_member_schedules(
     *,
     member_names: list[str],
@@ -289,37 +301,33 @@ def _collect_member_schedules(
     personal_schedules: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
-    rows = []
-    for s in personal_schedules:
-        # 날짜 범위로 필터링
-        schedule_date = s.get("date")
-        if not (date_from <= schedule_date <= date_to):
-            continue
+    # date 유무로 분리
+    undated_schedules = [
+        _to_row(s) for s in personal_schedules if s.get("date") is None
+    ]
+    rows = [
+        _to_row(s)
+        for s in personal_schedules
+        if s.get("date") is not None and date_from <= s.get("date") <= date_to
+    ]
 
-        result = {
-            "member_name" : "나",
-            "title" : s.get("title"),
-            "date" : s.get("date"),
-            "start_time": s.get("start_time", "미정"),
-            "end_time": s.get("end_time", "미정"),
-            "notes": s.get("notes", "")
-        }
-        rows.append(result)
-    members_schedule = call_mcp_tool_sync("extract_schedules_from_history",
-                        {
-                            "member_names" : member_names,
-                            "date_from" : date_from,
-                            "date_to" : date_to
-                        })
+    members_schedule = call_mcp_tool_sync(
+        "extract_schedules_from_history",
+        {
+            "member_names": member_names,
+            "date_from": date_from,
+            "date_to": date_to,
+        },
+    )
 
-    if isinstance(members_schedule, str):
-        data = json.loads(members_schedule)
-    else:
-        data = members_schedule
-    rows = [*rows, *data.get("rows", [])]
+    rows = [*rows, *members_schedule.get("rows", [])]
     summary = external_schedule_summary(rows)
 
-    return {"rows" : rows, "schedule_summary" : summary}
+    return {
+        "rows": rows,
+        "schedule_summary": summary,
+        "undated_schedules": undated_schedules,
+    }
         
     
 
