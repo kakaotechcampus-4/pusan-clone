@@ -191,8 +191,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     scope = current_session_scope()
     sqlite_store = AppSQLiteStore(CONFIG.app_db_path)
     
-    sqlite_schedules = [ s for s in sqlite_store.list_schedules()
-                        if _schedule_scope(s) == scope]
+    sqlite_schedules = [ s for s in sqlite_store.list_schedules()]
     schedules = set([s.get("schedule_id") for s in sqlite_schedules])
     
     memory_schedules = [s for s in PERSONAL_SCHEDULES if 
