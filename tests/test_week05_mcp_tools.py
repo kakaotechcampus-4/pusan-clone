@@ -91,6 +91,25 @@ def test_load_conversation_messages_returns_ordered_messages(external_db):
     assert all({"sender", "content", "created_at"} <= row.keys() for row in result["rows"])
 
 
+def test_load_conversation_messages_preserves_order(monkeypatch):
+    expected = [
+        {"sender": "민준", "content": "첫 번째", "created_at": "2026-07-01T10:00:00"},
+        {"sender": "나", "content": "두 번째", "created_at": "2026-07-01T10:01:00"},
+    ]
+    monkeypatch.setattr(
+        "student_parts.week05_load_kanas_past_conversations.call_external_tool_payload",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "tool_name": "load_conversation_messages",
+            "rows": expected,
+        },
+    )
+
+    result = json.loads(load_conversation_messages.invoke({"conversation_id": "ext_test"}))
+
+    assert result["rows"] == expected
+
+
 # ── extract_schedules_from_history ─────────────────────────────────────
 
 
