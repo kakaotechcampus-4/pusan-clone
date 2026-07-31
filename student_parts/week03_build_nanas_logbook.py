@@ -666,7 +666,10 @@ def personal_list_saved_schedules(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다.
+    """앱 DB에 저장된 내 일정만 조회하거나 수정·삭제 후보를 찾을 때 사용합니다.
+
+    다른 사람과 내 바쁜 일정을 함께 모으는 요청에는 사용하지 마세요. 이 도구는 앱 DB의
+    일정만 반환하므로 외부 멤버 일정과 합쳐서 답하는 용도가 아닙니다.
 
     schedules 테이블만 조회하므로 할 일(todo)과 알림(reminder)은 결과에 들어오지 않습니다.
     종류를 가리지 않고 저장 기록을 조회할 때는 list_saved_requests를 사용하세요.

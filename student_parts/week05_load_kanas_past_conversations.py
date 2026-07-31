@@ -483,10 +483,13 @@ def list_shared_schedules(
     source_conversation_id: str | None = None,
     limit: int = 50,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다.
+    """공유 저장소에 어떤 일정 row가 등록됐는지 직접 확인할 때만 사용합니다.
 
-    member_names에는 저장소 row의 정확한 member_name을 넣으세요. "철수가 바쁜 시간",
-    "영희의 일정"에서 `가`, `의`는 이름이 아니라 조사이므로 각각 "철수", "영희"입니다.
+    여러 사람의 바쁜 시간을 모으거나 내 일정까지 함께 확인하는 요청에는 사용하지 마세요.
+    그런 요청은 list 도구들을 조합하지 말고 collect_member_schedules 하나로 처리하세요.
+
+    member_names에는 조사나 설명을 붙이지 않은 저장소 row의 정확한 member_name을 넣으세요.
+    예를 들어 "철수", "영희"처럼 이름만 전달합니다.
 
     필터를 하나도 주지 않으면 실습용 기본 멤버와 기간의 row가 돌아옵니다. 그래서 어떤
     멤버가 등록돼 있는지, 일정이 어느 기간에 몰려 있는지 훑어볼 때 쓸 수 있습니다.
@@ -496,7 +499,6 @@ def list_shared_schedules(
     참석자와 날짜로 조회하세요. 결과가 비면 저장 실패로 단정하기 전에 이름 필터를 빼고
     같은 날짜를 다시 조회해, 조사나 표기 차이 때문에 놓친 것인지 확인하세요.
 
-    누가 언제 바쁜지를 계산하는 용도는 아닙니다. 그건 collect_member_schedules입니다.
     """
 
     return call_mcp_tool_sync("list_shared_schedules", {
@@ -510,7 +512,10 @@ def list_shared_schedules(
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다.
+    """여러 사람의 바쁜 시간을 모으거나 내 일정까지 함께 확인하는 요청의 전용 도구입니다.
+
+    이 경우 list_shared_schedules와 personal_list_saved_schedules를 따로 조합하지 말고
+    이 도구 하나만 호출하세요. 결과에 내 일정과 외부 멤버 일정이 같은 rows로 들어옵니다.
 
     date_from과 date_to는 필수이며 그 범위 안의 일정만 돌아옵니다.
 
