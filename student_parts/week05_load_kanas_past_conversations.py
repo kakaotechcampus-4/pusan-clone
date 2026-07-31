@@ -32,8 +32,14 @@ from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week
 
 _WEEK05_AGENT: Any | None = None
 
-# 그룹 조율 후보로 읽어 올 앱 SQLite 일정 수입니다. list_schedules 기본값(12)은
-# 여러 사람의 날짜 범위를 훑기에는 너무 적어 조회 상한만 넉넉히 올려 둡니다.
+# busy-time 근거로 삼는 앱 일정 종류입니다. 개인 일정뿐 아니라 확정된 그룹 회의도
+# "내가 그 시간에 잡혀 있다"는 뜻이라 함께 봅니다. todo/reminder는 애초에 schedules
+# 테이블에 들어오지 않지만(fixed/app_store.py), 나중에 다른 kind가 추가돼도 조용히
+# 섞여 들어오지 않도록 원하는 종류를 여기에 적어 둡니다.
+BUSY_SCHEDULE_KINDS = ("personal_schedule", "group_schedule")
+
+# 조회 범위 안에서 읽어 올 앱 SQLite 일정 수입니다. list_schedules는 WHERE로 날짜를
+# 먼저 좁힌 뒤 LIMIT을 걸므로, 날짜 범위를 함께 넘기는 한 이 상한에 닿을 일은 거의 없습니다.
 PERSONAL_SCHEDULE_LOOKUP_LIMIT = 200
 
 
@@ -191,10 +197,27 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
-    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
+def _personal_schedules_for_current_scope(
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
+    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다.
 
-    stored = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=PERSONAL_SCHEDULE_LOOKUP_LIMIT)
+    날짜 범위는 SQL로 내려 보냅니다. LIMIT이 WHERE 뒤에 걸리기 때문에, 범위를 넘기지
+    않으면 일정이 상한을 넘는 순간 정작 조회하려던 날짜의 일정이 잘려 나갑니다.
+    """
+
+    stored = [
+        row
+        for row in AppSQLiteStore(CONFIG.app_db_path).list_schedules(
+            limit=PERSONAL_SCHEDULE_LOOKUP_LIMIT,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        # list_schedules의 kind 인자는 한 종류만 받아 개인/그룹을 동시에 못 고른다.
+        if row.get("request_kind") in BUSY_SCHEDULE_KINDS
+    ]
     seen_ids = {str(row.get("schedule_id")) for row in stored if row.get("schedule_id")}
 
     session_id = current_session_scope()
@@ -295,14 +318,20 @@ def _collect_member_schedules(
     member_names: list[str],
     date_from: str,
     date_to: str,
-    personal_schedules: list[dict[str, Any]],
+    personal_schedules: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     normalized_members = normalize_external_member_names(member_names)
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
-        member_names, date_from, date_to
+        normalized_members, date_from, date_to
     )
+    # 정규화한 범위를 그대로 SQL에 내려 보내려고 여기서 읽는다. 테스트는 인자로 직접 넘긴다.
+    if personal_schedules is None:
+        personal_schedules = _personal_schedules_for_current_scope(
+            date_from=normalized_date_from or None,
+            date_to=normalized_date_to or None,
+        )
 
     rows: list[dict[str, Any]] = []
     for schedule in personal_schedules:
@@ -310,11 +339,16 @@ def _collect_member_schedules(
         schedule_date = str(request.date or "").split("T", 1)[0].strip()
         if not schedule_date:
             continue
+        # SQL로 이미 좁혔더라도 여기서 한 번 더 본다. 현재 대화의 임시 일정은 DB를
+        # 거치지 않고 들어오므로 날짜 필터가 적용된 적이 없다.
         if normalized_date_from and schedule_date < normalized_date_from:
             continue
         if normalized_date_to and schedule_date > normalized_date_to:
             continue
-        notes = "앱에 저장된 내 일정"
+        if schedule.get("request_kind") == "group_schedule":
+            notes = "앱에 저장된 내 그룹 일정"
+        else:
+            notes = "앱에 저장된 내 일정"
         if request.members:
             notes += f" · 참석자: {', '.join(request.members)}"
         rows.append(
@@ -476,7 +510,6 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
         member_names=member_names,
         date_from=date_from,
         date_to=date_to,
-        personal_schedules=_personal_schedules_for_current_scope(),
     )
     return json_payload(payload)
 
@@ -496,6 +529,31 @@ EXTERNAL_SOURCE_ROUTING_PROMPT = (
     "4) 공유 일정 저장소에 실제로 어떤 row가 등록돼 있는지 확인할 때는 list_shared_schedules를 사용한다. "
     "내 개인 참고자료/저장 기록/앱 대화는 이전 주차 tool을 그대로 쓰고, 외부 멤버 데이터를 "
     "그 tool들로 찾으려 하지 않는다."
+)
+
+# 측정으로 확인한 것: 공유 저장소에 "등록/삭제해줘"라고 명시하면 tool은 잘 찾아간다(3/3).
+# 대신 쓰는 방식이 어긋났다. 수정 요청은 조회만 하고 멈췄고(0/3), 삭제는 무엇을 지우는지
+# 확인하지 않고 곧장 실행했다(0/3). 그래서 발견보다 "찾은 다음 어떻게 쓰는가"를 적는다.
+SHARED_SCHEDULE_WRITE_PROMPT = (
+    "공유 일정 저장소에 직접 쓰는 tool은 create_shared_schedule과 delete_shared_schedule 두 개다. "
+    "이 둘은 외부 저장소의 상태를 실제로 바꾸므로 사용자가 등록/수정/삭제를 요청했을 때만 쓴다. "
+    "1) 외부 멤버의 일정을 새로 등록할 때는 create_shared_schedule을 호출한다. "
+    "2) 이미 있는 공유 일정을 고쳐 달라는 요청이면 조회로 끝내지 말고 수정까지 끝낸다. "
+    "먼저 list_shared_schedules로 대상 row의 schedule_id를 찾고, 그 schedule_id를 그대로 넘겨 "
+    "create_shared_schedule을 다시 호출하면 새 row가 생기지 않고 기존 row가 갱신된다. "
+    "schedule_id 없이 호출하면 같은 일정이 두 벌 생기므로 반드시 찾은 id를 넘긴다. "
+    "조회 결과가 한 건으로 특정되고 사용자가 바꿀 값을 말했다면 수정해도 되는지 다시 묻지 않는다. "
+    "\"바꿔 드릴까요\", \"변경할까요\" 같은 확인 질문으로 답을 끝내지 말고, 조회에 이어서 "
+    "create_shared_schedule을 호출해 수정을 끝낸 뒤 무엇이 어떻게 바뀌었는지 알린다. "
+    "되물어야 하는 경우는 대상 row가 여러 건이거나 바꿀 값이 분명하지 않을 때뿐이다. "
+    "3) 삭제 요청이면 list_shared_schedules로 지울 대상을 먼저 확인해 schedule_id를 얻은 뒤 "
+    "delete_shared_schedule에 그 schedule_id를 넘긴다. 무엇을 지우는지 확인하지 않은 채 삭제하지 않는다. "
+    "지울 row가 여러 건이거나 특정되지 않으면 삭제하지 말고 후보를 보여 준 뒤 사용자에게 확인받는다. "
+    "4) 내 개인 일정과 그룹 일정은 이전 주차의 앱 저장 tool로 저장한다. 앱이 저장할 때 공유 저장소에 "
+    "\"나\" 복사본을 자동으로 동기화하므로, 내 일정을 create_shared_schedule로 직접 쓰지 않는다. "
+    "직접 쓰면 앱 DB에는 없는 row가 공유 저장소에만 남아 두 저장소가 어긋난다. "
+    "5) 등록이나 삭제 뒤에는 결과 payload의 shared_schedule이나 deleted_count를 근거로 무엇이 "
+    "바뀌었는지 알려 준다."
 )
 
 EXTERNAL_SCHEDULE_EVIDENCE_PROMPT = (
@@ -536,6 +594,7 @@ def week05_prompt_parts() -> list[str]:
         "5주차의 너는 내 기록뿐 아니라 외부 SQLite/MCP 저장소에 있는 다른 사람들의 "
         "이전 대화와 일정까지 조회해 그룹 일정 조율을 돕는 Nana다.",
         EXTERNAL_SOURCE_ROUTING_PROMPT,
+        SHARED_SCHEDULE_WRITE_PROMPT,
         EXTERNAL_SCHEDULE_EVIDENCE_PROMPT,
     ]
 
