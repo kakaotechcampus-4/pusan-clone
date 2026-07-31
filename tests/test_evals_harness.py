@@ -762,7 +762,7 @@ def test_only_representative_routing_cases_repeat_by_default():
         "routing.preference_lookup",
         "routing.saved_request_lookup",
         "routing.cross_source_question",
-        "week05.collect.multi_member_availability",
+        "week05.collect.multi_member_busy_times",
         "week05.history.search_then_load",
         "week05.shared.member_roster",
     }

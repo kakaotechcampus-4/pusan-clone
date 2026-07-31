@@ -133,15 +133,15 @@ EVAL_SYNCED_SCHEDULE_SOURCE_ID = "group:req_eval_synced:지훈"
 
 
 WEEK05_ROUTING_CASES = [
-    # 근거: "여러 사람이 언제 시간이 되는지 묻는 요청은
+    # 근거: "여러 사람과 내 바쁜 일정을 한 번에 모으는 요청은
     # collect_member_schedules 하나로 처리하여라" +
     # "extract_schedules_from_history를 직접 부르면 내 일정이 빠진다."
     {
-        "id": "week05.collect.multi_member_availability",
+        "id": "week05.collect.multi_member_busy_times",
         "group": "여러 사람 일정 수집",
-        "rule": "availability-rows",
+        "rule": "busy-time-rows",
         "repeats": 3,
-        "user": "7월 7일부터 10일까지 철수랑 영희랑 내가 언제 시간 되는지 확인해줘.",
+        "user": "7월 7일부터 10일까지 철수, 영희, 나의 바쁜 일정을 한 번에 모아줘.",
         "tool_results": {
             **external_schedule_tool_results(
                 practice_schedule_rows(
@@ -215,17 +215,17 @@ WEEK05_ROUTING_CASES = [
         },
     },
     {
-        "id": "week05.collect.unseen_overlap_wording",
+        "id": "week05.collect.unseen_booked_time_wording",
         "group": "여러 사람 일정 수집",
-        "rule": "availability-rows",
+        "rule": "busy-time-rows",
         "held_out": True,
         # "나" 없이 외부 멤버들만 지정한 요청이다. 이 범위에서는 list_shared_schedules와
         # collect_member_schedules가 같은 external_schedules row를 반환하므로 둘 다 정당하다.
         # 특정 구현 경로가 아니라 요청한 멤버·기간의 실제 근거를 얻었는지 검사한다.
         #
-        # 내 앱 일정까지 반드시 합쳐야 하는 경로는 위 multi_member_availability처럼 사용자가
+        # 내 앱 일정까지 반드시 합쳐야 하는 경로는 위 multi_member_busy_times처럼 사용자가
         # 자신을 포함한 요청에서 별도로 고정한다.
-        "user": "7월 8일부터 10일 사이 민준, 서연, 하린의 약속이 안 겹치는 구간을 찾아줘.",
+        "user": "7월 8일부터 10일 사이 민준, 서연, 하린이 언제 약속이 잡혀 있는지 한꺼번에 정리해줘.",
         "tool_results": external_schedule_tool_results(
             practice_schedule_rows(
                 member_names=["민준", "서연", "하린"],

@@ -594,7 +594,7 @@ def week05_prompt_parts(active_week: int = 5) -> list[str]:
         """,
 
         """
-        여러 사람이 언제 시간이 되는지 묻는 요청은 collect_member_schedules 하나로 처리하여라.
+        여러 사람과 내 바쁜 일정을 한 번에 모으는 요청은 collect_member_schedules 하나로 처리하여라.
         extract_schedules_from_history를 직접 부르면 내 일정이 빠져서 조율 근거가 불완전해진다.
         collect_member_schedules는 내 일정과 외부 멤버의 바쁜 시간을 같은 rows로 함께 돌려준다.
         member_names에는 사용자가 말한 사람 이름을 넣고, date_from과 date_to로 조회 기간을 넘겨라.
@@ -603,7 +603,8 @@ def week05_prompt_parts(active_week: int = 5) -> list[str]:
         """
         두 조회 도구는 읽는 저장소가 다르다. **내 일정이 답에 들어가야 하는지**로 고른다.
         - collect_member_schedules: 앱에 있는 내 일정과 외부 멤버 일정을 합쳐서 준다.
-          "언제 만날까", "누가 언제 바쁜가"처럼 나를 포함해 시간을 맞추는 질문은 전부 이쪽이다.
+          "함께 피해야 할 시간이 언제인가", "누가 언제 바쁜가"처럼 나를 포함해 바쁜 시간을
+          모으는 질문은 전부 이쪽이다.
           내 일정이 빠지면 답이 틀리므로 멤버 이름만 나열된 요청이어도 이쪽을 쓴다.
         - list_shared_schedules: 공유 저장소에 등록된 row만 읽는다. 앱에 있는 내 일정은
           들어오지 않는다. 누가 등록돼 있는지, 어떤 row가 올라가 있는지 확인할 때만 쓴다.
