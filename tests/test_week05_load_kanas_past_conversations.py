@@ -33,6 +33,7 @@ from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts
 from student_parts.week05_load_kanas_past_conversations import (
     CollectMemberSchedulesInput,
     ExtractSchedulesFromHistoryInput,
+    ListSharedSchedulesInput,
     _collect_member_schedules,
     _external_member_names_excluding_me,
     _is_within_date_range,
@@ -224,6 +225,49 @@ class IsWithinDateRangeTest(unittest.TestCase):
     def test_형식이_깨진_날짜도_포함한다(self):
         self.assertTrue(_is_within_date_range("2026-13-99", "2026-07-01", "2026-07-31"))
         self.assertTrue(_is_within_date_range("내일", "2026-07-01", "2026-07-31"))
+
+
+class DateOrderValidationTest(unittest.TestCase):
+    """날짜 범위가 뒤집히면 세 tool 모두 조회 전에 막는다(PR #166 리뷰).
+
+    store 는 뒤집힌 범위에 조용히 빈 rows 를 준다. 한 tool 에만 가드가 있으면
+    나머지는 "일정이 없다"는 거짓 답을 그대로 낸다.
+    """
+
+    REVERSED = {"date_from": "2026-07-18", "date_to": "2026-07-14"}
+
+    def test_extract_는_역전된_범위를_막는다(self):
+        with self.assertRaises(pydantic.ValidationError):
+            ExtractSchedulesFromHistoryInput(member_names=["철수"], **self.REVERSED)
+
+    def test_collect_는_역전된_범위를_막는다(self):
+        with self.assertRaises(pydantic.ValidationError):
+            CollectMemberSchedulesInput(
+                member_names=["철수"], include_my_schedules=False, **self.REVERSED
+            )
+
+    def test_list_도_역전된_범위를_막는다(self):
+        with self.assertRaises(pydantic.ValidationError):
+            ListSharedSchedulesInput(**self.REVERSED)
+
+    def test_같은_날짜는_통과한다(self):
+        ExtractSchedulesFromHistoryInput(
+            member_names=["철수"], date_from="2026-07-15", date_to="2026-07-15"
+        )
+
+    def test_list_는_날짜가_없거나_한쪽만_있어도_통과한다(self):
+        # 필터가 모두 선택이라 둘 다 있을 때만 비교해야 한다.
+        ListSharedSchedulesInput()
+        ListSharedSchedulesInput(date_from="2026-07-18")
+        ListSharedSchedulesInput(date_to="2026-07-14")
+
+    def test_ISO_datetime_도_날짜만_잘라_비교한다(self):
+        with self.assertRaises(pydantic.ValidationError):
+            ExtractSchedulesFromHistoryInput(
+                member_names=["철수"],
+                date_from="2026-07-18T09:00:00",
+                date_to="2026-07-14T18:00:00",
+            )
 
 
 class CollectMemberSchedulesTest(unittest.TestCase):

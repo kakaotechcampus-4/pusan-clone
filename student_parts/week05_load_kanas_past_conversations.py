@@ -240,6 +240,23 @@ def _personal_schedules_for_current_scope(
     return merged
 
 
+def _validate_date_order(date_from: str | None, date_to: str | None) -> None:
+    """조회 날짜 범위가 뒤집혀 있으면 tool 을 부르기 전에 막습니다.
+
+    store 는 뒤집힌 범위에 조용히 빈 rows 를 돌려준다. 그러면 "일정이 없다"와 구분되지 않아
+    없는 사실을 확정하게 된다. 항상 참인 판단이라 코드로 막는다.
+
+    본문 raise 가 아니라 스키마 validator 로 쓰는 이유: 이 하네스는 인자 검증 실패만
+    모델에게 메시지로 돌려주고, 본문 예외는 agent 실행 자체를 중단시킨다.
+
+    날짜가 선택 인자인 tool 도 쓸 수 있게, 둘 다 있을 때만 비교한다.
+    """
+
+    start, end = normalize_external_schedule_date_bounds(None, date_from, date_to)
+    if start and end and start > end:
+        raise ValueError(f"date_from({start})이 date_to({end})보다 뒤입니다.")
+
+
 def json_payload(payload: dict[str, Any]) -> str:
     """도구 반환용 dict를 한글이 깨지지 않는 JSON 문자열로 변환합니다."""
 
@@ -275,6 +292,11 @@ class ExtractSchedulesFromHistoryInput(BaseModel):
     date_to: str = Field(
         description="조회 종료일(YYYY-MM-DD). date_from 보다 앞설 수 없다."
     )
+
+    @model_validator(mode="after")
+    def _require_ordered_dates(self) -> ExtractSchedulesFromHistoryInput:
+        _validate_date_order(self.date_from, self.date_to)
+        return self
 
 
 class CreateSharedScheduleInput(BaseModel):
@@ -325,6 +347,12 @@ class ListSharedSchedulesInput(BaseModel):
     source_conversation_id: str | None = None
     limit: int = Field(default=50, ge=1, le=200)
 
+    @model_validator(mode="after")
+    def _require_ordered_dates(self) -> ListSharedSchedulesInput:
+        # 날짜가 선택 인자라 둘 다 넘어왔을 때만 검사된다.
+        _validate_date_order(self.date_from, self.date_to)
+        return self
+
 
 class CollectMemberSchedulesInput(BaseModel):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
@@ -349,16 +377,7 @@ class CollectMemberSchedulesInput(BaseModel):
 
     @model_validator(mode="after")
     def _require_ordered_dates(self) -> CollectMemberSchedulesInput:
-        """날짜 범위가 뒤집혀 있으면 조회 전에 막습니다.
-
-        store 는 뒤집힌 범위에 조용히 빈 rows 를 돌려주는데, 그러면 "일정이 없다"와
-        구분되지 않아 없는 사실을 확정하게 됩니다. 항상 참인 판단이라 코드로 막습니다.
-        스키마에 두는 이유는 DeleteSharedScheduleInput 과 같습니다.
-        """
-
-        start, end = normalize_external_schedule_date_bounds(None, self.date_from, self.date_to)
-        if start and end and start > end:
-            raise ValueError(f"date_from({start})이 date_to({end})보다 뒤입니다.")
+        _validate_date_order(self.date_from, self.date_to)
         return self
 
 
