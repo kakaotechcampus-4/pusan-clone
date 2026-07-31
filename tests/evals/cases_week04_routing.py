@@ -76,6 +76,27 @@ EMPTY_CONVERSATION_SEARCH_RESULT = {
     "hits": [],
     "rows": [],
 }
+OCTOBER_RECENT_SAVED_ROWS = [
+    {
+        "kind": "todo",
+        "title": f"10월 일반 기록 {day:02d}",
+        "date": f"2026-10-{day:02d}",
+    }
+    for day in range(11, 31)
+]
+JEJU_SAVED_ROWS = [
+    {
+        "kind": "personal_schedule",
+        "title": "제주도 여행 일정",
+        "date": "2026-08-03",
+        "start_time": "09:00",
+    },
+    {
+        "kind": "todo",
+        "title": "제주도 여행 준비물 구매",
+        "date": "2026-08-01",
+    },
+]
 
 
 def saved_row_result(
@@ -103,6 +124,26 @@ def successful_save_results(kind: str) -> list[dict[str, object]]:
     ]
 
 
+def saved_rows_tool_results(
+    rows: list[dict[str, object]],
+    *,
+    tools: tuple[str, ...] = ("list_saved_requests", "search_saved_requests"),
+) -> dict[str, object]:
+    """mock 조회 tool들이 반환할 독립적인 저장 row fixture를 만듭니다."""
+
+    results: dict[str, object] = {}
+    for tool in tools:
+        result: dict[str, object] = {
+            "ok": True,
+            "tool_name": tool,
+            "rows": [dict(row) for row in rows],
+        }
+        if tool == "search_saved_requests":
+            result["truncated"] = False
+        results[tool] = result
+    return results
+
+
 def saved_row_tool_results(
     *,
     kind: str,
@@ -110,19 +151,113 @@ def saved_row_tool_results(
     date: str,
     tools: tuple[str, ...] = ("list_saved_requests", "search_saved_requests"),
 ) -> dict[str, object]:
-    """mock 조회 tool들이 반환할 독립적인 저장 row fixture를 만듭니다."""
+    """단일 저장 row를 반환하는 조회 fixture를 만듭니다."""
 
-    row = {"kind": kind, "title": title, "date": date}
-    return {tool: {"ok": True, "tool_name": tool, "rows": [dict(row)]} for tool in tools}
+    return saved_rows_tool_results(
+        [{"kind": kind, "title": title, "date": date}],
+        tools=tools,
+    )
 
 
-def save_tool_result(kind: str) -> dict[str, object]:
+def empty_saved_schedules_result(
+    *,
+    date_from: str,
+    date_to: str,
+    kind: str | None = None,
+    limit: int = 50,
+) -> dict[str, object]:
+    """필터가 명시된 실제 일정 목록 wrapper의 빈 응답입니다."""
+
+    return {
+        "ok": True,
+        "tool_name": "personal_list_saved_schedules",
+        "filters": {
+            "kind": kind,
+            "date_from": date_from,
+            "date_to": date_to,
+            "limit": limit,
+        },
+        "schedules": [],
+    }
+
+
+def save_tool_result(
+    kind: str,
+    *,
+    title: str | None = None,
+    date: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    members: list[str] | None = None,
+) -> dict[str, object]:
     """mock 저장 tool의 성공 계약입니다."""
+
+    request_id = "req_eval_saved"
+    saved_rows = [{"table": "structured_requests", "id": request_id}]
+    shared_sync: dict[str, object] | None = None
+    if kind in {"personal_schedule", "group_schedule"}:
+        schedule_id = "sch_eval_saved"
+        saved_rows.append({"table": "schedules", "id": schedule_id})
+        if kind == "personal_schedule":
+            shared_sync = {
+                "ok": True,
+                "status": "created",
+                "tool_name": "create_shared_schedule",
+                "shared_schedule": {
+                    "schedule_id": f"shared_{schedule_id}",
+                    "member_name": "나",
+                    "title": title or "제목 없음",
+                    "date": date,
+                    "start_time": start_time or "미정",
+                    "end_time": end_time or "미정",
+                    "notes": "앱 개인 일정 자동 동기화",
+                    "source_conversation_id": f"app:{request_id}",
+                    "sync_status": "created",
+                },
+            }
+        elif members:
+            attendee_text = ", ".join(members)
+            shared_sync = {
+                "ok": True,
+                "status": "synced",
+                "tool_name": "create_shared_schedule",
+                "shared_schedules": [
+                    {
+                        "schedule_id": f"shared_{schedule_id}_{index}",
+                        "member_name": member_name,
+                        "title": title or "제목 없음",
+                        "date": date,
+                        "start_time": start_time or "미정",
+                        "end_time": end_time or "미정",
+                        "notes": f"앱 그룹 일정 자동 동기화 · 참석자: {attendee_text}",
+                        "source_conversation_id": f"group:{request_id}:{member_name}",
+                        "sync_status": "created",
+                    }
+                    for index, member_name in enumerate(members)
+                ],
+                "errors": [],
+            }
+        else:
+            shared_sync = {
+                "ok": True,
+                "status": "skipped",
+                "reason": "공유할 참석자가 없습니다.",
+                "shared_schedules": [],
+            }
+    elif kind == "todo":
+        saved_rows.append({"table": "todos", "id": "todo_eval_saved"})
+    elif kind == "reminder":
+        saved_rows.append({"table": "reminders", "id": "rem_eval_saved"})
 
     return {
         "ok": True,
         "tool_name": "save_structured_request",
-        "saved": {"kind": kind},
+        "saved": {
+            "request_id": request_id,
+            "kind": kind,
+            "saved_rows": saved_rows,
+            "shared_sync": shared_sync,
+        },
     }
 
 
@@ -200,26 +335,7 @@ WEEK04_ROUTING_CASES = [
         # 사용자가 저장된 일정·할 일을 출처로 분명히 한 경우다. 키워드 검색이 성공했는데
         # 최근 목록이나 다른 출처까지 확인하면 근거가 늘지 않고 호출만 증가한다.
         "user": "제주도와 관련해서 저장한 일정이나 할 일을 찾아줘.",
-        "tool_results": {
-            "search_saved_requests": {
-                "ok": True,
-                "tool_name": "search_saved_requests",
-                "rows": [
-                    {
-                        "kind": "personal_schedule",
-                        "title": "제주도 여행 일정",
-                        "date": "2026-08-03",
-                        "start_time": "09:00",
-                    },
-                    {
-                        "kind": "todo",
-                        "title": "제주도 여행 준비물 구매",
-                        "date": "2026-08-01",
-                    },
-                ],
-                "truncated": False,
-            }
-        },
+        "tool_results": saved_rows_tool_results(JEJU_SAVED_ROWS),
         "expect": {
             "called": ["search_saved_requests"],
         },
@@ -270,6 +386,7 @@ WEEK04_ROUTING_CASES = [
                     "content": "수요일 오후에는 회의를 잡지 않는다.",
                     "tags": ["preference", "meeting"],
                 },
+                "reference_backend": {"vector_store": "eval"},
             }
         },
         "expect": {
@@ -490,7 +607,13 @@ WEEK04_ROUTING_CASES = [
                 start_time="11:00",
                 end_time="12:00",
             ),
-            "save_structured_request": save_tool_result("personal_schedule"),
+            "save_structured_request": save_tool_result(
+                "personal_schedule",
+                title="치과 진료",
+                date="2026-08-07",
+                start_time="11:00",
+                end_time="12:00",
+            ),
         },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
@@ -589,7 +712,14 @@ WEEK04_ROUTING_CASES = [
                 end_time="16:00",
                 members=["철수"],
             ),
-            "save_structured_request": save_tool_result("group_schedule"),
+            "save_structured_request": save_tool_result(
+                "group_schedule",
+                title="기획 회의",
+                date="2026-07-30",
+                start_time="15:00",
+                end_time="16:00",
+                members=["철수"],
+            ),
         },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
@@ -836,11 +966,23 @@ WEEK04_ROUTING_CASES = [
         # "비어 있어?"는 적대적입니다. 종류 단어가 없을 뿐 아니라 **없음을 기대하는 질문**이라
         # 일정 테이블만 보고 "네, 비어 있습니다"라고 답하기 쉽습니다. 그날 있는 것은 todo뿐입니다.
         "user": "9월 24일 비어 있어?",
-        "tool_results": saved_row_tool_results(
-            kind="todo", title="재활용 배출", date="2026-09-24"
-        ),
+        "tool_results": {
+            **saved_row_tool_results(
+                kind="todo", title="재활용 배출", date="2026-09-24"
+            ),
+            "personal_list_saved_schedules": empty_saved_schedules_result(
+                date_from="2026-09-24",
+                date_to="2026-09-24",
+            ),
+        },
         "expect": {
             "called_any": ["list_saved_requests", "search_saved_requests"],
+            "args_if_called": {
+                "personal_list_saved_schedules": {
+                    "date_from": {"equals": "2026-09-24"},
+                    "date_to": {"equals": "2026-09-24"},
+                }
+            },
             "result_contains_any": [
                 saved_row_result(
                     tool,
@@ -900,7 +1042,7 @@ WEEK04_ROUTING_CASES = [
             "list_saved_requests": {
                 "ok": True,
                 "tool_name": "list_saved_requests",
-                "rows": [],
+                "rows": [dict(row) for row in OCTOBER_RECENT_SAVED_ROWS],
             },
         },
         "expect": {
@@ -922,14 +1064,29 @@ WEEK04_ROUTING_CASES = [
         # 반대 상황. 좁은 구간(하루) + 흔한 키워드("정리"는 24건이 공유). 키워드로 먼저 찾으면
         # top_k 창에 안 들어와 못 찾고, 날짜로 좁히면 바로 찾힌다.
         "user": "10월 15일에 정리 관련해서 저장한 거 있어?",
-        "tool_results": saved_row_tool_results(
-            kind="todo",
-            title="회의실 정리",
-            date="2026-10-15",
-            tools=("list_saved_requests",),
-        ),
+        "tool_results": {
+            **saved_row_tool_results(
+                kind="todo",
+                title="회의실 정리",
+                date="2026-10-15",
+                tools=("list_saved_requests",),
+            ),
+            "search_saved_requests": {
+                "ok": True,
+                "tool_name": "search_saved_requests",
+                "rows": [
+                    {
+                        "kind": "todo",
+                        "title": f"사무실 정리 {day}",
+                        "date": f"2026-10-{day}",
+                    }
+                    for day in (30, 29, 28)
+                ],
+                "truncated": True,
+            },
+        },
         "expect": {
-            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "called": ["list_saved_requests", "search_saved_requests"],
             "result_contains": [
                 saved_row_result(
                     "list_saved_requests",
@@ -983,10 +1140,30 @@ WEEK04_ROUTING_CASES = [
         "id": "lookup.each_tool_gets_its_own_arguments",
         "group": "날짜+키워드",
         "held_out": True,
-        # 기존 ID는 결과 추이 비교를 위해 유지한다. 현재는 둘 중 하나로 근거를 얻으면 충분하다.
+        # 두 도구를 함께 쓰되 날짜 범위와 검색어를 각 tool의 인자에만 전달하는지 확인한다.
         "user": "10월에 저장한 핼러윈 관련 기록 찾아줘.",
+        "tool_results": {
+            **saved_row_tool_results(
+                kind="todo",
+                title="핼러윈 의상 준비",
+                date="2026-10-05",
+                tools=("search_saved_requests",),
+            ),
+            "list_saved_requests": {
+                "ok": True,
+                "tool_name": "list_saved_requests",
+                "rows": [dict(row) for row in OCTOBER_RECENT_SAVED_ROWS],
+            },
+        },
         "expect": {
-            "called_any": ["list_saved_requests", "search_saved_requests"],
+            "called": ["list_saved_requests", "search_saved_requests"],
+            "args": {
+                "list_saved_requests": {
+                    "date_from": {"equals": "2026-10-01"},
+                    "date_to": {"equals": "2026-10-31"},
+                },
+                "search_saved_requests": {"query": {"equals": "핼러윈"}},
+            },
         },
     },
     {
@@ -1137,7 +1314,7 @@ WEEK04_ROUTING_CASES = [
             "list_saved_requests": {
                 "ok": True,
                 "tool_name": "list_saved_requests",
-                "rows": [],
+                "rows": [dict(row) for row in OCTOBER_RECENT_SAVED_ROWS],
             },
         },
         "expect": {
@@ -1202,6 +1379,10 @@ WEEK04_ROUTING_CASES = [
         "known_limitation": SEMANTIC_GAP_CLARIFICATION_LIMITATION,
         "user": "섬 여행 관련해서 저장된 거 있어?",
         "tool_results": {
+            **saved_rows_tool_results(
+                [JEJU_SAVED_ROWS[0]],
+                tools=("list_saved_requests",),
+            ),
             "search_saved_requests": EMPTY_SAVED_SEARCH_RESULT,
         },
         "expect": {
@@ -1285,6 +1466,10 @@ WEEK04_ROUTING_CASES = [
         "known_limitation": SEMANTIC_GAP_CLARIFICATION_LIMITATION,
         "user": "바캉스 준비로 저장해 둔 게 있나?",
         "tool_results": {
+            **saved_rows_tool_results(
+                [JEJU_SAVED_ROWS[0]],
+                tools=("list_saved_requests",),
+            ),
             "search_saved_requests": EMPTY_SAVED_SEARCH_RESULT,
         },
         "expect": {
@@ -1304,7 +1489,8 @@ WEEK04_ROUTING_CASES = [
                 "ok": True,
                 "tool_name": "list_saved_requests",
                 "rows": [],
-            }
+            },
+            "search_saved_requests": EMPTY_SAVED_SEARCH_RESULT,
         },
         "expect": {
             "called": ["list_saved_requests"],
@@ -1325,9 +1511,7 @@ WEEK04_ROUTING_CASES = [
         # 통과하는 것은 tool docstring이 이겨 주고 있기 때문이다. 프롬프트 문장을 손보려면
         # 이 케이스를 지표로 다시 재야 한다.
         "user": "혹시 예전에 저장해 둔 제주도 여행 관련 기록이 뭐가 있었는지 알려줄 수 있어?",
-        "tool_results": {
-            "search_saved_requests": EMPTY_SAVED_SEARCH_RESULT,
-        },
+        "tool_results": saved_rows_tool_results(JEJU_SAVED_ROWS),
         "expect": {
             "called": ["search_saved_requests"],
             "args": {"search_saved_requests": {"query": {"max_words": 3}}},
@@ -1355,6 +1539,11 @@ WEEK04_ROUTING_CASES = [
         # 추측하지 말고 찾은 기록이 없다고 답하여라."
         "user": "저장해 둔 등산 모임 일정 찾아줘.",
         "tool_results": {
+            "list_saved_requests": {
+                "ok": True,
+                "tool_name": "list_saved_requests",
+                "rows": [],
+            },
             "search_saved_requests": {
                 "ok": True,
                 "tool_name": "search_saved_requests",

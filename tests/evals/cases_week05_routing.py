@@ -12,6 +12,7 @@ from __future__ import annotations
 이유로 실패하므로, 케이스를 추가할 때 이 분리를 지켜야 합니다.
 """
 
+from fixed.external_people_store import JULY_PRACTICE_SCHEDULES, external_schedule_summary
 from tests.evals.cases_week04_routing import extraction_tool_result, save_tool_result
 
 
@@ -35,32 +36,76 @@ def external_row_result(
     }
 
 
-def external_schedule_tool_results(
+def practice_schedule_rows(
     *,
-    member_name: str,
-    title: str,
-    date: str,
+    member_names: list[str] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, object]]:
+    """실제 외부 저장소의 7월 실습 시드를 같은 row 구조로 반환합니다."""
+
+    selected_members = set(member_names or [])
+    rows = [
+        {
+            "schedule_id": schedule_id,
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": "",
+            "source_conversation_id": source_conversation_id,
+        }
+        for (
+            schedule_id,
+            member_name,
+            title,
+            date,
+            start_time,
+            end_time,
+            source_conversation_id,
+        ) in JULY_PRACTICE_SCHEDULES
+        if (not selected_members or member_name in selected_members)
+        and (date_from is None or date >= date_from)
+        and (date_to is None or date <= date_to)
+    ]
+    return sorted(
+        rows,
+        key=lambda row: (str(row["date"]), str(row["start_time"]), str(row["member_name"])),
+    )
+
+
+def external_schedule_tool_results(
+    rows: list[dict[str, object]],
+    *,
     tools: tuple[str, ...] = ("collect_member_schedules", "list_shared_schedules"),
 ) -> dict[str, object]:
-    """mock 외부 일정 조회 결과를 assertion과 별도로 선언합니다."""
+    """실제 tool별 row 차이와 요약 필드를 보존한 외부 일정 fixture입니다."""
 
-    row = {"member_name": member_name, "title": title, "date": date}
-    return {tool: {"ok": True, "tool_name": tool, "rows": [dict(row)]} for tool in tools}
+    results: dict[str, object] = {}
+    for tool in tools:
+        tool_rows = [dict(row) for row in rows]
+        if tool in {"collect_member_schedules", "extract_schedules_from_history"}:
+            for row in tool_rows:
+                row.pop("schedule_id", None)
+        results[tool] = {
+            "ok": True,
+            "tool_name": tool,
+            "rows": tool_rows,
+            "schedule_summary": external_schedule_summary(tool_rows),
+        }
+    return results
 
 
 def open_member_tool_results(
     *,
     member_name: str,
-    title: str,
-    date: str,
     content: str,
 ) -> dict[str, object]:
     """기간 미지정 질문에서 허용하는 각 조회 경로의 고정 결과입니다."""
 
     results = external_schedule_tool_results(
-        member_name=member_name,
-        title=title,
-        date=date,
+        practice_schedule_rows(member_names=[member_name]),
     )
     results["search_previous_conversations"] = {
         "ok": True,
@@ -98,36 +143,67 @@ WEEK05_ROUTING_CASES = [
         "repeats": 3,
         "user": "7월 7일부터 10일까지 철수랑 영희랑 내가 언제 시간 되는지 확인해줘.",
         "tool_results": {
-            "collect_member_schedules": {
-                "ok": True,
-                "tool_name": "collect_member_schedules",
-                "rows": [
-                    {
-                        "member_name": "철수",
-                        "title": "API 연동 실습",
-                        "date": "2026-07-07",
-                        "start_time": "10:00",
-                        "end_time": "11:00",
-                    },
-                    {
-                        "member_name": "영희",
-                        "title": "콘텐츠 회의",
-                        "date": "2026-07-08",
-                        "start_time": "14:00",
-                        "end_time": "15:00",
-                    },
+            **external_schedule_tool_results(
+                practice_schedule_rows(
+                    member_names=["철수", "영희"],
+                    date_from="2026-07-07",
+                    date_to="2026-07-10",
+                ),
+                tools=("list_shared_schedules",),
+            ),
+            **external_schedule_tool_results(
+                [
                     {
                         "member_name": "나",
                         "title": "개인 일정",
                         "date": "2026-07-09",
                         "start_time": "09:00",
                         "end_time": "10:00",
+                        "notes": None,
+                        "source_conversation_id": None,
                     },
-                ]
-            }
+                    *practice_schedule_rows(
+                        member_names=["철수", "영희"],
+                        date_from="2026-07-07",
+                        date_to="2026-07-10",
+                    ),
+                ],
+                tools=("collect_member_schedules",),
+            ),
+            "personal_list_saved_schedules": {
+                "ok": True,
+                "tool_name": "personal_list_saved_schedules",
+                "filters": {
+                    "kind": None,
+                    "date_from": "2026-07-07",
+                    "date_to": "2026-07-10",
+                    "limit": 50,
+                },
+                "schedules": [
+                    {
+                        "schedule_id": "sch_eval_personal_july_09",
+                        "request_id": "req_eval_personal_july_09",
+                        "owner": "me",
+                        "title": "개인 일정",
+                        "date": "2026-07-09",
+                        "start_time": "09:00",
+                        "end_time": "10:00",
+                        "attendees": [],
+                        "source": "structured_output",
+                        "created_at": "2026-07-01T09:00:00+09:00",
+                        "request_kind": "personal_schedule",
+                    }
+                ],
+            },
         },
         "expect": {
             "called": ["collect_member_schedules"],
+            "args_if_called": {
+                "personal_list_saved_schedules": {
+                    "date_from": {"equals": "2026-07-07"},
+                    "date_to": {"equals": "2026-07-10"},
+                }
+            },
             "result_contains": [
                 external_row_result(
                     "collect_member_schedules",
@@ -151,7 +227,11 @@ WEEK05_ROUTING_CASES = [
         # 자신을 포함한 요청에서 별도로 고정한다.
         "user": "7월 8일부터 10일 사이 민준, 서연, 하린의 약속이 안 겹치는 구간을 찾아줘.",
         "tool_results": external_schedule_tool_results(
-            member_name="민준", title="데이터 정리", date="2026-07-08"
+            practice_schedule_rows(
+                member_names=["민준", "서연", "하린"],
+                date_from="2026-07-08",
+                date_to="2026-07-10",
+            )
         ),
         "expect": {
             "called_any": [
@@ -307,7 +387,11 @@ WEEK05_ROUTING_CASES = [
         "rule": "shared-list-scope",
         "user": "7월 14일부터 16일까지 철수와 지훈이 바쁜 시간을 모아줘.",
         "tool_results": external_schedule_tool_results(
-            member_name="지훈", title="보안 점검", date="2026-07-14"
+            practice_schedule_rows(
+                member_names=["철수", "지훈"],
+                date_from="2026-07-14",
+                date_to="2026-07-16",
+            )
         ),
         "expect": {
             "called_any": [
@@ -335,7 +419,11 @@ WEEK05_ROUTING_CASES = [
         # "busy-time"이나 "바쁘다" 대신 prompt에 없는 "캘린더가 막힌 구간"을 사용한다.
         "user": "7월 10일 영희와 하린 캘린더가 막힌 구간을 확인해줘.",
         "tool_results": external_schedule_tool_results(
-            member_name="영희", title="콘텐츠 점검", date="2026-07-10"
+            practice_schedule_rows(
+                member_names=["영희", "하린"],
+                date_from="2026-07-10",
+                date_to="2026-07-10",
+            )
         ),
         "expect": {
             "called_any": [
@@ -368,9 +456,7 @@ WEEK05_ROUTING_CASES = [
         "repeats": 3,
         "user": "외부 팀원이 누가 있어?",
         "tool_results": external_schedule_tool_results(
-            member_name="철수",
-            title="API 연동 실습",
-            date="2026-07-07",
+            practice_schedule_rows(),
             tools=("list_shared_schedules",),
         ),
         "expect": {
@@ -392,9 +478,7 @@ WEEK05_ROUTING_CASES = [
         # prompt에 없는 "일정 공유하는 사람들" 표면형으로 같은 규칙을 검사한다.
         "user": "나랑 일정 공유하는 사람들이 누구누구야?",
         "tool_results": external_schedule_tool_results(
-            member_name="영희",
-            title="콘텐츠 점검",
-            date="2026-07-10",
+            practice_schedule_rows(),
             tools=("list_shared_schedules",),
         ),
         "expect": {
@@ -428,9 +512,18 @@ WEEK05_ROUTING_CASES = [
         ],
         "user": "외부 저장소에 지훈이 일정 저장됐어?",
         "tool_results": external_schedule_tool_results(
-            member_name="지훈",
-            title="회의",
-            date="2026-07-27",
+            [
+                {
+                    "schedule_id": "shared_eval_follow_up",
+                    "member_name": "지훈",
+                    "title": "회의",
+                    "date": "2026-07-27",
+                    "start_time": "10:00",
+                    "end_time": "11:00",
+                    "notes": "공유 일정",
+                    "source_conversation_id": EVAL_SYNCED_SCHEDULE_SOURCE_ID,
+                }
+            ],
             tools=("list_shared_schedules",),
         ),
         "expect": {
@@ -458,8 +551,6 @@ WEEK05_ROUTING_CASES = [
         "user": "외부 팀원 철수의 일정을 조회해봐줘.",
         "tool_results": open_member_tool_results(
             member_name="철수",
-            title="API 연동 실습",
-            date="2026-07-07",
             content=(
                 "철수: 7월 7일 10시는 API 연동 실습, 7월 9일 14시는 고객 인터뷰, "
                 "7월 15일 16시는 QA 리뷰가 있어요."
@@ -504,8 +595,6 @@ WEEK05_ROUTING_CASES = [
         "user": "외부 팀원 지훈이 언제 뭐 하는지 알려줘.",
         "tool_results": open_member_tool_results(
             member_name="지훈",
-            title="보안 점검",
-            date="2026-07-14",
             content=(
                 "지훈: 7월 7일 15시는 모델 평가, 7월 14일 10시는 보안 점검, "
                 "7월 16일 13시는 릴리즈 회의가 있습니다."
@@ -573,7 +662,14 @@ WEEK05_ROUTING_CASES = [
                 end_time="15:00",
                 members=["나", "철수"],
             ),
-            "save_structured_request": save_tool_result("group_schedule"),
+            "save_structured_request": save_tool_result(
+                "group_schedule",
+                title="스프린트 리뷰",
+                date="2026-07-29",
+                start_time="14:00",
+                end_time="15:00",
+                members=["나", "철수"],
+            ),
         },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],
@@ -636,7 +732,13 @@ WEEK05_ROUTING_CASES = [
                 start_time="11:00",
                 members=["나", "영희"],
             ),
-            "save_structured_request": save_tool_result("group_schedule"),
+            "save_structured_request": save_tool_result(
+                "group_schedule",
+                title="킥오프 미팅",
+                date="2026-07-30",
+                start_time="11:00",
+                members=["나", "영희"],
+            ),
         },
         "expect": {
             "order": ["extract_schedule_request", "save_structured_request"],

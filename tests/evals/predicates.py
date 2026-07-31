@@ -16,6 +16,9 @@ from __future__ import annotations
         "max_calls":  {"search_saved_requests": 1},          # 호출 횟수 상한
         "order":      ["extract_schedule_request", "save_structured_request"],
         "args": {"search_saved_requests": {"query": {"max_words": 3}}},
+        "args_if_called": {
+            "list_saved_requests": {"date_from": {"equals": "2026-09-24"}},
+        },
         "arg_matches_result": [
             {
                 "tool": "load_conversation_messages",
@@ -40,7 +43,8 @@ from __future__ import annotations
         "result_equals": [{"tool": "save_structured_request", "path": "ok", "value": True}],
     }
 
-`args`에 쓸 수 있는 검사는 `is_null`, `equals`, `max_words`입니다.
+`args`와 `args_if_called`에 쓸 수 있는 검사는 `is_null`, `equals`, `max_words`입니다.
+`args`는 tool 호출을 요구하고, `args_if_called`는 실제로 호출된 경우에만 인자를 검사합니다.
 `max_words`는 비어 있지 않은 문자열에만 적용됩니다.
 """
 
@@ -107,6 +111,7 @@ def _expected_mutating_tools(expect: dict[str, Any]) -> set[str]:
         *expect.get("called_any", []),
         *expect.get("order", []),
         *expect.get("args", {}),
+        *expect.get("args_if_called", {}),
     }
     for key in (
         "arg_matches_result",
@@ -194,6 +199,13 @@ def check_case(
         arguments = first_call_arguments(events, tool_name)
         if arguments is None:
             reasons.append(f"{tool_name}이 호출되지 않아 인자를 검사할 수 없다 (호출됨: {called})")
+            continue
+        for argument, checks in argument_checks.items():
+            reasons.extend(_check_argument(tool_name, argument, arguments.get(argument), checks))
+
+    for tool_name, argument_checks in expect.get("args_if_called", {}).items():
+        arguments = first_call_arguments(events, tool_name)
+        if arguments is None:
             continue
         for argument, checks in argument_checks.items():
             reasons.extend(_check_argument(tool_name, argument, arguments.get(argument), checks))

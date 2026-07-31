@@ -7,6 +7,7 @@ from __future__ import annotations
 고정합니다. 합성 trace 이벤트만 쓰기 때문에 `--eval` 없이 기본 스위트에서 함께 돌아갑니다.
 """
 
+import json
 from typing import Any
 
 import pytest
@@ -14,6 +15,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel
 
 import fixed.runtime_clock as runtime_clock
+from fixed.external_people_store import external_schedule_summary
 from tests.evals import cases_week04_routing, cases_week05_routing, predicates
 from tests.evals.conftest import (
     EVAL_TODAY,
@@ -46,6 +48,32 @@ def tool_result(tool_name: str, content: Any) -> dict[str, Any]:
         "content": content,
         "id": f"call_{tool_name}",
     }
+
+
+RESULT_EXPECTATION_KEYS = (
+    "result_contains",
+    "result_contains_any",
+    "result_empty",
+    "result_equals",
+)
+
+
+def fixture_referenced_tools(expect: dict[str, Any]) -> set[str]:
+    """응답 fixture가 필요한 expectation의 tool 이름을 모두 모읍니다."""
+
+    tool_names = {
+        *expect.get("called", []),
+        *expect.get("called_any", []),
+        *expect.get("order", []),
+        *expect.get("args", {}).keys(),
+        *expect.get("args_if_called", {}).keys(),
+    }
+    for spec in expect.get("arg_matches_result", []):
+        tool_names.add(spec["tool"])
+        tool_names.add(spec["source_tool"])
+    for key in RESULT_EXPECTATION_KEYS:
+        tool_names.update(spec["tool"] for spec in expect.get(key, []))
+    return tool_names
 
 
 class TestEventHelpers:
@@ -156,6 +184,16 @@ class TestCalledPredicates:
         assert len(reasons) == 1
         assert "예상하지 않은 변경 tool" in reasons[0]
 
+    def test_optional_arguments_explicitly_allow_a_mutating_tool(self):
+        events = [tool_call("save_structured_request", kind="todo")]
+        expect = {
+            "args_if_called": {
+                "save_structured_request": {"kind": {"equals": "todo"}},
+            }
+        }
+
+        assert predicates.check_case(expect, events, "") == []
+
 
 class TestOrderPredicate:
     def test_correct_order_passes(self):
@@ -240,6 +278,48 @@ class TestArgumentPredicates:
 
         assert len(reasons) == 1
         assert "호출되지 않아" in reasons[0]
+
+    def test_optional_argument_check_passes_when_tool_is_not_called(self):
+        expect = {
+            "args_if_called": {
+                "personal_list_saved_schedules": {
+                    "date_from": {"equals": "2026-09-24"},
+                }
+            }
+        }
+
+        assert predicates.check_case(expect, [], "") == []
+
+    def test_optional_argument_check_passes_for_matching_call(self):
+        events = [
+            tool_call("personal_list_saved_schedules", date_from="2026-09-24")
+        ]
+        expect = {
+            "args_if_called": {
+                "personal_list_saved_schedules": {
+                    "date_from": {"equals": "2026-09-24"},
+                }
+            }
+        }
+
+        assert predicates.check_case(expect, events, "") == []
+
+    def test_optional_argument_check_fails_for_mismatching_call(self):
+        events = [
+            tool_call("personal_list_saved_schedules", date_from="2026-09-25")
+        ]
+        expect = {
+            "args_if_called": {
+                "personal_list_saved_schedules": {
+                    "date_from": {"equals": "2026-09-24"},
+                }
+            }
+        }
+
+        reasons = predicates.check_case(expect, events, "")
+
+        assert len(reasons) == 1
+        assert "2026-09-24" in reasons[0]
 
     def test_load_id_must_come_from_search_result(self):
         expect = {
@@ -403,6 +483,35 @@ class TestRoutingCaseDataset:
 
         assert len(ids) == len(set(ids))
 
+    def test_optional_argument_tools_are_fixture_references(self):
+        expect = {
+            "args_if_called": {
+                "personal_list_saved_schedules": {
+                    "date_from": {"equals": "2026-09-24"},
+                }
+            }
+        }
+
+        assert fixture_referenced_tools(expect) == {"personal_list_saved_schedules"}
+
+    def test_holdout_availability_does_not_require_optional_personal_lookup(self):
+        case = next(
+            case
+            for case in cases_week04_routing.WEEK04_ROUTING_CASES
+            if case["id"] == "lookup.holdout_availability_question"
+        )
+        result = case["tool_results"]["list_saved_requests"]
+        events = [
+            tool_call(
+                "list_saved_requests",
+                date_from="2026-09-24",
+                date_to="2026-09-24",
+            ),
+            tool_result("list_saved_requests", result),
+        ]
+
+        assert predicates.check_case(case["expect"], events, "") == []
+
     def test_every_case_has_user_and_expect(self):
         for case in cases_week04_routing.WEEK04_ROUTING_CASES:
             assert case.get("user"), case["id"]
@@ -413,6 +522,7 @@ class TestRoutingCaseDataset:
 
         known = {
             "arg_matches_result",
+            "args_if_called",
             "called",
             "called_any",
             "not_called",
@@ -477,7 +587,7 @@ class TestRoutingCaseDataset:
                 )
 
     def test_required_tool_calls_have_explicit_results(self):
-        """필수 호출의 fixture 누락을 read-only 빈 기본값이 가리지 않게 합니다."""
+        """expectation이 참조하는 모든 tool은 응답 fixture를 직접 선언해야 합니다."""
 
         cases = [
             *cases_week04_routing.WEEK04_ROUTING_CASES,
@@ -486,13 +596,9 @@ class TestRoutingCaseDataset:
 
         for case in cases:
             fixtures = case.get("tool_results", {})
-            required_tools = {
-                *case["expect"].get("called", []),
-                *case["expect"].get("order", []),
-            }
-            for tool_name in required_tools:
+            for tool_name in fixture_referenced_tools(case["expect"]):
                 assert tool_name in fixtures, (
-                    f"{case['id']}: 필수 tool {tool_name} 결과 fixture가 없다"
+                    f"{case['id']}: expectation이 참조하는 {tool_name} 결과 fixture가 없다"
                 )
 
     def test_declared_results_keep_the_public_tool_envelope(self):
@@ -507,9 +613,44 @@ class TestRoutingCaseDataset:
             for tool_name, result in case.get("tool_results", {}).items():
                 if not isinstance(result, dict):
                     continue
-                assert result.get("ok") is True, f"{case['id']}: {tool_name}.ok"
+                assert isinstance(result.get("ok"), bool), f"{case['id']}: {tool_name}.ok"
                 assert result.get("tool_name") == tool_name, (
                     f"{case['id']}: {tool_name}.tool_name"
+                )
+
+    def test_personal_schedule_fixture_filters_are_declared_as_argument_expectations(self):
+        """필터가 있는 일정 fixture와 agent 호출 조건이 서로 어긋나지 않게 합니다."""
+
+        cases = [
+            *cases_week04_routing.WEEK04_ROUTING_CASES,
+            *cases_week05_routing.WEEK05_ROUTING_CASES,
+        ]
+        for case in cases:
+            result = case.get("tool_results", {}).get("personal_list_saved_schedules")
+            if result is None:
+                continue
+            filters = result["filters"]
+            required_args = case["expect"].get("args", {})
+            optional_args = case["expect"].get("args_if_called", {})
+            assert not (
+                "personal_list_saved_schedules" in required_args
+                and "personal_list_saved_schedules" in optional_args
+            ), f"{case['id']}: 같은 tool을 args와 args_if_called에 중복 선언했다"
+            expected_args = (
+                required_args.get("personal_list_saved_schedules")
+                or optional_args.get("personal_list_saved_schedules")
+                or {}
+            )
+            asserted_filters = {
+                name: value
+                for name, value in filters.items()
+                if value is not None and not (name == "limit" and value == 50)
+            }
+            assert asserted_filters, case["id"]
+            for name, value in asserted_filters.items():
+                assert expected_args.get(name, {}).get("equals") == value, (
+                    f"{case['id']}: personal_list_saved_schedules.{name} filter와 "
+                    "인자 기대값이 다르다"
                 )
 
 
@@ -532,6 +673,7 @@ class TestWeek05RoutingCaseDataset:
     def test_expect_keys_are_supported_by_the_predicate_checker(self):
         known = {
             "arg_matches_result",
+            "args_if_called",
             "called",
             "called_any",
             "not_called",
@@ -552,6 +694,58 @@ class TestWeek05RoutingCaseDataset:
         held_out_rules = {case["rule"] for case in cases if case.get("held_out")}
 
         assert held_out_rules == rules
+
+    def test_list_and_collect_fixtures_share_the_same_external_rows(self):
+        canonical_fields = ("member_name", "title", "date", "start_time", "end_time")
+
+        def canonical_external_rows(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+            values = [
+                tuple(row.get(field) for field in canonical_fields)
+                for row in rows
+                if row.get("member_name") != "나"
+            ]
+            return sorted(values, key=repr)
+
+        for case in cases_week05_routing.WEEK05_ROUTING_CASES:
+            fixtures = case.get("tool_results", {})
+            listed = fixtures.get("list_shared_schedules")
+            collected = fixtures.get("collect_member_schedules")
+            if listed is None or collected is None:
+                continue
+            assert canonical_external_rows(listed["rows"]) == canonical_external_rows(
+                collected["rows"]
+            ), case["id"]
+
+    def test_personal_schedule_fixtures_match_collect_rows_for_me(self):
+        canonical_fields = ("title", "date", "start_time", "end_time")
+
+        for case in cases_week05_routing.WEEK05_ROUTING_CASES:
+            fixtures = case.get("tool_results", {})
+            personal = fixtures.get("personal_list_saved_schedules")
+            collected = fixtures.get("collect_member_schedules")
+            if personal is None or collected is None:
+                continue
+            personal_rows = [
+                tuple(row.get(field) for field in canonical_fields)
+                for row in personal["schedules"]
+            ]
+            collected_rows = [
+                tuple(row.get(field) for field in canonical_fields)
+                for row in collected["rows"]
+                if row.get("member_name") == "나"
+            ]
+            assert sorted(personal_rows, key=repr) == sorted(collected_rows, key=repr), (
+                case["id"]
+            )
+
+    def test_schedule_summaries_are_derived_from_the_declared_rows(self):
+        for case in cases_week05_routing.WEEK05_ROUTING_CASES:
+            for tool_name, result in case.get("tool_results", {}).items():
+                if not isinstance(result, dict) or "schedule_summary" not in result:
+                    continue
+                assert result["schedule_summary"] == external_schedule_summary(result["rows"]), (
+                    f"{case['id']}: {tool_name}.schedule_summary"
+                )
 
 
 def test_only_representative_routing_cases_repeat_by_default():
@@ -631,10 +825,36 @@ class TestCaseMockTools:
     def test_missing_fixture_is_recorded_as_behavior_failure(self):
         mocked = CaseMockTools([sample_search], {"expect": {}})
 
-        result = mocked.tools[0].invoke({"query": "fixture 없음"})
+        result = json.loads(mocked.tools[0].invoke({"query": "fixture 없음"}))
 
-        assert MISSING_FIXTURE_KEY in result
+        assert result == {
+            "ok": False,
+            "tool_name": "sample_search",
+            MISSING_FIXTURE_KEY: True,
+        }
         assert mocked.failures == ["sample_search mock fixture가 없다"]
+
+    def test_explicit_empty_fixture_is_a_successful_empty_result(self):
+        case = {
+            "expect": {},
+            "tool_results": {
+                "sample_search": {
+                    "ok": True,
+                    "tool_name": "sample_search",
+                    "rows": [],
+                }
+            },
+        }
+        mocked = CaseMockTools([sample_search], case)
+
+        result = json.loads(mocked.tools[0].invoke({"query": "결과 없음"}))
+
+        assert result == {
+            "ok": True,
+            "tool_name": "sample_search",
+            "rows": [],
+        }
+        assert mocked.failures == []
 
     def test_expectations_do_not_synthesize_mock_results(self):
         case = {
