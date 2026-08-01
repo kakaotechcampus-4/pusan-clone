@@ -30,7 +30,7 @@ _WEEK03_AGENT: Any | None = None
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
 SQLITE_MEMORY_PROMPT = (
     "일정/할 일/알림은 앱 SQLite DB에 영속 메모리로 저장되므로, 현재 대화뿐 아니라 새 대화에서도 과거 기록을 조회/수정/삭제할 수 있다. "
-    "현재 대화에서 알 수 없는 일정/할 일/알림을 물으면 get_saved_request, list_saved_requests, personal_list_saved_schedules로 DB를 조회한 결과를 답변하고, 저장된 기록이 없으면 없다고 답한다. "
+    "현재 대화에서 알 수 없는 '나'의 일정/할 일/알림을 물으면 get_saved_request, list_saved_requests, personal_list_saved_schedules로 DB를 조회한 결과를 답변하고, 저장된 기록이 없으면 없다고 답한다. "
     "저장된 일정은 personal_update_saved_schedule로 수정하고 personal_delete_saved_schedules로 삭제한다. "
     "개인 일정의 저장/수정/삭제는 외부 공유 일정 복사본에도 함께 반영된다. "
 )
@@ -42,7 +42,7 @@ WEEK03_TOOL_CALL_PROMPT = (
     "이 도구가 임시 메모리와 SQLite 저장을 모두 처리하므로, 같은 요청에 save_structured_request를 추가로 호출하지 않는다. "
     "본인 외 참석자가 있는 그룹 일정(group_schedule)과 할 일(todo)·알림(reminder) 저장 요청은 personal_create_schedule을 쓰지 않고, "
     "extract_schedule_request로 구조화한 뒤 structured_request의 kind/title/date/start_time/end_time/members/priority/reason/original_text 값을 save_structured_request에 전달해 저장한다. "
-    "저장된 구조화 요청 조회는 get_saved_request(단건 요청)과 list_saved_requests(여러 요청)를 쓰고, 저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
+    "저장된 구조화 요청 조회는 get_saved_request(단건 요청)과 list_saved_requests(여러 요청)를 쓰고, '나'의 저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
     "personal_list_saved_schedules는 기본적으로 개인 일정(personal_schedule)만 조회한다. "
     "참석자가 있는 그룹 일정을 조회/수정/삭제해야 할 때는 kind='group_schedule'을 지정하고, 개인과 그룹 일정을 모두 봐야 하면 kind를 각각 지정해 두 번 조회한다. "
     "저장된 일정 수정 요청에는 personal_update_saved_schedule에 schedule_id와 바꿀 필드만 전달한다. 바꾸지 않을 필드는 넘기지 않으며, 개인 일정은 공유 일정 복사본도 함께 갱신된다. "
@@ -52,7 +52,8 @@ WEEK03_TOOL_CALL_PROMPT = (
     "사용자의 현재 메시지가 명확하게 저장/조회/수정/삭제를 요청할 때만 해당 tool을 호출한다. "
     "뜻을 알 수 없거나 일정과 무관한 입력에는 어떤 tool도 호출하지 말고 무엇을 도와줄지 되묻는다. "
     "이미 처리한 요청을 사용자가 다시 요청하지 않았다면, 직전에 저장/수정/삭제했다는 이유만으로 같은 동작을 반복하지 않는다. "
-    "일정 조회는 personal_list_saved_schedules를, 할 일과 알림을 포함한 전체 기록 조회는 list_saved_requests를 쓴다."
+    "'나'의 일정 조회는 personal_list_saved_schedules를, 할 일과 알림을 포함한 '나'의 전체 기록 조회는 list_saved_requests를 쓴다. "
+    "다른 사람(외부 멤버)의 일정 조회 도구는 이후 주차에서 안내한다."
 )
 
 
