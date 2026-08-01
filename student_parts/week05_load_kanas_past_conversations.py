@@ -437,8 +437,6 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        create_shared_schedule,
-        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -455,7 +453,13 @@ def week05_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        """
+        외부 팀원의 이전 대화나 일정을 물어보면 SQLite/MCP 도구를 사용합니다.
+        먼저 search_previous_conversations로 관련 대화를 찾고, 필요하면 load_conversation_messages로 전체 대화를 확인합니다.
+        특정 기간에 팀원이 바쁜 시간을 알아야 하면 extract_schedules_from_history를 사용합니다.
+        내 일정과 여러 팀원의 일정을 한 번에 비교해야 하면 collect_member_schedules를 사용하고,
+        이미 등록된 공유 일정 자체를 확인할 때는 list_shared_schedules를 사용합니다.
+        """,
     ]
 
 
