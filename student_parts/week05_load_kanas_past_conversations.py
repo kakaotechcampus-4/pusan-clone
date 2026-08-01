@@ -293,8 +293,51 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    ...
+    normalized_members = normalize_external_member_names(member_names)
+    normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
+        member_names, date_from, date_to
+    )
+
+    rows: list[dict[str, Any]] = []
+    for schedule in personal_schedules:
+        schedule_date = schedule.get("date")
+        if normalized_date_from and (not schedule_date or schedule_date < normalized_date_from):
+            continue
+        if normalized_date_to and (not schedule_date or schedule_date > normalized_date_to):
+            continue
+        rows.append(
+            {
+                "member_name": PERSONAL_SHARED_MEMBER_NAME,
+                "title": schedule.get("title"),
+                "date": schedule_date,
+                "start_time": schedule.get("start_time"),
+                "end_time": schedule.get("end_time"),
+                "notes": schedule.get("notes"),
+            }
+        )
+
+    if normalized_members:
+        external_payload = call_external_tool_payload(
+            "extract_schedules_from_history",
+            {
+                "member_names": normalized_members,
+                "date_from": normalized_date_from,
+                "date_to": normalized_date_to,
+            },
+        )
+        for row in external_payload.get("rows", []):
+            rows.append(
+                {
+                    "member_name": row.get("member_name"),
+                    "title": row.get("title"),
+                    "date": row.get("date"),
+                    "start_time": row.get("start_time"),
+                    "end_time": row.get("end_time"),
+                    "notes": row.get("notes"),
+                }
+            )
+
+    return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
@@ -377,8 +420,13 @@ def list_shared_schedules(
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
-    # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
-    ...
+    result = _collect_member_schedules(
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        personal_schedules=_personal_schedules_for_current_scope(),
+    )
+    return json_payload(result)
 
 
 def week05_tools() -> list[Any]:
