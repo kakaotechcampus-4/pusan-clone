@@ -26,7 +26,14 @@ from fixed.runtime_clock import current_app_date_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, join_system_prompt
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
-from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
+from student_parts.week04_retrieve_nanas_memory import (
+    CONVERSATION_RAG_STORE,
+    SQLITE_STORE,
+    safe_limit,
+    search_conversation_messages_dict,
+    week04_prompt_parts,
+    week04_tools,
+)
 
 
 _WEEK05_AGENT: Any | None = None
@@ -104,6 +111,16 @@ _WEEK05_AGENT: Any | None = None
 #      - 공유 일정 저장소 row를 생성/삭제할 때 MCP tool 결과를 그대로 전달합니다.
 #      - schedule_id 또는 source_conversation_id를 보존해야 나중에 수정/삭제 동기화가 가능합니다.
 #
+# 대화 검색 tool 통합 (Week 5 멘토 리뷰 반영)
+#   "앱 대화냐 외부 대화냐"를 LLM이 프롬프트로 고르던 라우팅을 코드로 옮겼습니다.
+#   - agent에 공개하는 대화 검색 tool은 search_conversations 하나뿐입니다.
+#     인자에 scope/source 같은 출처 선택 값을 두지 않았으므로, LLM은 "한쪽만 보라"를 표현할 수 없습니다.
+#   - tool 안에서 앱 대화 RAG(week04.search_conversation_messages_dict)와
+#     외부 MCP search_previous_conversations를 항상 둘 다 조회해 hits 하나로 합칩니다.
+#   - 원래 wrapper인 search_previous_conversations와 Week 4 search_conversation_messages는
+#     함수로는 그대로 남기되 week05_tools()에서 제외해 LLM 눈에 보이지 않게 합니다.
+#   - 대신 매 호출마다 MCP subprocess가 한 번 뜨므로 외부 leg만 인자 기준으로 캐시합니다.
+#
 # 책임 경계
 #   mcp_server/sqlite_mcp_server.py의 @mcp.tool 구현은 학생 구현 대상이 아닙니다.
 #   이 파일의 wrapper tool은 직접 SQL이나 중복 정규화 helper를 두지 않고 store/MCP helper의 결과 JSON을 전달합니다.
@@ -149,6 +166,15 @@ _WEEK05_AGENT: Any | None = None
 #
 #   - [메인] search_previous_conversations(...)
 #     외부 SQLite/MCP 서버에 저장된 과거 대화를 검색합니다. wrapper는 query/member_names/limit를 넘기고 결과 문자열을 그대로 반환합니다.
+#     search_conversations의 외부 leg가 되면서 agent에는 직접 공개하지 않습니다.
+#
+#   - [메인] _external_conversation_rows(...) / _app_conversation_hit(row) / _external_conversation_hit(row)
+#     두 저장소 결과를 source/conversation_id/member_name/title/content/created_at/score 한 구조로 맞춥니다.
+#     외부 leg는 같은 인자로 다시 부르면 MCP subprocess를 띄우지 않고 캐시에서 답합니다.
+#
+#   - [메인] _search_conversations(...) / search_conversations(...)
+#     앱 대화와 외부 멤버 대화를 코드에서 함께 조회하는 통합 검색 tool입니다.
+#     한쪽 조회가 실패해도 나머지 결과를 반환하고 degraded에 실패한 출처를 남깁니다.
 #
 #   - [메인] load_conversation_messages(conversation_id)
 #     검색으로 찾은 특정 외부 대화의 전체 메시지를 불러옵니다. sender/content/created_at 순서를 보존합니다.
@@ -186,6 +212,15 @@ PERSONAL_MEMBER_NAME = "나"
 # 조율 후보로 읽어 올 앱 SQLite 일정 최대 개수입니다. list_schedules 기본값(12)은 범위 조회에 너무 좁습니다.
 PERSONAL_SCHEDULE_LIMIT = 200
 
+# week04_tools()에서 물려받되 Week 5 agent에는 공개하지 않는 tool 이름입니다.
+# 대화 검색 진입점을 search_conversations 하나로 줄여 출처 라우팅을 코드에 가둡니다.
+WEEK05_HIDDEN_TOOL_NAMES = frozenset({"search_conversation_messages"})
+
+# 외부 MCP 대화 검색 결과 캐시입니다. 외부 대화 fixture는 앱에서 수정되지 않으므로
+# 같은 인자 재조회는 subprocess를 다시 띄우지 않고 이 캐시로 답합니다.
+_EXTERNAL_CONVERSATION_CACHE: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+_EXTERNAL_CONVERSATION_CACHE_LIMIT = 64
+
 
 def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
@@ -221,6 +256,17 @@ class SearchPreviousConversationsInput(BaseModel):
     query: str
     member_names: list[str] | None = None
     limit: int = Field(default=5, ge=1, le=50)
+
+
+class SearchConversationsInput(BaseModel):
+    """앱 대화와 외부 멤버 대화를 함께 검색하는 통합 입력입니다."""
+
+    # 출처(scope/source)를 고르는 인자를 일부러 두지 않는다. 인자로 표현할 수 없으면
+    # LLM이 "앱만" 또는 "외부만" 검색하도록 라우팅할 방법 자체가 없어진다.
+    query: str
+    # member_names는 라우팅 키가 아니라 외부 store에 그대로 넘기는 멤버 필터다.
+    member_names: list[str] | None = None
+    top_k: int = Field(default=5, ge=1, le=50)
 
 
 class LoadConversationMessagesInput(BaseModel):
@@ -375,6 +421,142 @@ def _collect_member_schedules(
     }
 
 
+def _external_conversation_rows(
+    *,
+    query: str,
+    member_names: list[str] | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """외부 MCP 대화 검색 rows를 인자 기준 캐시와 함께 가져옵니다."""
+
+    # member_names=None(전체 검색)과 []( 지정된 멤버 없음)는 외부 store에서 의미가 다르므로
+    # 캐시 키에서도 구분한다.
+    cache_key = (query, tuple(member_names) if member_names is not None else None, limit)
+    cached = _EXTERNAL_CONVERSATION_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    payload = json.loads(
+        call_mcp_tool_sync(
+            "search_previous_conversations",
+            {
+                "query": query,
+                "member_names": member_names,
+                "limit": limit,
+            },
+        )
+    )
+    rows = payload.get("rows", [])
+    # 프로세스가 오래 살아도 캐시가 무한히 커지지 않게 상한에서 통째로 비운다.
+    if len(_EXTERNAL_CONVERSATION_CACHE) >= _EXTERNAL_CONVERSATION_CACHE_LIMIT:
+        _EXTERNAL_CONVERSATION_CACHE.clear()
+    _EXTERNAL_CONVERSATION_CACHE[cache_key] = rows
+    return rows
+
+
+def _app_conversation_hit(hit: dict[str, Any]) -> dict[str, Any]:
+    """앱 대화 RAG hit를 통합 검색 row 구조로 맞춥니다."""
+
+    metadata = hit.get("metadata") or {}
+    return {
+        "source": "app",
+        "conversation_id": hit.get("conversation_id", ""),
+        # 앱 대화는 나와 Nana가 주고받은 기록이라 멤버 축이 없다. 근거를 말할 때 헷갈리지 않게 "나"로 채운다.
+        "member_name": PERSONAL_MEMBER_NAME,
+        "title": hit.get("title", ""),
+        "content": hit.get("content", ""),
+        "created_at": metadata.get("last_message_at") or metadata.get("created_at", ""),
+        # ChromaDB 거리값이라 작을수록 가깝다. 외부 leg의 LIKE 매칭과는 척도가 달라 서로 비교하지 않는다.
+        "score": hit.get("distance"),
+    }
+
+
+def _external_conversation_hit(row: dict[str, Any]) -> dict[str, Any]:
+    """외부 MCP 대화 row를 통합 검색 row 구조로 맞춥니다."""
+
+    return {
+        "source": "external",
+        "conversation_id": row.get("conversation_id", ""),
+        "member_name": row.get("member_name", ""),
+        "title": row.get("title", ""),
+        "content": row.get("content", ""),
+        "created_at": row.get("created_at", ""),
+        # 외부 검색은 SQL LIKE 매칭이라 유사도 점수가 없다. 없는 값을 지어내지 않고 None으로 둔다.
+        "score": None,
+    }
+
+
+def _search_conversations(
+    *,
+    query: str,
+    member_names: list[str] | None = None,
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """앱 대화와 외부 멤버 대화를 항상 함께 조회해 하나의 hits로 합칩니다."""
+
+    limit = safe_limit(top_k, default=5, maximum=50)
+    degraded: list[dict[str, Any]] = []
+
+    # 앱 leg: 로컬 ChromaDB라 비용이 낮고, conversation_id를 넘기지 않으므로 Week 4와 같은 규칙으로
+    # 현재 대화("방금 한 말")는 검색에서 빠진다.
+    try:
+        app_payload = search_conversation_messages_dict(
+            SQLITE_STORE,
+            CONVERSATION_RAG_STORE,
+            query=query,
+            top_k=limit,
+        )
+        app_hits = [_app_conversation_hit(hit) for hit in app_payload.get("hits", [])]
+    except Exception as error:  # noqa: BLE001 - 한쪽이 죽어도 나머지 근거는 돌려준다
+        app_hits = []
+        degraded.append({"source": "app", "error": f"{type(error).__name__}: {error}"})
+
+    # 외부 leg: member_names는 여기서만 필터로 쓰고, 앱 leg를 건너뛰는 조건으로는 쓰지 않는다.
+    # 조건 분기를 두면 "어느 쪽을 볼지"가 다시 LLM이 채우는 인자에 딸려 오기 때문이다.
+    try:
+        external_hits = [
+            _external_conversation_hit(row)
+            for row in _external_conversation_rows(query=query, member_names=member_names, limit=limit)
+        ]
+    except Exception as error:  # noqa: BLE001 - MCP subprocess 실패를 전체 실패로 만들지 않는다
+        external_hits = []
+        degraded.append({"source": "external", "error": f"{type(error).__name__}: {error}"})
+
+    # 두 leg의 점수 척도가 달라 하나로 정렬하면 순위가 거짓말이 된다. 출처별로 묶어서만 이어 붙인다.
+    hits = [*app_hits, *external_hits]
+
+    return {
+        # ok/tool_name은 다른 week의 tool 응답과 동일한 상태 계약을 맞춘다.
+        "ok": True,
+        "tool_name": "search_conversations",
+        # hits/rows에 같은 결과를 넣어 Week 4 hits 계약과 Week 5 rows 계약을 모두 만족시킨다.
+        "hits": hits,
+        "rows": hits,
+        # 어느 출처에서 몇 건이 왔는지 남겨야 "외부 기록이 없다"와 "외부를 못 봤다"를 구분할 수 있다.
+        "counts": {"app": len(app_hits), "external": len(external_hits)},
+        "filters": {"query": query, "member_names": member_names, "top_k": limit},
+        # 비어 있으면 두 출처를 모두 정상 조회했다는 뜻이다.
+        "degraded": degraded,
+    }
+
+
+@tool(args_schema=SearchConversationsInput)
+def search_conversations(
+    query: str,
+    member_names: list[str] | None = None,
+    top_k: int = 5,
+) -> str:
+    """예전 대화를 검색합니다. 내가 Nana와 나눈 앱 대화와 외부 멤버(철수·영희 등)의 대화를 한 번에 조회하므로 대화 검색에는 이 tool만 사용합니다. query에는 조사를 뗀 짧은 핵심 명사나 구를 넣습니다."""
+
+    return json_payload(
+        _search_conversations(
+            query=query,
+            member_names=member_names,
+            top_k=top_k,
+        )
+    )
+
+
 @tool(args_schema=SearchPreviousConversationsInput)
 def search_previous_conversations(
     query: str,
@@ -527,9 +709,18 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
 def week05_tools() -> list[Any]:
     """4주차까지의 도구에 외부 SQLite/MCP 일정 도구를 누적한 목록입니다."""
 
+    # week04_tools()를 그대로 펼치면 search_conversation_messages가 함께 노출돼
+    # "앱 대화 tool / 외부 대화 tool" 선택이 LLM에게 다시 생긴다. 그래서 이름으로 걸러 낸다.
+    inherited_tools = [
+        inherited
+        for inherited in week04_tools()
+        if getattr(inherited, "name", "") not in WEEK05_HIDDEN_TOOL_NAMES
+    ]
     return [
-        *week04_tools(),
-        search_previous_conversations,
+        *inherited_tools,
+        # 대화 검색 진입점은 search_conversations 하나뿐이다. 외부 전용 wrapper인
+        # search_previous_conversations는 이 tool의 외부 leg로만 쓰고 agent에 노출하지 않는다.
+        search_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
         create_shared_schedule,
@@ -563,21 +754,23 @@ def week05_prompt_parts() -> list[str]:
         (
             "[Week 5 출처 구분] 출처가 다르면 tool도 다르다. "
             "1) 내 일정·할 일·알림은 그대로 Week 3 저장/조회 tool과 Week 4 RAG tool을 쓴다. "
-            "2) 외부 멤버가 예전에 무슨 얘기를 했는지 찾을 때는 search_previous_conversations(query, member_names, limit)를 "
-            "호출한다. query에는 조사를 뗀 짧은 핵심 명사나 구를 넣고, 특정 인물이 지정됐을 때만 member_names를 채운다. "
+            "2) '예전에 무슨 얘기 했지'처럼 대화를 되짚는 질문은 출처를 따지지 말고 "
+            "search_conversations(query, member_names, top_k) 하나만 호출한다. query에는 조사를 뗀 짧은 핵심 명사나 "
+            "구를 넣고, 특정 인물이 지정됐을 때만 member_names를 채운다. "
             "3) 검색으로 찾은 conversation_id의 대화 전문이 필요하면 load_conversation_messages(conversation_id)를 호출한다. "
             "4) 외부 멤버가 언제 바쁜지(busy-time)가 필요하면 extract_schedules_from_history(member_names, date_from, date_to)를 호출한다. "
             "5) 공유 일정 저장소에 실제로 어떤 row가 등록돼 있는지 확인할 때는 list_shared_schedules(...)를 호출한다. "
             "내 공유 복사본까지 보려면 member_names에 '나'를 명시한다."
         ),
         (
-            "[Week 4 → Week 5 대화 검색 구분] '예전 대화'는 저장된 곳이 두 군데라 tool이 갈린다. "
-            "나와 너(Nana)가 이 앱에서 주고받은 채팅은 앱 SQLite에 있으므로 Week 4의 "
-            "search_conversation_messages를 쓰고, 철수·영희 같은 외부 멤버가 남긴 대화는 외부 SQLite에 있으므로 "
-            "Week 5의 search_previous_conversations를 쓴다. Week 4의 '예전 대화 되짚기는 "
-            "search_conversation_messages' 규칙은 외부 멤버 대화에는 적용하지 않는다. "
-            "search_conversation_messages로는 외부 멤버 대화가 구조적으로 절대 나오지 않으므로, "
-            "결과가 비었다고 해서 '기록이 없다'고 결론짓지 말고 외부 tool로 다시 확인한다."
+            "[Week 5 대화 검색 결과 읽기] search_conversations는 앱 대화와 외부 멤버 대화를 코드에서 함께 조회하므로 "
+            "'어느 저장소를 볼지'는 네가 고르지 않는다. Week 4의 search_conversation_messages는 Week 5 tool 목록에 "
+            "없으니 찾지 말고, 대화 검색은 search_conversations 한 번으로 끝낸다. "
+            "결과 hits의 source가 'app'이면 나와 너가 이 앱에서 나눈 대화이고 'external'이면 그 멤버의 외부 대화이므로, "
+            "근거를 말할 때 둘을 섞지 말고 어느 쪽 기록인지 구분해 말한다. "
+            "counts.app과 counts.external이 모두 0이면 그때만 '관련 기록을 찾지 못했다'고 답한다. "
+            "degraded에 출처가 남아 있으면 그 저장소는 조회에 실패한 것이므로 '기록이 없다'가 아니라 "
+            "'그쪽은 확인하지 못했다'고 밝힌다."
         ),
         (
             "[Week 5 여러 사람 일정 모으기] 나와 다른 사람의 일정을 함께 봐야 하는 요청은 "
@@ -613,7 +806,7 @@ def week05_prompt_parts() -> list[str]:
         (
             "[Week 5 MCP 호출 규칙] 외부 MCP tool은 호출할 때마다 별도 서버 프로세스를 거치므로 앱 tool보다 느리다. "
             "같은 tool을 같은 인자로 두 번 이상 호출하지 않는다. 한 번 받은 rows는 그 턴 안에서 다시 조회하지 말고 재사용한다. "
-            "search_previous_conversations로 이미 content를 충분히 받았으면 load_conversation_messages를 굳이 또 부르지 않고, "
+            "search_conversations로 이미 content를 충분히 받았으면 load_conversation_messages를 굳이 또 부르지 않고, "
             "대화 전문이 실제로 필요할 때만 conversation_id로 한 번 호출한다."
         ),
         (
