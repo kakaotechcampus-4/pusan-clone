@@ -471,6 +471,8 @@ personal_~ 도구만으로 답하지 않고 반드시 MCP 도구를 사용합니
 - 외부 멤버의 일정 등을 날짜 범위로 조회할 때는 extract_schedules_from_history(member_names, date_from, date_to)를 사용합니다.
 - "나랑 누구누구 시간 맞춰줘"처럼 내 일정과 외부 멤버 일정을 함께 봐야 하는 요청에는 collect_member_schedules(member_names, date_from, date_to)를 사용합니다. 이 도구는 sqlite 일정과 외부 멤버 일정을 한 번에 합쳐 줍니다.
 - 공유 일정 저장소에 등록된 row를 확인해야 할 때는 list_shared_schedules를 사용해야 합니다.
+- 공유 일정 저장소에 row를 직접 등록하거나 고쳐야 할 때는 create_shared_schedule(member_name, title, date, start_time, end_time, notes, source_conversation_id, schedule_id)을 사용합니다. "나"의 개인 일정은 personal_~ 도구로 저장할 때 이미 자동으로 공유 저장소에 동기화되므로, 그 경우 create_shared_schedule을 다시 호출하지 않습니다. 외부 멤버 일정을 공유 저장소에 새로 등록하거나 잘못된 row를 바로잡을 때만 사용합니다.
+- 공유 일정 저장소에서 row를 지워야 할 때는 delete_shared_schedule(schedule_id 또는 source_conversation_id)을 사용합니다.
 
 - personal_list_saved_schedules 등 week 1-4 도구는 "나"의 개인 일정 저장/조회 전용이고, 외부 멤버 조회에는 절대 사용하지 않습니다.
 """.strip(),
