@@ -451,7 +451,10 @@ def save_structured_request(
     source_schedule_id: str | None = None,
 ) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
-
+    members_notme = [m for m in (members or []) if str(m).strip() and str(m).strip() != "나"]
+    if kind == "personal_schedule" and members_notme:
+        kind = "group_schedule"
+    
     # DONE: 검증된 함수 인자를 저장 dict로 만들고 None 값을 제외한 뒤 SQLite에 저장하세요.
     payload: dict[str, Any] = {
         "kind": kind,
@@ -459,7 +462,7 @@ def save_structured_request(
         "date": date,
         "start_time": start_time or "미정",
         "end_time": end_time or "미정",
-        "members": members,
+        "members":  members_notme,
         "priority": priority,
         "reason": reason,
         "original_text": original_text,
