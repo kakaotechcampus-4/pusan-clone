@@ -18,3 +18,14 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "llm: exercises the real Week 5 LangChain agent + LLM proxy + local MCP subprocess (slow, uses PROXY_TOKEN quota).",
+]
