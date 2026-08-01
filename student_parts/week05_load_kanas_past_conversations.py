@@ -191,9 +191,12 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     saved_schedules = [
-        schedule
-        for schedule in SQLITE_STORE.list_schedules(limit=200)
-        if schedule.get("request_kind") == "personal_schedule" or "나" in (schedule.get("attendees") or [])
+        *SQLITE_STORE.list_schedules(limit=200, kind="personal_schedule"),
+        *(
+            schedule
+            for schedule in SQLITE_STORE.list_schedules(limit=200, kind="group_schedule")
+            if "나" in (schedule.get("attendees") or [])
+        ),
     ]
     saved_schedule_ids = {schedule.get("schedule_id") for schedule in saved_schedules}
     session_id = current_session_scope()
