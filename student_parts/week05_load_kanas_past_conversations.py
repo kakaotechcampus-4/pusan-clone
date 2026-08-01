@@ -191,7 +191,10 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     scope = current_session_scope()
-    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=100)
+    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
+        limit=100,
+        kind="personal_schedule",
+    )
     saved_schedule_ids = {
         schedule_id
         for schedule in saved_schedules
@@ -307,24 +310,27 @@ def _collect_member_schedules(
         date_to,
     )
 
-    external_result = call_mcp_tool_sync(
-        "extract_schedules_from_history",
-        {
-            "member_names": ext_member_names,
-            "date_from": norm_date_from,
-            "date_to": norm_date_to,
-        },
-    )
-    try:
-        external_payload = json.loads(external_result)
-    except (json.JSONDecodeError, TypeError):
-        external_payload = {}
+    if ext_member_names:
+        external_result = call_mcp_tool_sync(
+            "extract_schedules_from_history",
+            {
+                "member_names": ext_member_names,
+                "date_from": norm_date_from,
+                "date_to": norm_date_to,
+            },
+        )
+        try:
+            external_payload = json.loads(external_result)
+        except (json.JSONDecodeError, TypeError):
+            external_payload = {}
 
-    if isinstance(external_payload, dict):
-        payload_rows = external_payload.get("rows", [])
-        external_rows = payload_rows if isinstance(payload_rows, list) else []
-    elif isinstance(external_payload, list):
-        external_rows = external_payload
+        if isinstance(external_payload, dict):
+            payload_rows = external_payload.get("rows", [])
+            external_rows = payload_rows if isinstance(payload_rows, list) else []
+        elif isinstance(external_payload, list):
+            external_rows = external_payload
+        else:
+            external_rows = []
     else:
         external_rows = []
 
@@ -495,16 +501,27 @@ def week05_prompt_parts() -> list[str]:
         "search_previous_conversations의 query 인자에는 여러 명사나 주제(예: '회의 일정 장소')를 억지로 합쳐 넣지 말고, "
         "가장 핵심적인 단어 1개(예: '회의' 또는 '장소')만 단일 문자열로 사용해. "
         "사용자가 여러 키워드를 함께 물어보는 경우, 필요한 키워드별로 search_previous_conversations를 여러 번 나누어 호출하거나 가장 대표적인 키워드로 검색해.",
+        "외부 동료의 바쁜 시간이나 일정을 확인할 때는 extract_schedules_from_history를 직접 호출하지 말고, "
+        "내 일정까지 함께 통합해 주는 collect_member_schedules 도구를 사용해.",
         '나("나")와 외부 팀원들의 바쁜 시간을 한꺼번에 확인하거나 일정을 조율할 때는 '
-        "반드시 collect_member_schedules를 호출해.",
-        "사용자가 특정 날짜나 멤버를 지정하지 않고 공유 일정이나 팀 일정을 조회해달라고 요청하는 경우, "
+        "member_names에 '나'를 기본 포함(예: ['나', '철수'])하여 반드시 collect_member_schedules를 호출해.",
+        "사용자가 특정 날짜나 멤버를 지정하지 않고 공유 일정 저장소 자체를 조회해달라고 요청하는 경우, "
         "사용자에게 필터를 되묻지 말고 인자 없이 list_shared_schedules를 즉시 호출해.",
-        "사용자가 본인('나')의 공유 일정을 물어볼 때는 member_names=['나']를 인자로 넘겨",
-        "사용자가 '조회', '확인', '보여줘', '알려줘' 같은 조회/읽기 요청을 할 때는 "
-        "이전 대화 맥락과 관계없이 절대로 등록이나 삭제 도구(create_shared_schedule, delete_shared_schedule)를 다시 호출하지 말고 오직 list_shared_schedules 도구만 호출해.",
-        "공유 일정(create_shared_schedule)을 등록할 때는 연동 및 동시 삭제가 가능하도록 동일한 source_conversation_id(예: 고유 식별자 또는 회의 그룹 ID)를 지정해.",
-        "상대방과 함께하는 회의나 약속인 경우, 상대방(예: 철수)뿐만 아니라 '나'의 공유 일정 저장소에도 추가될 수 있도록 member_name='상대방'과 member_name='나'로 create_shared_schedule을 각각 호출해.",
-        "공유 일정을 삭제(delete_shared_schedule)할 때는 해당 회의의 source_conversation_id 또는 schedule_id를 지정하여 연관된 공유 일정이 함께 삭제되도록 해.",
+        "사용자가 본인('나')의 공유 일정을 물어볼 때는 member_names=['나']를 인자로 넘겨 list_shared_schedules를 호출해.",
+        "사용자가 '조회', '확인', '보여줘', '알려줘' 같은 단순 읽기 요청을 할 때는 "
+        "이전 대화 맥락과 관계없이 절대로 등록이나 삭제 도구(create_shared_schedule, delete_shared_schedule)를 다시 호출하지 마.",
+        "[일정 생성 경로 결정 — 이 규칙은 Week 3의 'extract_schedule_request→save_structured_request 순서를 반드시 지켜라'보다 우선한다] "
+        "일정을 새로 잡아달라는 요청에서 참석자에 '나' 외의 다른 사람(철수·영희 등 실명)이 한 명이라도 있으면, "
+        "extract_schedule_request와 save_structured_request를 절대 호출하지 말고 곧바로 create_shared_schedule로만 처리해. "
+        "이때 동일한 source_conversation_id(예: 'meeting_20260804_철수')를 지정하고 member_name='나'와 상대방(예: '철수') 각각으로 create_shared_schedule을 2회 호출해. "
+        "참석자가 '나' 혼자일 때만 Week 3의 extract_schedule_request→save_structured_request 경로를 사용해.",
+        "공유 일정 삭제(delete_shared_schedule)는 schedule_id 또는 source_conversation_id로만 가능하고, "
+        "멤버 이름이나 날짜 범위로는 삭제할 수 없어(그 인자를 넘겨도 무시되어 아무것도 지워지지 않는다). "
+        "특정 회의를 삭제해달라고 했는데 그 회의의 id를 모르면, 먼저 list_shared_schedules를 멤버·날짜 등 필터와 함께 호출해 "
+        "(필터 없이 호출하면 7월 기본 목록만 반환되어 다른 달 일정은 못 찾는다) 그 회의의 source_conversation_id를 확인한 뒤 delete_shared_schedule에 넘겨. "
+        "같은 회의의 여러 참석자 사본을 한 번에 지우려면 schedule_id보다 source_conversation_id를 우선 사용해. "
+        "'8월 전부'나 '철수 것 모두'처럼 여러 건을 지울 때는 list 결과의 각 source_conversation_id마다 delete_shared_schedule을 반복 호출해. "
+        "delete_shared_schedule 결과의 deleted_count가 0이면 '삭제됐다'고 답하지 말고, 대상 id를 잘못 지정한 것은 아닌지 다시 확인해.",
         "외부 팀원의 일정을 사용자에게 안내할 때는 collect_member_schedules의 "
         "schedule_summary를 참고해 JSON을 그대로 보여 주지 말고 자연스럽고 읽기 쉽게 정리해.",
         "팀원들의 일정 현황을 답변할 때는 아래 형식을 참고해:\n"
