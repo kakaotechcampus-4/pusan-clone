@@ -14,6 +14,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_external_row_parentheticals,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -312,31 +313,27 @@ def _collect_member_schedules(
 
     return {
         "ok": True, "tool_name": "collect_member_schedules",
-        "rows": rows, "schedule_summary": external_schedule_summary(rows), "merged_summary": _merged_summary(rows)
+        "rows": rows, "merged_rows": _merged_rows(rows), "schedule_summary": external_schedule_summary(rows)
     }
 
-def _merged_summary(rows: list[dict[str, Any]]) -> str:
+def _merged_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: "OrderedDict[tuple, dict[str, Any]]" = OrderedDict()
     for row in rows:
-        key = (row.get("date"), (row.get("title") or "").strip(), row.get("start_time"))
-        group = groups.setdefault(key, {"row": row, "members": []})
-        name = row.get("member_name")
-        if name and name not in group["members"]:
-            group["members"].append(name)
+        stripped_row = strip_external_row_parentheticals(row)
+        key = (stripped_row.get("date"), (stripped_row.get("title") or "").strip(), stripped_row.get("start_time"))
+        if key not in groups:
+            groups[key] = {
+                "date": stripped_row.get("date"),
+                "title": stripped_row.get("title"),
+                "start_time": stripped_row.get("start_time"),
+                "end_time": stripped_row.get("end_time"),
+                "members": [],
+            }
 
-    if not groups:
-        return "조회된 일정이 없습니다."
-
-    lines = []
-    for g in groups.values():
-        r = g["row"]
-        members = ", ".join(g["members"])
-        date_text = r.get("date") or "날짜 미정"
-        start = r.get("start_time") or "시간 미정"
-        end = r.get("end_time") or "시간 미정"
-        title = (r.get("title") or "제목 없음")
-        lines.append(f"- {title} | {date_text} {start}-{end} | 참여자: {members}")
-    return "\n".join(lines)
+        name = stripped_row.get("member_name")
+        if name and name not in groups[key]["members"]:
+            groups[key]["members"].append(name)
+    return list(groups.values())
 
 @tool(args_schema=SearchPreviousConversationsInput)
 def search_previous_conversations(
@@ -450,15 +447,18 @@ def week05_prompt_parts() -> list[str]:
         "일정 조회 대상이 '나' 본인인지 다른 사람(외부 멤버)인지에 따라 도구를 구분한다. "
         "personal_list_saved_schedules와 list_saved_requests는 '나'의 앱 저장 일정만 조회한다. "
 
-        "특정 외부 멤버의 일정만 물으면 extract_schedules_from_history에 그 사람 이름을 member_names로 넣어 조회한다. "
+        "'나' 이외의 사람(외부 멤버) 이름이 들어간 일정 조회는 personal_list_saved_schedules와 list_saved_requests를 절대 쓰지 않는다. ",
+        "반드시 extract_schedules_from_history에 외부 멤버 이름을 member_names로 넣어 조회한다. "
         "예를 들어 '하린이 일정 보여줘'는 personal_list_saved_schedules가 아니라 extract_schedules_from_history(member_names=['하린'])로 조회한다. ",
 
         "'나와 하린' 처럼 나와 외부 멤버를 함께, 또는 여러 사람의 일정을 한 번에 정리·비교해야 하면 "
-        "항상 collect_member_schedules 하나로 처리한다. personal_list_saved_schedules와 collect_member_schedules를 둘 다 호출하지 않는다. ",
-        "collect_member_schedules 결과에는 개인별 요약(schedule_summary)과 약속별로 묶은 요약(merged_summary)이 둘 다 들어있다. "
-        "'각각'/'개별'/'각자' 요청에는 schedule_summary를 개인별로 나눠서 답하고, "
-        "'모두'/'전체'/'종합' 요청에는 merged_summary를 그대로 사용해 약속별로 참여자와 함께 답한다. ",
-        
+        "personal_list_saved_schedules와 extract_schedules_from_history를 각각 따로 호출하지 않는다. ",
+        "이 경우 반드시 collect_member_schedules 하나만 호출한다. ",
+        "'서연이와 나의 7월 일정 모두 알려줘'는 collect_member_schedules(member_names=['서연'])로 처리한다. ",
+        "collect_member_schedules 결과에는 사람별 rows와, 같은 약속을 참여자 목록과 함께 묶은 merged_rows가 있다. ",
+        "사람별로 답할 때는 rows를, 약속 단위로 참여자와 함께 답할 때는 merged_rows를 사용한다. "
+        "merged_rows의 각 항목은 members에 참여자가 모두 들어있으므로, 공동 약속은 참여자를 함께 밝혀 답한다. "
+
         "외부 멤버의 이전 대화 내용 자체가 필요하면 search_previous_conversations(query에는 사람 이름이나 핵심어 하나)로 검색하고, "
         "특정 대화 전문이 필요하면 그 conversation_id로 load_conversation_messages를 호출한다. ",
         "공유 일정 저장소에 등록된 일정을 확인할 때는 list_shared_schedules를 사용한다. ",
