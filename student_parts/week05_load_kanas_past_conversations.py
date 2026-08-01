@@ -382,7 +382,17 @@ def create_shared_schedule(
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
     # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    args = {
+        "member_name": member_name,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "notes": notes,
+        "source_conversation_id": source_conversation_id,
+        "schedule_id": schedule_id,
+    }
+    return call_mcp_tool_sync("create_shared_schedule", args)
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -393,7 +403,11 @@ def delete_shared_schedule(
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
     # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    args = {
+        "schedule_id": schedule_id,
+        "source_conversation_id": source_conversation_id,
+    }
+    return call_mcp_tool_sync("delete_shared_schedule", args)
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -440,8 +454,8 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        # create_shared_schedule,
-        # delete_shared_schedule,
+        create_shared_schedule,
+        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -465,7 +479,11 @@ def week05_prompt_parts() -> list[str]:
    - 다른 사람의 바쁜 시간: extract_schedules_from_history를 사용한다.
 2. 여러 사람이 함께할 회의 시간을 조율할 때는 반드시 collect_member_schedules를 먼저 호출해 내 일정과 외부 멤버 일정을 한 번에 모은다.
 3. 공유 일정 저장소에 등록된 일정을 확인하는 요청은 list_shared_schedules를 사용한다.
+   다른 멤버 이름으로 일정을 등록하거나 공유 저장소 row를 직접 등록·삭제·보정하라는 요청은
+   반드시 create_shared_schedule / delete_shared_schedule를 사용한다.
+   내 일정 저장·삭제는 기존 도구를 쓰면 공유 저장소에 자동 동기화되므로 그대로 기존 도구를 쓴다.
 4. 내 개인 참고자료·내 일정·내 과거 대화는 지금까지의 도구를 그대로 사용하고, 내 것과 다른 사람 것의 출처를 섞지 않는다.
+   단, 다른 멤버 이름의 일정 등록·삭제는 개인 일정 도구로 할 수 없으므로 공유 저장소 도구를 쓴다.
 5. 일정 관련 답변은 tool이 반환한 rows와 schedule_summary만 근거로 말하고, tool 결과에 없는 일정을 추측해서 말하지 않는다.""",
     ]
 
