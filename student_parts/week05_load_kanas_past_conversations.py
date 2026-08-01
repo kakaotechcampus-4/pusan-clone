@@ -97,6 +97,7 @@ _WEEK05_AGENT: Any | None = None
 #      - 두 출처를 member_name/title/date/start_time/end_time/notes가 있는 rows 배열로 직접 합칩니다.
 #      - schedule_summary도 함께 반환해 LLM이 바쁜 시간을 자연어로 설명할 수 있게 합니다.
 #      - PERSONAL_SCHEDULES는 현재 대화 범위의 아직 DB에 없는 임시 일정만 합치고, SQLite에 이미 저장된 일정과 중복하지 않습니다.
+#      - Week 6 추가 과제(find_common_available_slots)가 이 tool의 rows를 busy_rows 근거로 사용합니다.
 #
 # 추가 과제 구현 대상 (구현하지 않으려면 week05_tools() 목록에서 해당 tool을 제거)
 #   1. create_shared_schedule / delete_shared_schedule
@@ -201,7 +202,6 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     ]
 
     return [*saved_schedules, *temporary_schedules]
-
 
 
 def json_payload(payload: dict[str, Any]) -> str:
