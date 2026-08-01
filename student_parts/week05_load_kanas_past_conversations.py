@@ -68,7 +68,10 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 개인 일정과 현재 대화의 아직 저장되지 않은 임시 일정을 합칩니다."""
 
-    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
+    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
+        limit=200,
+        kind="personal_schedule",
+    )
     saved_schedule_ids = {
         str(schedule["schedule_id"])
         for schedule in saved_schedules
@@ -178,7 +181,7 @@ def _collect_member_schedules(
         member for member in normalized_members if member != PERSONAL_SHARED_MEMBER_NAME
     ]
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
-        member_names,
+        normalized_members,
         date_from,
         date_to,
     )

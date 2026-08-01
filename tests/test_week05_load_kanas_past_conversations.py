@@ -13,9 +13,15 @@ class _SQLiteStore:
     def __init__(self, rows: list[dict[str, object]]) -> None:
         self.rows = rows
         self.limit: int | None = None
+        self.kind: str | None = None
 
-    def list_schedules(self, limit: int) -> list[dict[str, object]]:
+    def list_schedules(
+        self,
+        limit: int,
+        kind: str | None = None,
+    ) -> list[dict[str, object]]:
         self.limit = limit
+        self.kind = kind
         return self.rows
 
 
@@ -76,6 +82,7 @@ class Week05MCPToolTests(unittest.TestCase):
             schedules = week05._personal_schedules_for_current_scope()
 
         self.assertEqual(store.limit, 200)
+        self.assertEqual(store.kind, "personal_schedule")
         self.assertEqual(
             [schedule["title"] for schedule in schedules],
             ["저장 일정", "현재 대화 임시 일정"],
@@ -111,18 +118,30 @@ class Week05MCPToolTests(unittest.TestCase):
             }
         ]
 
-        with patch.object(
-            week05,
-            "call_mcp_tool_sync",
-            return_value=json.dumps({"ok": True, "rows": external_rows}, ensure_ascii=False),
-        ) as mcp_call:
+        with (
+            patch.object(
+                week05,
+                "call_mcp_tool_sync",
+                return_value=json.dumps({"ok": True, "rows": external_rows}, ensure_ascii=False),
+            ) as mcp_call,
+            patch.object(
+                week05,
+                "normalize_external_schedule_date_bounds",
+                wraps=week05.normalize_external_schedule_date_bounds,
+            ) as normalize_date_bounds,
+        ):
             result = week05._collect_member_schedules(
-                member_names=["나", "민준"],
+                member_names=[" 나 ", " 민준 "],
                 date_from="2026-07-29T09:00:00+09:00",
                 date_to="2026-07-31T18:00:00+09:00",
                 personal_schedules=personal_schedules,
             )
 
+        normalize_date_bounds.assert_called_once_with(
+            ["나", "민준"],
+            "2026-07-29T09:00:00+09:00",
+            "2026-07-31T18:00:00+09:00",
+        )
         mcp_call.assert_called_once_with(
             "extract_schedules_from_history",
             {
