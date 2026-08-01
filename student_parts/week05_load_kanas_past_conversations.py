@@ -515,6 +515,9 @@ def week05_prompt_parts() -> list[str]:
         "extract_schedule_request와 save_structured_request를 절대 호출하지 말고 곧바로 create_shared_schedule로만 처리해. "
         "이때 동일한 source_conversation_id(예: 'meeting_20260804_철수')를 지정하고 member_name='나'와 상대방(예: '철수') 각각으로 create_shared_schedule을 2회 호출해. "
         "참석자가 '나' 혼자일 때만 Week 3의 extract_schedule_request→save_structured_request 경로를 사용해.",
+        "이미 등록된 공유 일정의 시간·내용을 '변경/수정'할 때는 delete 후 재생성하지 마. "
+        "list_shared_schedules로 각 참석자 행의 schedule_id를 확인한 뒤, 같은 schedule_id로 create_shared_schedule을 다시 호출해 덮어써(같은 schedule_id면 새로 만들지 않고 갱신된다). "
+        "delete_shared_schedule은 '취소/삭제'에만 써. 변경을 delete와 create로 처리하면 둘이 같은 source_conversation_id를 공유해, 삭제가 방금 재생성한 일정까지 함께 지워버릴 수 있으니 금지야. "
         "공유 일정 삭제(delete_shared_schedule)는 schedule_id 또는 source_conversation_id로만 가능하고, "
         "멤버 이름이나 날짜 범위로는 삭제할 수 없어(그 인자를 넘겨도 무시되어 아무것도 지워지지 않는다). "
         "특정 회의를 삭제해달라고 했는데 그 회의의 id를 모르면, 먼저 list_shared_schedules를 멤버·날짜 등 필터와 함께 호출해 "
