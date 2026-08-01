@@ -201,9 +201,10 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
             continue
         # 임시 id(personal_)와 DB id(sch_)는 접두어가 달라 현재 데이터에선 충돌하지 않지만,
         # 구현 방식에 따라 겹칠 수 있어 가이드 요구대로 중복 검사를 유지한다.
-        if schedule["id"] in seen_ids: 
+        if schedule["id"] in seen_ids:
             continue
         rows.append(schedule)
+        seen_ids.add(schedule["id"])
     
     return rows
 
