@@ -84,12 +84,11 @@ def no_my_schedule(calls: list[Call], _answer: str) -> tuple[bool, str]:
     """다른 사람만 물었을 때 내 일정이 딸려오지 않아야 한다."""
 
     for call in calls:
-        if call.name == "extract_schedules_of_members_include_me" and call.arg("include_my_schedules"):
-            return False, "include_me(include_my_schedules=True) — 안 물어본 내 일정 포함"
+        # include_me 는 내 일정을 항상 넣는다. 남만 물었을 때 이걸 고르면 그대로 누출이다.
+        if call.name == "extract_schedules_of_members_include_me":
+            return False, "include_me — 안 물어본 내 일정 포함"
         if call.name == "extract_schedules_of_members_exclude_me":
-            return True, "extract"
-    if any(c.name == "extract_schedules_of_members_include_me" for c in calls):
-        return True, "include_me(False)"
+            return True, "exclude_me"
     # 아무 tool도 안 불렀다면 조회 자체를 안 한 것이다. "내 일정이 안 섞였다"고 볼 수 없다.
     return False, f"{[c.name for c in calls] or '(호출 없음)'}"
 
@@ -99,8 +98,7 @@ def with_my_schedule(calls: list[Call], _answer: str) -> tuple[bool, str]:
 
     for call in calls:
         if call.name == "extract_schedules_of_members_include_me":
-            ok = bool(call.arg("include_my_schedules"))
-            return ok, f"include_me(include_my_schedules={call.arg('include_my_schedules')})"
+            return True, "include_me"
     return False, f"{[c.name for c in calls] or '(호출 없음)'} — include_me 미호출"
 
 

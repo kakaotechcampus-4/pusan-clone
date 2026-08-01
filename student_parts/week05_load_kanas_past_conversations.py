@@ -202,8 +202,9 @@ _WEEK05_AGENT: Any | None = None
 #   3. 시그니처를 바꾼 곳
 #        _personal_schedules_for_current_scope(app_store=None, limit=200)
 #          인자는 모두 선택이라 가이드의 무인자 호출 그대로 씁니다.
-#        collect_member_schedules(..., include_my_schedules)
-#          내 일정을 넣을지를 member_names 에 "나"가 있는지로 유추하지 않고 인자로 받습니다.
+#        collect_member_schedules(member_names, date_from, date_to)
+#          내 일정은 항상 포함합니다. 넣을지 여부는 tool 선택으로 이미 갈리므로
+#          인자로 다시 받지 않습니다(PR #166 리뷰 반영).
 #
 #   4. delete_shared_schedule 은 삭제 대상이 비면 스키마에서 막습니다.
 #      나머지 wrapper 는 가공 없는 passthrough 입니다.
@@ -386,15 +387,6 @@ class CollectMemberSchedulesInput(BaseModel):
         )
     )
     date_to: str = Field(description="조회 종료일(YYYY-MM-DD). date_from 보다 앞설 수 없다.")
-    # 기본값을 두지 않는다. 기본값이 있으면 모델이 이 판단을 건너뛰고, 그 결과가
-    # "안 물어본 내 일정 누출" 또는 "조율에서 내 일정 누락"으로 조용히 나타난다.
-    include_my_schedules: bool = Field(
-        description=(
-            "내 일정도 함께 모을지. 나와 다른 사람의 시간을 맞추는 요청이면 true, "
-            "다른 사람 일정만 물었으면 false. "
-            "'내 일정이랑 겹치는지', '나도 되는 시간'처럼 사용자가 자기 일정을 언급하면 true다."
-        )
-    )
 
     @model_validator(mode="after")
     def _require_ordered_dates(self) -> CollectMemberSchedulesInput:
@@ -502,7 +494,6 @@ def _collect_member_schedules(
     date_from: str,
     date_to: str,
     personal_schedules: list[dict[str, Any]],
-    include_my_schedules: bool,
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다.
 
@@ -510,8 +501,9 @@ def _collect_member_schedules(
       - "나"      -> 앱 SQLite + 현재 대화의 임시 일정 (personal_schedules 로 주입)
       - 외부 멤버 -> 외부 SQLite/MCP 의 extract_schedules_from_history
 
-    내 일정을 넣을지는 member_names 에 "나"가 있는지로 유추하지 않고 include_my_schedules 로
-    받는다. 리스트에 무엇이 '없는지'로 의도를 읽어내는 방식은 신호가 약했다.
+    내 일정은 항상 포함한다. 넣을지 말지는 이 tool 을 고르는 순간 이미 정해진 것이고
+    (남 일정만 필요하면 extract_schedules_of_members_exclude_me 다), 인자로 한 번 더
+    물으면 같은 판단을 두 곳에서 하게 된다.
 
     판단 로직은 위의 순수 helper 두 개가 갖고, 이 함수는 그 둘과 MCP 호출 한 번을 엮는다.
     """
@@ -527,11 +519,7 @@ def _collect_member_schedules(
         )
     external_members = _external_member_names_excluding_me(member_names)
 
-    rows = (
-        _personal_schedule_rows(personal_schedules, normalized_date_from, normalized_date_to)
-        if include_my_schedules
-        else []
-    )
+    rows = _personal_schedule_rows(personal_schedules, normalized_date_from, normalized_date_to)
 
     # 외부 조회 대상이 "나"뿐이면 MCP subprocess 를 띄울 이유가 없다.
     if external_members:
@@ -562,12 +550,7 @@ def _collect_member_schedules(
     return {
         "ok": True,
         "tool_name": "extract_schedules_of_members_include_me",
-        "member_names": (
-            [PERSONAL_SHARED_MEMBER_NAME, *external_members]
-            if include_my_schedules
-            else list(external_members)
-        ),
-        "include_my_schedules": include_my_schedules,
+        "member_names": [PERSONAL_SHARED_MEMBER_NAME, *external_members],
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
         "rows": rows,
@@ -721,13 +704,12 @@ def collect_member_schedules(
     member_names: list[str],
     date_from: str,
     date_to: str,
-    include_my_schedules: bool,
 ) -> str:
     """나와 다른 사람의 시간을 맞출 때 씁니다. 내 일정과 상대 일정을 같은 rows 구조로 함께 모읍니다.
 
     '서연이랑 7월 15일에 만날 수 있을까', '철수랑 언제 되지'처럼 다른 사람과 시간이 되는지
     묻는 것도 이 tool입니다. 상대 일정은 앱에 없으므로 내 일정만 보고 답하면 안 됩니다.
-    include_my_schedules=true 면 내 일정이 결과에 포함됩니다.
+    내 일정은 항상 함께 포함됩니다.
     다른 사람 일정만 필요하면 extract_schedules_of_members_exclude_me 를 쓰세요.
     """
 
@@ -735,10 +717,7 @@ def collect_member_schedules(
         member_names=member_names,
         date_from=date_from,
         date_to=date_to,
-        personal_schedules=(
-            _personal_schedules_for_current_scope() if include_my_schedules else []
-        ),
-        include_my_schedules=include_my_schedules,
+        personal_schedules=_personal_schedules_for_current_scope(),
     )
     return json_payload(payload)
 

@@ -247,9 +247,7 @@ class DateOrderValidationTest(unittest.TestCase):
 
     def test_collect_는_역전된_범위를_막는다(self):
         with self.assertRaises(pydantic.ValidationError):
-            CollectMemberSchedulesInput(
-                member_names=["철수"], include_my_schedules=False, **self.REVERSED
-            )
+            CollectMemberSchedulesInput(member_names=["철수"], **self.REVERSED)
 
     def test_list_도_역전된_범위를_막는다(self):
         with self.assertRaises(pydantic.ValidationError):
@@ -281,28 +279,25 @@ class CollectMemberSchedulesTest(unittest.TestCase):
     MY = [{"schedule_id": "s1", "title": "팀 회의", "date": "2026-07-15", "start_time": "15:00"}]
 
     def _collect(self, **kwargs):
-        # include_my_schedules 는 기본값이 없다. 호출자가 매번 의도를 밝혀야 한다.
         base = dict(
             member_names=[],
             date_from="2026-07-14",
             date_to="2026-07-18",
             personal_schedules=self.MY,
-            include_my_schedules=True,
         )
         return _collect_member_schedules(**{**base, **kwargs})
 
-    def test_include가_참이면_내_일정이_들어간다(self):
-        result = self._collect(include_my_schedules=True)
+    def test_내_일정이_항상_들어간다(self):
+        # 넣을지 여부는 tool 선택으로 갈린다. 이 tool 을 골랐다면 내 일정이 필요한 것이다.
+        result = self._collect()
         self.assertEqual([row["member_name"] for row in result["rows"]], ["나"])
         self.assertEqual(result["member_names"], ["나"])
-        self.assertTrue(result["include_my_schedules"])
 
-    def test_include가_거짓이면_내_일정이_빠진다(self):
-        # 안 물어본 내 일정이 답변에 새는 것을 막는 경로다.
-        result = self._collect(include_my_schedules=False, personal_schedules=[])
+    def test_내_일정이_없어도_나는_조회_대상에_남는다(self):
+        # rows 가 비는 것과 "나"를 안 물어본 것은 다르다. 후자는 exclude_me 쪽 tool 이다.
+        result = self._collect(personal_schedules=[])
         self.assertEqual(result["rows"], [])
-        self.assertEqual(result["member_names"], [])
-        self.assertFalse(result["include_my_schedules"])
+        self.assertEqual(result["member_names"], ["나"])
 
     def test_날짜_범위가_뒤집히면_실패시킨다(self):
         # store 는 조용히 빈 rows 를 준다. "일정 없음"과 구분되지 않아 코드에서 먼저 막는다.
@@ -632,9 +627,24 @@ class Week05ToolDescriptionTest(unittest.TestCase):
             description = schema.model_fields["date_from"].description or ""
             self.assertIn("되물어라", description, f"{schema.__name__}.date_from")
 
-    def test_내_일정_포함_여부는_기본값_없는_필수_인자다(self):
-        required = CollectMemberSchedulesInput.model_json_schema()["required"]
-        self.assertIn("include_my_schedules", required)
+    def test_내_일정_포함_여부를_인자로_받지_않는다(self):
+        # 같은 판단을 tool 선택과 인자 두 곳에서 하지 않는다(PR #166 리뷰 반영).
+        # 라이브 150콜에서 인자가 있을 때와 없을 때가 149/150 로 동률이었다.
+        fields = CollectMemberSchedulesInput.model_fields
+        self.assertNotIn("include_my_schedules", fields)
+        self.assertEqual(
+            sorted(CollectMemberSchedulesInput.model_json_schema()["required"]),
+            ["date_from", "date_to", "member_names"],
+        )
+
+    def test_두_tool_의_설명이_내_일정_포함_여부로_갈린다(self):
+        # 인자를 없앤 뒤로는 이 문장들이 유일한 구분 수단이다.
+        descriptions = self._descriptions()
+        self.assertIn("항상", descriptions["extract_schedules_of_members_include_me"])
+        self.assertIn(
+            "extract_schedules_of_members_exclude_me",
+            descriptions["extract_schedules_of_members_include_me"],
+        )
 
 
 if __name__ == "__main__":
