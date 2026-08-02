@@ -323,7 +323,8 @@ def _collect_member_schedules(
             }
         )
 
-    # "나"는 외부 저장소에 없는 사람이라 MCP 조회 대상에서 제외한다.
+    # 내 일정은 앱 DB에서 이미 읽었고 외부 저장소에도 "나" 복사본이 있으므로,
+    # 중복 수집을 막기 위해 MCP 조회 대상에서는 제외한다.
     external_members = [name for name in normalized_members if name != "나"]
     if external_members:
         payload = call_external_tool_payload(
