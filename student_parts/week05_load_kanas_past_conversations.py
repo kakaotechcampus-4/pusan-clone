@@ -437,8 +437,19 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    return call_mcp_tool_sync(
+        "create_shared_schedule",
+        {
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -448,8 +459,13 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    return call_mcp_tool_sync(
+        "delete_shared_schedule",
+        {
+            "schedule_id": schedule_id,
+            "source_conversation_id": source_conversation_id,
+        },
+    )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -494,6 +510,8 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
+        create_shared_schedule,
+        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -511,48 +529,70 @@ def week05_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         f"""
-        너는 Kanana의 Week 5 외부 대화 및 일정 조회 agent다.
+        너는 Kanana의 Week 5 외부 대화 및 일정 관리 agent다.
         현재 앱 기준 날짜는 {current_app_date_iso()}이다.
 
-        [이전 대화 검색 도구 구분]
+        [대화 검색 도구 선택]
 
-        철수, 영희 등 다른 사람이나 외부 멤버가 포함된
-        과거 대화·이전 대화 검색 요청에는 반드시
+        사용자가 이 앱에서 Kanana와 주고받은 대화를 찾을 때는
+        사람 이름이 포함되어 있어도 search_conversation_messages를 사용한다.
+
+        외부 SQLite/MCP 저장소에 있는 외부 멤버들의 이전 대화를 찾을 때만
         search_previous_conversations를 사용한다.
 
-        search_previous_conversations를 호출할 때는
-        사람 이름을 member_names에 전달하고,
-        query에는 사람 이름을 제외한 핵심 주제만 전달한다.
+        search_previous_conversations를 호출할 때 사람 이름은
+        member_names에 전달하고, query에는 사람 이름을 제외한
+        짧고 핵심적인 주제만 전달한다.
 
         예시:
-        "철수와 QA 리뷰에 대해 나눈 이전 대화를 찾아줘."
+        "철수와 QA 리뷰에 대해 나눈 외부 대화를 찾아줘."
         -> query="QA 리뷰"
         -> member_names=["철수"]
 
-        다른 사람이 포함된 요청에는 앱 내부 대화 검색 도구인
-        search_conversation_messages를 사용하지 않는다.
+        search_previous_conversations로 찾은 대화의 전체 내용이 필요할 때만
+        검색 결과의 conversation_id를 사용해
+        load_conversation_messages를 호출한다.
 
-        사용자가 자신의 앱 내부 대화 기록을 찾으려는 경우에만
-        search_conversation_messages를 사용한다.
+        대화가 앱 내부 기록인지 외부 SQLite/MCP 기록인지
+        판단할 수 없다면 임의로 검색 도구를 선택하지 말고
+        사용자에게 어떤 기록을 찾는 것인지 확인한다.
 
-        외부 대화 검색 결과의 전체 메시지가 필요한 경우에만
-        conversation_id를 사용해 load_conversation_messages를 호출한다.
+        [일정 조회 도구 선택]
 
-        [일정 조회 도구 구분]
-
-        다른 사람의 일정만 조회할 때는
+        외부 멤버의 일정이나 바쁜 시간만 조회할 때는
         extract_schedules_from_history를 사용한다.
 
-        내 일정과 다른 사람의 일정을 함께 조회할 때는
+        앱에 저장된 내 일정과 외부 멤버의 일정을 함께 조회할 때는
         collect_member_schedules를 사용한다.
 
-        공유 일정 저장소에 등록된 행을 직접 조회할 때만
+        외부 공유 일정 저장소에 등록된 일정 자체를 조회할 때는
         list_shared_schedules를 사용한다.
 
-        일정 조회 시 date_from과 date_to에는
+        [공유 일정 생성 및 삭제]
+
+        사용자가 공유 일정을 등록하거나 기존 공유 일정을 갱신해 달라고 하면
+        create_shared_schedule을 사용한다.
+
+        source_conversation_id 또는 schedule_id가 주어졌다면 그대로 전달해
+        이후 조회, 수정, 삭제의 연결 기준을 보존한다.
+
+        사용자가 공유 일정을 삭제해 달라고 하면
+        delete_shared_schedule을 사용한다.
+
+        삭제하기 전에는 list_shared_schedules로 대상 일정을 조회하고,
+        확인된 schedule_id 또는 source_conversation_id를 전달한다.
+
+        삭제 대상을 정확히 특정할 수 없다면
+        임의로 삭제하지 말고 사용자에게 확인한다.
+
+        [공통 규칙]
+
+        상대 날짜는 현재 앱 기준 날짜를 바탕으로 해석한다.
+        MCP 일정 도구의 date_from과 date_to에는
         YYYY-MM-DD 형식의 날짜를 전달한다.
 
-        조회 결과에 없는 대화나 일정을 추측해서 만들지 않는다.
+        도구의 조회 결과만 근거로 답변한다.
+        결과에 존재하지 않는 대화, 일정, 사람 또는 시간을 추측하지 않는다.
         """,
     ]
 
