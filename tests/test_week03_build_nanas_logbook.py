@@ -14,6 +14,7 @@ golden case 통합 테스트 대상으로 남긴다.
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,6 +32,36 @@ from student_parts.week03_build_nanas_logbook import (
     structured_request_from_week01_schedule,
 )
 import student_parts.week03_build_nanas_logbook as week03
+
+
+_EXTERNAL_DB_BACKUP: str | None = None
+_EXTERNAL_DB_TMP: tempfile.TemporaryDirectory | None = None
+
+
+def setUpModule() -> None:
+    """외부 공유 일정 저장소를 임시 DB로 격리한다.
+
+    AppSQLiteStore.save_structured_request 는 일정 저장에 성공하면 외부 공유 저장소로
+    "나"/참석자 복사본을 동기화한다(fixed/external_mcp.py). 격리하지 않으면 테스트를
+    돌릴 때마다 실제 data/kanana_external_people.sqlite3 에 row 가 쌓인다.
+    MCP subprocess 는 호출 시점에 os.environ 을 복사하므로 여기서 바꾸면 반영된다.
+    """
+
+    global _EXTERNAL_DB_BACKUP, _EXTERNAL_DB_TMP
+    _EXTERNAL_DB_BACKUP = os.environ.get("KANANA_EXTERNAL_DB_PATH")
+    _EXTERNAL_DB_TMP = tempfile.TemporaryDirectory()
+    os.environ["KANANA_EXTERNAL_DB_PATH"] = str(Path(_EXTERNAL_DB_TMP.name) / "external.sqlite3")
+
+
+def tearDownModule() -> None:
+    """격리했던 외부 DB 경로를 원래대로 돌려놓는다."""
+
+    if _EXTERNAL_DB_BACKUP is None:
+        os.environ.pop("KANANA_EXTERNAL_DB_PATH", None)
+    else:
+        os.environ["KANANA_EXTERNAL_DB_PATH"] = _EXTERNAL_DB_BACKUP
+    if _EXTERNAL_DB_TMP is not None:
+        _EXTERNAL_DB_TMP.cleanup()
 
 
 class StructuredRequestFromWeek01Test(unittest.TestCase):

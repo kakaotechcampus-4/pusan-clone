@@ -233,6 +233,9 @@ def week02_system_prompt() -> str:
     return join_system_prompt(
         [
             *week02_prompt_parts(),
+            # 주차 범위 선언은 prompt_parts 가 아니라 여기에 둔다. prompt_parts 는 다음 주차로
+            # 그대로 누적되는데 그때는 이 문장이 거짓이 되어 tool 호출을 막는다(PR #166 리뷰).
+            "Week 2 agent는 구조화 결과를 만드는 것까지만 담당한다.",
             (
                 "최종 답변은 반드시 StructuredRequestBatch 형식의 structured_response로 반환한다. "
                 "요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담는다. "
@@ -282,10 +285,6 @@ def week02_prompt_parts() -> list[str]:
         (
             "Week 1 tool 결과 JSON(created_schedule 등)을 입력으로 받은 경우에는 tool을 다시 호출하지 "
             "않고 그 payload의 필드를 읽어 structured_response를 만든다."
-        ),
-        (
-            "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다. "
-            "구조화 결과를 만드는 것까지만 담당한다."
         ),
     ]
 

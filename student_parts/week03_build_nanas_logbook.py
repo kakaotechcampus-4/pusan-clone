@@ -28,7 +28,7 @@ from student_parts.week02_structure_natural_language_requests import (
 _WEEK03_AGENT: Any | None = None
 
 SQLITE_MEMORY_PROMPT = (
-    "Nana의 일정/할 일/알림은 앱 SQLite DB(기록장)에 영구 저장된다. Week 1의 임시 메모리와 달리 "
+    "사용자의 일정/할 일/알림은 앱 SQLite DB(기록장)에 영구 저장된다. Week 1의 임시 메모리와 달리 "
     "앱을 다시 켜거나 새 대화를 열어도 남아 있다. 사용자가 과거에 저장한 내용을 물으면 대화 기억에 "
     "의존하지 말고, 새 대화라도 list_saved_requests·get_saved_request·personal_list_saved_schedules "
     "같은 SQLite 조회 tool로 DB에서 직접 찾아 답한다. 영속 조회에는 Week 1의 임시 메모리 tool이 아니라 "
@@ -40,7 +40,7 @@ WEEK03_TOOL_CALL_PROMPT = (
     "StructuredRequest로 구조화하고, 그 결과 JSON의 structured_request 필드(kind/title/date/"
     "start_time/end_time/members/priority/reason/original_text)를 그대로 save_structured_request "
     "인자로 넘겨 저장한다. 자연어 원문이나 ok/tool_name/base_date 같은 wrapper를 구조화 없이 바로 "
-    "저장하지 않는다. 저장된 일정을 조회할 때는 personal_list_saved_schedules로 후보를 확인하고, "
+    "저장하지 않는다. 앱에 저장된 내 일정을 조회할 때는 personal_list_saved_schedules로 후보를 확인하고, "
     "원본 구조화 요청 기록은 list_saved_requests·get_saved_request로 조회한다. "
     "수정 요청('개인 코칭 시간 바꿔줘')은 목록을 먼저 조회하지 말고, personal_update_saved_schedule에 "
     "target_query(대상 제목)를 바로 넘긴다. 이 tool이 대상을 스스로 찾는다. 대상을 '찾는' 조건은 "
@@ -53,7 +53,7 @@ WEEK03_TOOL_CALL_PROMPT = (
     "tool이 ok=false와 candidates(여러 건)를 돌려주면 그때만 후보들의 날짜·시간을 사용자에게 제시해 어느 "
     "것인지 되묻고, 사용자가 고르면 그 schedule_id로 다시 호출한다. "
     "tool이 대상을 못 찾았다고 할 때만 사용자에게 존재 여부를 확인한다. "
-    "삭제 요청('X 일정 지워줘')은 사용자에게 되묻기 전에 먼저 personal_list_saved_schedules로 대상을 조회해 "
+    "앱에 저장된 내 일정 삭제 요청은 사용자에게 되묻기 전에 먼저 personal_list_saved_schedules로 대상을 조회해 "
     "schedule_id를 확인한 뒤 personal_delete_saved_schedules에 넘긴다. 날짜를 안 주면 date_from/date_to를 "
     "비워(특히 '오늘'로 좁히지 말 것) 전체 기간에서 제목으로 찾고, 여러 건이면 임의로 지우지 말고 후보를 제시해 "
     "되묻는다. 전체 삭제(delete_all)는 되돌릴 수 없으므로, 사용자가 전체 삭제를 명시적으로 재확인한 경우에만 "
@@ -698,7 +698,15 @@ def week03_tools() -> list[Any]:
 def week03_system_prompt() -> str:
     """3주차 단일 agent가 따르는 시스템 프롬프트입니다."""
 
-    return join_system_prompt(week03_prompt_parts())
+    return join_system_prompt(
+        [
+            *week03_prompt_parts(),
+            # 이 주차에서만 참인 범위 선언이라 prompt_parts 에 두지 않는다.
+            # 누적되면 Week 4 의 RAG, Week 5 의 외부 멤버 조회를 agent 가 거부한다(PR #166 리뷰).
+            "Week 3의 범위는 개인 일정을 중심으로 한 저장·조회이며, "
+            "외부 멤버 일정 조율이나 RAG 검색은 이후 주차에서 다룬다.",
+        ]
+    )
 
 
 def week03_prompt_parts() -> list[str]:
@@ -716,8 +724,7 @@ def week03_prompt_parts() -> list[str]:
             f"오늘 날짜는 {current_app_date_iso()}이며 상대 날짜 표현은 이 날짜를 기준으로 해석한다. "
             "tool 선택 기준: 새 저장은 extract_schedule_request 후 save_structured_request, "
             "일정 목록/후보 확인은 personal_list_saved_schedules, 원본 요청 기록 조회는 "
-            "list_saved_requests·get_saved_request를 쓴다. Week 3의 범위는 개인 일정을 중심으로 한 "
-            "저장·조회이며, 외부 멤버 일정 조율이나 RAG 검색은 이후 주차에서 다룬다."
+            "list_saved_requests·get_saved_request를 쓴다."
         ),
     ]
 
