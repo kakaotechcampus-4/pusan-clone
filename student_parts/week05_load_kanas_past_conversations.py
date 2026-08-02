@@ -270,10 +270,16 @@ def _collect_member_schedules(
             "notes": schedule.get("notes"),
         })
 
+    # 외부 MCP 조회 전에 멤버 이름/날짜 범위를 외부 저장소 기준으로 정규화한다.
+    # (별칭·공백·ISO datetime이 그대로 들어가면 조회가 실패하거나 빈 결과가 나올 수 있음)
+    normalized_member_names = normalize_external_member_names(member_names)
+    normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
+        member_names, date_from, date_to
+    )
     external_text = call_mcp_tool_sync("extract_schedules_from_history", {
-        "member_names": member_names,
-        "date_from": date_from,
-        "date_to": date_to,
+        "member_names": normalized_member_names,
+        "date_from": normalized_date_from,
+        "date_to": normalized_date_to,
     })
     for row in json.loads(external_text).get("rows", []):
         rows.append({
