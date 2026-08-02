@@ -188,12 +188,16 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 
 
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
-    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
+    """SQLite 저장 일정(개인·그룹)과 현재 대화의 임시 일정을 group 조율 후보로 사용합니다.
+
+    '나'가 참석하는 그룹 일정도 앱 DB에 저장되므로 personal_schedule로 한정하지 않고 함께 읽어
+    '나'의 busy-time으로 집계합니다. 외부 공유 저장소로 자동 동기화된 '나' 복사본은
+    _collect_member_schedules가 외부 조회에서 제외하므로 중복되지 않습니다.
+    """
 
     scope = current_session_scope()
     saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
         limit=100,
-        kind="personal_schedule",
     )
     saved_schedule_ids = {
         schedule_id
@@ -510,12 +514,20 @@ def week05_prompt_parts() -> list[str]:
         "사용자가 본인('나')의 공유 일정을 물어볼 때는 member_names=['나']를 인자로 넘겨 list_shared_schedules를 호출해.",
         "사용자가 '조회', '확인', '보여줘', '알려줘' 같은 단순 읽기 요청을 할 때는 "
         "이전 대화 맥락과 관계없이 절대로 등록이나 삭제 도구(create_shared_schedule, delete_shared_schedule)를 다시 호출하지 마.",
-        "[일정 생성 경로 결정 — 이 규칙은 Week 3의 'extract_schedule_request→save_structured_request 순서를 반드시 지켜라'보다 우선한다] "
-        "일정을 새로 잡아달라는 요청에서 참석자에 '나' 외의 다른 사람(철수·영희 등 실명)이 한 명이라도 있으면, "
-        "extract_schedule_request와 save_structured_request를 절대 호출하지 말고 곧바로 create_shared_schedule로만 처리해. "
-        "이때 동일한 source_conversation_id(예: 'meeting_20260804_철수')를 지정하고 member_name='나'와 상대방(예: '철수') 각각으로 create_shared_schedule을 2회 호출해. "
-        "참석자가 '나' 혼자일 때만 Week 3의 extract_schedule_request→save_structured_request 경로를 사용해.",
-        "이미 등록된 공유 일정의 시간·내용을 '변경/수정'할 때는 delete 후 재생성하지 마. "
+        "[일정 생성 경로 결정 — 참석자 구성에 따라 저장 경로가 갈린다] "
+        "일정을 새로 잡아달라는 요청은 참석자 구성으로 세 갈래로 나눠 처리해. "
+        "(1) 참석자가 '나' 혼자면 Week 3의 extract_schedule_request→save_structured_request 경로로 kind='personal_schedule' 저장해. "
+        "(2) 참석자에 '나'와 다른 실명(철수·영희 등)이 함께 있으면, extract_schedule_request→save_structured_request로 저장하되 "
+        "kind='group_schedule'로 지정하고 members에 '나'와 상대방을 모두 넣어(예: ['나','철수']). "
+        "앱에 그룹 일정으로 저장하면 참석자별 공유 일정 복사본이 외부 공유 저장소에 자동 동기화되므로, 이 경우 create_shared_schedule을 따로 호출하지 마. "
+        "(3) '나'는 빠지고 외부인끼리만(예: 철수와 민수) 잡아주는 공유 일정일 때만 create_shared_schedule을 사용해. "
+        "이때 동일한 source_conversation_id(예: 'meeting_20260810_철수_민수')를 지정하고 참석자 각각으로 create_shared_schedule을 호출해.",
+        "일정의 '변경/수정/취소/삭제'도 저장 위치에 따라 도구가 갈린다. "
+        "참석자에 '나'가 포함된 일정은 앱 DB에 있으니 list_saved_requests나 personal_list_saved_schedules로 찾은 뒤 "
+        "personal_update_saved_schedule(수정)·personal_delete_saved_schedules(삭제)로 처리해. "
+        "이 앱 도구들은 외부 공유 저장소의 참석자 복사본까지 자동으로 갱신·삭제하므로 create_shared_schedule/delete_shared_schedule을 따로 부르지 마. "
+        "아래 create_shared_schedule/delete_shared_schedule 규칙은 '나'가 빠진 외부인끼리의 공유 일정에만 적용해.",
+        "이미 등록된 (외부인끼리의) 공유 일정의 시간·내용을 '변경/수정'할 때는 delete 후 재생성하지 마. "
         "list_shared_schedules로 각 참석자 행의 schedule_id를 확인한 뒤, 같은 schedule_id로 create_shared_schedule을 다시 호출해 덮어써(같은 schedule_id면 새로 만들지 않고 갱신된다). "
         "delete_shared_schedule은 '취소/삭제'에만 써. 변경을 delete와 create로 처리하면 둘이 같은 source_conversation_id를 공유해, 삭제가 방금 재생성한 일정까지 함께 지워버릴 수 있으니 금지야. "
         "공유 일정 삭제(delete_shared_schedule)는 schedule_id 또는 source_conversation_id로만 가능하고, "

@@ -5,8 +5,10 @@ from __future__ import annotations
 - 외부 동료 과거 발언 검색: search_previous_conversations
 - 팀원 바쁜 시간/조율: collect_member_schedules(extract_schedules_from_history 직접 호출 금지)
 - 공유 일정 목록: list_shared_schedules
-- 상대방과의 공유 일정 생성/수정/삭제: create_shared_schedule / delete_shared_schedule
-  (save_structured_request 경로 금지)
+- '나'가 포함된 회의: save_structured_request(kind='group_schedule')로 앱 DB에 저장하면
+  참석자별 공유 복사본이 외부 저장소에 자동 동기화됨(create_shared_schedule 직접 호출 금지)
+- '나'가 빠진 외부인끼리(예: 철수·민수)의 공유 일정 생성/수정/삭제:
+  create_shared_schedule / delete_shared_schedule
 
 공유 일정의 삭제 호출 횟수·키 종류는 비결정적이므로, 생성/삭제는 격리 외부 DB의
 최종 상태로 판정합니다.
@@ -53,36 +55,41 @@ def test_list_shared_schedules(run_agent):
     assert rows, f"공유 일정 rows가 비어있습니다: {payloads}"
 
 
-def test_create_shared_schedule(run_agent, external_store):
-    """[공유-생성] 상대방과의 회의는 create_shared_schedule로만 처리(save 경로 금지), 외부 DB에 나·철수 등록."""
+def test_create_group_meeting_syncs_to_shared(run_agent, app_store, external_store):
+    """[그룹-생성] '나'+상대 회의는 save_structured_request(group_schedule)로 저장하고,
+    상대방 몫은 외부 공유 저장소에 자동 동기화된다(create_shared_schedule 직접 호출 금지)."""
     result = run_agent("철수랑 8월 10일 16시에 기획 미팅 잡아줘")
 
     names = tool_call_names(result)
-    assert "create_shared_schedule" in names, f"tool_calls={names}"
-    assert "save_structured_request" not in names, f"save 경로가 섞임: {names}"
-    assert "personal_create_schedule" not in names, f"개인 생성 경로가 섞임: {names}"
+    assert "save_structured_request" in names, f"tool_calls={names}"
+    assert "create_shared_schedule" not in names, f"'나' 포함 회의에 create 직접 호출됨: {names}"
 
-    rows = external_store.list_shared_schedules(
-        member_names=["나", "철수"], date_from="2026-08-01", date_to="2026-08-31",
+    # 상대방(철수) 몫은 외부 공유 저장소에 자동 동기화되어 collect의 busy-time 근거가 된다
+    ext_rows = external_store.list_shared_schedules(
+        member_names=["철수"], date_from="2026-08-01", date_to="2026-08-31",
     )
-    members = {r.get("member_name") for r in rows if "기획" in (r.get("title") or "")}
-    assert {"나", "철수"} <= members, f"등록된 멤버={members}, rows={rows}"
+    assert any("기획" in (r.get("title") or "") for r in ext_rows), f"철수 공유 복사본 없음: {ext_rows}"
+
+    # '나' 몫은 앱 DB에 저장되어 collect가 앱 DB에서 내 busy-time으로 읽는다
+    app_rows = app_store.list_schedules(limit=100, date_from="2026-08-01", date_to="2026-08-31")
+    assert any(r.get("date") == "2026-08-10" for r in app_rows), f"앱 DB에 내 일정 없음: {app_rows}"
 
 
 def test_update_shared_schedule(run_agent, external_store):
-    """[공유-수정] 대화 맥락의 source_conversation_id로 create_shared_schedule upsert(17시 반영)."""
+    """[공유-수정] '나'가 빠진 외부인끼리(철수·민수) 공유 일정은 대화 맥락의
+    source_conversation_id로 create_shared_schedule upsert(17시 반영)."""
     source_id = "meeting_seed_0810"
-    for member in ("철수", "나"):
+    for member in ("철수", "민수"):
         external_store.create_shared_schedule(
             member_name=member, title="기획 미팅",
             date="2026-08-10", start_time="16:00", source_conversation_id=source_id,
         )
     history = [
-        {"role": "user", "content": "철수랑 기획 미팅 언제로 잡았지?"},
-        {"role": "assistant", "content": f"등록된 미팅: [source_conversation_id={source_id}, 날짜=2026-08-10, 시간=16:00, 참석자=철수,나]"},
+        {"role": "user", "content": "철수랑 민수 기획 미팅 언제로 잡았지?"},
+        {"role": "assistant", "content": f"등록된 미팅: [source_conversation_id={source_id}, 날짜=2026-08-10, 시간=16:00, 참석자=철수,민수]"},
     ]
 
-    result = run_agent("그 기획 미팅을 17시로 변경해줘", history=history)
+    result = run_agent("철수랑 민수 그 기획 미팅을 17시로 변경해줘", history=history)
 
     names = tool_call_names(result)
     assert "create_shared_schedule" in names, f"tool_calls={names}"
@@ -92,19 +99,20 @@ def test_update_shared_schedule(run_agent, external_store):
 
 
 def test_delete_shared_schedule(run_agent, external_store):
-    """[공유-삭제] 대화 맥락의 source_conversation_id로 delete_shared_schedule 후 외부 DB에서 제거(최종 상태 판정)."""
+    """[공유-삭제] '나'가 빠진 외부인끼리(철수·민수) 공유 일정은 대화 맥락의
+    source_conversation_id로 delete_shared_schedule 후 외부 DB에서 제거(최종 상태 판정)."""
     source_id = "meeting_seed_0810"
-    for member in ("철수", "나"):
+    for member in ("철수", "민수"):
         external_store.create_shared_schedule(
             member_name=member, title="기획 미팅",
             date="2026-08-10", start_time="16:00", source_conversation_id=source_id,
         )
     history = [
-        {"role": "user", "content": "철수랑 기획 미팅 언제로 잡았지?"},
-        {"role": "assistant", "content": f"등록된 미팅: [source_conversation_id={source_id}, 날짜=2026-08-10, 시간=16:00, 참석자=철수,나]"},
+        {"role": "user", "content": "철수랑 민수 기획 미팅 언제로 잡았지?"},
+        {"role": "assistant", "content": f"등록된 미팅: [source_conversation_id={source_id}, 날짜=2026-08-10, 시간=16:00, 참석자=철수,민수]"},
     ]
 
-    result = run_agent("철수랑 그 기획 미팅 취소해줘", history=history)
+    result = run_agent("철수랑 민수 그 기획 미팅 취소해줘", history=history)
 
     names = tool_call_names(result)
     assert "delete_shared_schedule" in names, f"tool_calls={names}"
