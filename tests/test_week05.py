@@ -2,9 +2,10 @@
 
 MCP subprocess를 띄우지 않는 경로만 검증한다.
 외부 조회가 필요 없는 조건(외부 멤버가 없는 경우)과 내 일정 필터링/중복 제거를 확인한다.
-실행: uv run pytest tests/test_week05.py
+실행: uv run --with pytest python -m pytest -q tests/test_week05.py
 """
 
+import student_parts.week05_load_kanas_past_conversations as week05
 from student_parts.week05_load_kanas_past_conversations import (
     _collect_member_schedules,
     _structured_request_from_schedule_row,
@@ -83,3 +84,23 @@ def test_collect_sorts_rows_by_date_and_time():
         ],
     )
     assert [row["title"] for row in result["rows"]] == ["이른 일정", "늦은 일정"]
+
+
+def test_personal_schedules_dedup_saved_and_pending(monkeypatch):
+    # SQLite에 이미 저장된 일정과 같은 임시 일정은 한 번만 남아야 한다.
+    saved = {"schedule_id": "sch_1", "title": "회의", "date": "2026-07-10"}
+    pending = {"id": "sch_1", "title": "회의", "date": "2026-07-10", "session_id": "s1"}
+    other = {"id": "sch_2", "title": "헬스장", "date": "2026-07-11", "session_id": "s1"}
+
+    class FakeStore:
+        def __init__(self, _path):
+            pass
+
+        def list_schedules(self, limit=12):
+            return [saved]
+
+    monkeypatch.setattr(week05, "AppSQLiteStore", FakeStore)
+    monkeypatch.setattr(week05, "PERSONAL_SCHEDULES", [pending, other])
+    monkeypatch.setattr(week05, "current_session_scope", lambda: "s1")
+
+    assert week05._personal_schedules_for_current_scope() == [saved, other]
