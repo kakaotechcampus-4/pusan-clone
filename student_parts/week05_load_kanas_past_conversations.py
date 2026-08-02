@@ -505,7 +505,7 @@ def week05_prompt_parts() -> list[str]:
         "특정 대화의 전체 내용이 필요하면 search_previous_conversations로 conversation_id를 찾은 뒤 "
         "load_conversation_messages로 불러온다. 공유 일정 저장소 자체를 확인할 때는 list_shared_schedules를 쓴다.",
         "나와 다른 사람의 일정을 함께 봐야 하는 조율 질문에는 collect_member_schedules를 사용한다. "
-        "member_names에는 조율 대상 전원을 넣고, 내 일정이 필요하면 '나'를 함께 넣는다. "
+        "이 tool은 내 일정을 항상 포함하므로 member_names에는 외부 조율 대상만 넣으면 된다. "
         "이 tool은 내 일정과 외부 멤버 일정을 같은 구조로 모아 주므로 출처별로 따로 호출하지 않는다.",
         "조회 결과가 비어 있으면 일정을 지어내지 말고 해당 기간에 확인된 일정이 없다고 답한다. "
         "여러 사람의 최종 회의 시간을 확정하는 것은 이번 주차 범위가 아니므로, "
