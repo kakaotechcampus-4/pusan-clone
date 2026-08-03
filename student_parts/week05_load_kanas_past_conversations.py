@@ -187,51 +187,90 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _personal_schedules_for_current_scope(date_from : str, date_to : str) -> list[dict[str, Any]]:
-    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
+def _schedule_kind(schedule: dict[str, Any]) -> str:
+    """저장 row의 kind를 우선하고, 임시 row는 참석자 유무로 구분합니다."""
 
-    """
-    [메인] _personal_schedules_for_current_scope()
-    fixed/app_store.py의 AppSQLiteStore(CONFIG.app_db_path).list_schedules(...)와
-    student_parts/week01_wake_up_nana.py의 PERSONAL_SCHEDULES 중 현재 대화 범위 row를 합칩니다.
-    Week 3 이후 SQLite에 저장된 내 일정과 현재 대화에만 남아 있는 Week 1 임시 일정을 합칩니다.
-    이미 SQLite에 저장된 일정과 임시 일정이 중복되지 않도록 schedule_id/id를 기준으로 한 번 걸러냅니다.
-    """
-    # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
+    request_kind = schedule.get("request_kind")
+    if request_kind:
+        return str(request_kind)
+    if schedule.get("attendees") or schedule.get("members"):
+        return "group_schedule"
+    return "personal_schedule"
+
+
+def _schedules_for_current_scope(
+    date_from: str,
+    date_to: str,
+    *,
+    kind: str,
+) -> list[dict[str, Any]]:
+    """지정 kind의 SQLite 일정과 현재 대화 임시 일정을 합칩니다."""
+
     sql_instance = AppSQLiteStore(CONFIG.app_db_path)
-    
+
     temporary_schedules = [
         schedule
-        for schedule in PERSONAL_SCHEDULES 
-        if (
-            _schedule_scope(schedule) == current_session_scope()
-        )
+        for schedule in PERSONAL_SCHEDULES
+        if _schedule_scope(schedule) == current_session_scope()
+        and _schedule_kind(schedule) == kind
     ]
-    temporary_schedules_ids = [i["id"] for i in temporary_schedules]
+    temporary_schedule_ids = [schedule["id"] for schedule in temporary_schedules]
     db_existings = {
         schedule["schedule_id"]
-        for schedule in sql_instance.find_schedules(schedule_ids=temporary_schedules_ids, limit=-1)
+        for schedule in sql_instance.find_schedules(
+            schedule_ids=temporary_schedule_ids,
+            limit=-1,
+        )
     }
 
-    temporary_schedules = [schedule for schedule in temporary_schedules if schedule["id"] not in db_existings]
-
-    
+    temporary_schedules = [
+        schedule
+        for schedule in temporary_schedules
+        if schedule["id"] not in db_existings
+    ]
 
     saved_schedules = sql_instance.list_schedules(
-        limit=-1, 
-        date_from=date_from, 
-        date_to=date_to
-    ) # limit 없이 가져옴
+        limit=-1,
+        kind=kind,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
-    result = {}
+    result: dict[str, dict[str, Any]] = {}
     # 중복되는 경우 DB에 저장된 형태를 우선으로 사용
-    for schedule in temporary_schedules: 
+    for schedule in temporary_schedules:
         result[schedule["id"]] = schedule
 
-    for schedule in saved_schedules: 
+    for schedule in saved_schedules:
         result[schedule["schedule_id"]] = schedule
 
     return list(result.values())
+
+
+def _personal_schedules_for_current_scope(
+    date_from: str,
+    date_to: str,
+) -> list[dict[str, Any]]:
+    """현재 범위의 개인 일정만 반환합니다."""
+
+    return _schedules_for_current_scope(
+        date_from,
+        date_to,
+        kind="personal_schedule",
+    )
+
+
+def _group_schedules_for_current_scope(
+    date_from: str,
+    date_to: str,
+) -> list[dict[str, Any]]:
+    """현재 범위의 그룹 일정만 반환합니다."""
+
+    return _schedules_for_current_scope(
+        date_from,
+        date_to,
+        kind="group_schedule",
+    )
 
 
 def json_payload(payload: dict[str, Any]) -> str:
@@ -303,13 +342,14 @@ class CollectMemberSchedulesInput(BaseModel):
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
     """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
 
+    members = row.get("attendees") or row.get("members") or []
     return StructuredRequest(
-        kind="personal_schedule",
+        kind=_schedule_kind(row),
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
         end_time=row.get("end_time"),
-        members=row.get("attendees") or row.get("members") or [],
+        members=members,
         original_text=str(row.get("title") or ""),
     )
 
@@ -319,7 +359,7 @@ def _collect_member_schedules(
     member_names: list[str],
     date_from: str,
     date_to: str,
-    personal_schedules: list[dict[str, Any]],
+    busy_schedules: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
@@ -335,9 +375,9 @@ def _collect_member_schedules(
         "date_to" : date_to
     })
     external_rows = json.loads(res).get("rows", [])
-    normalized_personal_schedules =  [
+    normalized_busy_schedules =  [
         _structured_request_from_schedule_row(schedule)
-        for schedule in personal_schedules
+        for schedule in busy_schedules
         if schedule["date"] is not None and 
             schedule["date"] >= date_from and 
             schedule["date"] <= date_to
@@ -352,7 +392,7 @@ def _collect_member_schedules(
             "notes" : None,
             "source_conversation_id" : None
         } 
-        for schedule in normalized_personal_schedules
+        for schedule in normalized_busy_schedules
     ]
 
     rows = [*schedules, *external_rows]
@@ -539,7 +579,10 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
                     member_names=member_names,
                     date_from=date_from,
                     date_to=date_to,
-                    personal_schedules=_personal_schedules_for_current_scope(date_from, date_to)
+                    busy_schedules=[
+                        *_personal_schedules_for_current_scope(date_from, date_to),
+                        *_group_schedules_for_current_scope(date_from, date_to),
+                    ],
                 ), 
                 tool_name=_tool_name(collect_member_schedules)
         )
