@@ -13,6 +13,7 @@ import fixed.app_store as app_store_module
 import fixed.conversation_rag_store as conversation_rag_store_module
 import fixed.reference_store as reference_store_module
 from fixed.session_scope import conversation_session_scope
+from fixed.schedule_decision import busy_rows_overlap
 from student_parts.week02_structure_natural_language_requests import (
     WEEK02_ONLY_PROMPT_PARTS,
 )
@@ -101,7 +102,13 @@ class RecordingAppStore:
                 "date_to": date_to,
             }
         )
-        return self.rows
+        if kind is None:
+            return self.rows
+        return [
+            row
+            for row in self.rows
+            if row.get("request_kind", "personal_schedule") == kind
+        ]
 
     def find_schedules(
         self,
@@ -253,6 +260,61 @@ class TestInputSchemas:
 
 
 class TestPersonalSchedulesForCurrentScope:
+    def test_returns_only_personal_schedules_from_saved_and_temporary_sources(
+        self,
+        week05,
+        monkeypatch,
+    ):
+        """저장·임시 일정 모두에서 group schedule을 제외합니다."""
+
+        temporary_personal = {
+            "id": "temporary_personal",
+            "session_id": "conversation-current",
+            "title": "임시 개인 일정",
+            "attendees": [],
+        }
+        temporary_group = {
+            "id": "temporary_group",
+            "session_id": "conversation-current",
+            "title": "임시 그룹 일정",
+            "attendees": ["철수"],
+        }
+        saved_personal = {
+            "schedule_id": "saved_personal",
+            "request_kind": "personal_schedule",
+            "title": "저장 개인 일정",
+        }
+        saved_group = {
+            "schedule_id": "saved_group",
+            "request_kind": "group_schedule",
+            "title": "저장 그룹 일정",
+            "attendees": ["영희"],
+        }
+        store = RecordingAppStore([saved_personal, saved_group])
+        week05.PERSONAL_SCHEDULES.extend([temporary_personal, temporary_group])
+        monkeypatch.setattr(week05, "AppSQLiteStore", lambda _path: store)
+        monkeypatch.setattr(
+            week05,
+            "CONFIG",
+            SimpleNamespace(app_db_path="unused.sqlite3"),
+        )
+
+        with conversation_session_scope("conversation-current"):
+            rows = week05._personal_schedules_for_current_scope(
+                "2026-07-01",
+                "2026-07-31",
+            )
+
+        assert rows == [temporary_personal, saved_personal]
+        assert store.list_calls == [
+            {
+                "limit": -1,
+                "kind": "personal_schedule",
+                "date_from": "2026-07-01",
+                "date_to": "2026-07-31",
+            }
+        ]
+
     def test_merges_current_temporary_and_all_saved_schedules(
         self,
         week05,
@@ -293,7 +355,7 @@ class TestPersonalSchedulesForCurrentScope:
         assert store.list_calls == [
             {
                 "limit": -1,
-                "kind": None,
+                "kind": "personal_schedule",
                 "date_from": "2026-07-01",
                 "date_to": "2026-07-31",
             }
@@ -344,7 +406,7 @@ class TestPersonalSchedulesForCurrentScope:
         assert store.list_calls == [
             {
                 "limit": -1,
-                "kind": None,
+                "kind": "personal_schedule",
                 "date_from": "2026-07-01",
                 "date_to": "2026-07-31",
             }
@@ -428,6 +490,19 @@ class TestPersonalSchedulesForCurrentScope:
 
 
 class TestStructuredRequestFromScheduleRow:
+    def test_preserves_saved_group_schedule_kind(self, week05):
+        """저장된 그룹 일정을 내부 변환 과정에서 개인 일정으로 바꾸지 않습니다."""
+
+        request = week05._structured_request_from_schedule_row(
+            {
+                "request_kind": "group_schedule",
+                "title": "팀 회의",
+                "attendees": ["철수"],
+            }
+        )
+
+        assert request.kind == "group_schedule"
+
     @pytest.mark.parametrize(
         "row",
         [
@@ -436,12 +511,12 @@ class TestStructuredRequestFromScheduleRow:
         ],
     )
     def test_reads_members_from_attendees_or_members(self, week05, row):
-        """SQLite attendees와 임시 일정 members를 같은 members 필드로 읽습니다."""
+        """참석자가 있는 임시 row를 그룹 일정으로 읽습니다."""
 
         request = week05._structured_request_from_schedule_row(row)
 
         assert request.members == ["철수"]
-        assert request.kind == "personal_schedule"
+        assert request.kind == "group_schedule"
 
     def test_missing_members_becomes_empty_list(self, week05):
         """참여자 키가 모두 없으면 빈 리스트를 사용합니다."""
@@ -603,7 +678,7 @@ class TestCollectMemberSchedules:
         }
         caller = RecordingMcpCaller(json.dumps({"rows": [external_row]}, ensure_ascii=False))
         monkeypatch.setattr(week05, "call_mcp_tool_sync", caller)
-        personal_schedules = [
+        local_schedules = [
             {
                 "schedule_id": "personal_boundary",
                 "title": "경계 날짜 일정",
@@ -632,7 +707,7 @@ class TestCollectMemberSchedules:
             member_names=["철수", "나"],
             date_from="2026-07-07",
             date_to="2026-07-10",
-            personal_schedules=personal_schedules,
+            busy_schedules=local_schedules,
         )
 
         assert caller.calls == [
@@ -675,7 +750,7 @@ class TestCollectMemberSchedules:
             member_names=["나"],
             date_from="2026-07-01",
             date_to="2026-07-31",
-            personal_schedules=[],
+            busy_schedules=[],
         )
 
         assert result == {
@@ -703,7 +778,7 @@ class TestCollectMemberSchedules:
             member_names=["철수"],
             date_from="2026-07-01",
             date_to="2026-07-31",
-            personal_schedules=[personal],
+            busy_schedules=[personal],
         )
 
         assert [row["title"] for row in result["rows"]] == ["내 일정"]
@@ -723,25 +798,68 @@ class TestCollectMemberSchedules:
                 member_names=["철수"],
                 date_from="2026-07-01",
                 date_to="2026-07-31",
-                personal_schedules=[],
+                busy_schedules=[],
             )
 
 
 class TestCollectMemberSchedulesTool:
+    def test_saved_group_schedule_blocks_time_when_mcp_does_not_return_it(
+        self,
+        week05,
+        monkeypatch,
+    ):
+        """다른 멤버 조회에서 빠진 내 그룹 일정도 busy-time으로 사용합니다."""
+
+        saved_group = {
+            "schedule_id": "group_1",
+            "request_kind": "group_schedule",
+            "title": "철수·영희 회의",
+            "date": "2026-07-10",
+            "start_time": "14:00",
+            "end_time": "15:00",
+            "attendees": ["철수", "영희"],
+        }
+        store = RecordingAppStore([saved_group])
+        monkeypatch.setattr(week05, "AppSQLiteStore", lambda _path: store)
+        monkeypatch.setattr(
+            week05,
+            "CONFIG",
+            SimpleNamespace(app_db_path="unused.sqlite3"),
+        )
+        monkeypatch.setattr(
+            week05,
+            "call_mcp_tool_sync",
+            RecordingMcpCaller('{"rows": []}'),
+        )
+
+        raw = week05.collect_member_schedules.invoke(
+            {
+                "member_names": ["민준"],
+                "date_from": "2026-07-10",
+                "date_to": "2026-07-10",
+            }
+        )
+        rows = json.loads(raw)["rows"]
+
+        blockers = busy_rows_overlap(rows, "2026-07-10", 14 * 60, 15 * 60)
+        assert [row["title"] for row in blockers] == ["철수·영희 회의"]
+
     def test_injects_current_scope_rows_and_returns_json_contract(
         self,
         week05,
         monkeypatch,
     ):
-        """tool은 현재 scope 개인 일정을 helper에 넣고 JSON 계약으로 감쌉니다."""
+        """tool은 현재 scope 개인·그룹 일정을 helper에 넣고 JSON 계약으로 감쌉니다."""
 
         personal_rows = [{"schedule_id": "personal_1"}]
+        group_rows = [{"schedule_id": "group_1"}]
         helper_result = {
             "rows": [{"member_name": "나", "title": "내 일정"}],
             "schedule_summary": "- 나 | 내 일정",
         }
         calls: list[dict[str, Any]] = []
         personal_schedule_calls: list[tuple[str, str]] = []
+        group_schedule_calls: list[tuple[str, str]] = []
         date_bound_calls: list[dict[str, Any]] = []
 
         def fake_normalize_date_bounds(**arguments: Any) -> tuple[str, str]:
@@ -752,6 +870,10 @@ class TestCollectMemberSchedulesTool:
             personal_schedule_calls.append((date_from, date_to))
             return personal_rows
 
+        def fake_group_schedules(date_from: str, date_to: str) -> list[dict[str, Any]]:
+            group_schedule_calls.append((date_from, date_to))
+            return group_rows
+
         monkeypatch.setattr(
             week05,
             "normalize_external_schedule_date_bounds",
@@ -761,6 +883,11 @@ class TestCollectMemberSchedulesTool:
             week05,
             "_personal_schedules_for_current_scope",
             fake_personal_schedules,
+        )
+        monkeypatch.setattr(
+            week05,
+            "_group_schedules_for_current_scope",
+            fake_group_schedules,
         )
 
         def fake_collect(**arguments: Any) -> dict[str, Any]:
@@ -785,12 +912,13 @@ class TestCollectMemberSchedulesTool:
             }
         ]
         assert personal_schedule_calls == [("2026-07-01", "2026-07-31")]
+        assert group_schedule_calls == [("2026-07-01", "2026-07-31")]
         assert calls == [
             {
                 "member_names": ["철수"],
                 "date_from": "2026-07-01",
                 "date_to": "2026-07-31",
-                "personal_schedules": personal_rows,
+                "busy_schedules": [*personal_rows, *group_rows],
             }
         ]
         assert isinstance(raw, str)
