@@ -201,7 +201,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
-    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules()
+    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
     saved_ids = {row.get("schedule_id") for row in saved_schedules}
     temp_schedules = [
         row for row in PERSONAL_SCHEDULES
@@ -299,18 +299,31 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    external_rows = call_mcp_tool_sync("extract_schedules_from_history", {
-        "member_names": member_names,
-        "date_from": date_from,
-        "date_to": date_to
-    })
-    external_rows = json.loads(external_rows).get("rows", [])
+    member_names = normalize_external_member_names(member_names)
+    date_from, date_to = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
 
+    # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
+    if member_names:
+        external_rows = call_mcp_tool_sync("extract_schedules_from_history", {
+            "member_names": member_names,
+            "date_from": date_from,
+            "date_to": date_to
+        })
+        external_rows = json.loads(external_rows).get("rows", [])
+    else:
+        external_rows = []
     # Combine personal schedules and external rows
     personal_rows = []
     for row in personal_schedules:
         structured = _structured_request_from_schedule_row(row)
+        schedule_date = structured.date
+        if not schedule_date:
+            continue
+        if date_from and schedule_date < date_from:
+            continue
+        if date_to and schedule_date > date_to:
+            continue
+
         personal_rows.append(
             {
                 "member_name": "나",
@@ -324,7 +337,7 @@ def _collect_member_schedules(
     result = personal_rows + external_rows
     return {
         "rows": result,
-        "schedule_summary": external_schedule_summary(external_rows),
+        "schedule_summary": external_schedule_summary(result),
     }
 
 
