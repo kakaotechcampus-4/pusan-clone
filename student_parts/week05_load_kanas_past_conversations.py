@@ -302,9 +302,7 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
     # date 유무로 분리
-    undated_schedules = [
-        _to_row(s) for s in personal_schedules if s.get("date") is None
-    ]
+
     rows = [
         _to_row(s)
         for s in personal_schedules
@@ -319,14 +317,14 @@ def _collect_member_schedules(
             "date_to": date_to,
         },
     )
-
-    rows = [*rows, *members_schedule.get("rows", [])]
+    schedule_row = json.loads(members_schedule)
+    
+    rows = [*rows, *schedule_row.get("rows", [])]
     summary = external_schedule_summary(rows)
 
     return {
         "rows": rows,
-        "schedule_summary": summary,
-        "undated_schedules": undated_schedules,
+        "schedule_summary": summary
     }
         
     
