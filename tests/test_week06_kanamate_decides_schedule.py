@@ -236,6 +236,8 @@ class PromptContractTest(Week06IsolatedTestCase):
         self.assertIn("대체된다", delegation)
         # 하위 agent는 query 하나만 받으므로 맥락을 넣으라는 지시가 없으면 지시대명사가 깨진다.
         self.assertIn("query에 사용자 요청 원문과 필요한 이전 맥락", delegation)
+        # 병렬 위임이면 trace가 마지막 하나만 기록하고 조율→저장 순서 의존도 깨진다.
+        self.assertIn("한 번에 함께 호출하지 않는다", delegation)
 
     def test_supervisor_prompt_differs_from_week05_prompt(self) -> None:
         self.assertNotEqual(week06.supervisor_system_prompt(), week05.week05_system_prompt())
@@ -247,6 +249,8 @@ class PromptContractTest(Week06IsolatedTestCase):
             self.assertIn(part.strip(), prompt)
         self.assertTrue(prompt.rstrip().endswith(week06.WEEK06_NANA_ROLE_PROMPT.strip()))
         self.assertIn("Kana 담당", week06.WEEK06_NANA_ROLE_PROMPT)
+        # 가이드 검증 방법이 개인 일정 조회에서 이 도구 호출을 기대한다.
+        self.assertIn("personal_list_saved_schedules", week06.WEEK06_NANA_ROLE_PROMPT)
 
     def test_kana_prompt_accumulates_nothing_but_keeps_the_rules_it_would_lose(self) -> None:
         parts = week06.kana_prompt_parts()
@@ -265,7 +269,7 @@ class PromptContractTest(Week06IsolatedTestCase):
 
         self.assertIn("짧은 핵심 명사", prompt)
         self.assertIn("conversation_id를 추측하거나 새로 만들지 않는다", prompt)
-        self.assertIn("병행 호출하지 않는다", prompt)
+        self.assertIn("둘 중 하나만 고른다", prompt)
         self.assertIn("무인자", prompt)
         self.assertIn("재검색", prompt)
 
@@ -273,6 +277,9 @@ class PromptContractTest(Week06IsolatedTestCase):
         prompt = week06.kana_system_prompt()
 
         # 문구가 바뀌어도 깨지지 않게 도구 이름과 연쇄 의무만 고정한다.
+        # 가이드 검증 방법이 기대하는 조율 연쇄 순서다.
+        self.assertIn("search_previous_conversations", prompt)
+        self.assertIn("collect_member_schedules", prompt)
         self.assertIn("find_common_available_slots", prompt)
         self.assertIn("decide_final_slot", prompt)
         self.assertIn("조회만 하고 답을 끝내지 않는다", prompt)
@@ -901,20 +908,59 @@ class KanaFinalSlotLiftTest(Week06IsolatedTestCase):
 
         self.assertEqual(payload["final_slot_payload"], DECISION_PAYLOAD)
 
-    def test_missing_decision_names_the_reason(self) -> None:
-        stopped_after_find = self._run_kana(
+    def test_skipped_decision_is_recorded_by_code_without_picking_a_time(self) -> None:
+        validated = {
+            "ok": True,
+            "tool_name": "find_common_available_slots",
+            "members": ["나", "민준"],
+            "date_from": "2026-08-12",
+            "date_to": "2026-08-12",
+            "busy_rows": [MY_BUSY_ROW],
+            "candidate_slots": [candidate("11:00", "12:00")],
+        }
+
+        payload = self._run_kana(
             [
                 fake_ai_message([{"name": "find_common_available_slots", "args": {}, "id": "call-1"}]),
-                fake_tool_message("find_common_available_slots", {"ok": True, "candidate_slots": []}),
+                fake_tool_message("find_common_available_slots", validated),
                 fake_ai_message(content="후보만 확인했습니다"),
             ]
         )
+        recorded = payload["final_slot_payload"]
+
+        # 연쇄를 prompt로만 강제하면 모델이 결정 호출을 건너뛴다. 기록은 코드가 보장한다.
+        self.assertIsNotNone(recorded)
+        self.assertEqual(recorded["recorded_by"], "kana_agent")
+        # 시간은 고르지 않는다. 미확정 사실과 근거만 남긴다.
+        self.assertIsNone(recorded["final_slot"])
+        self.assertTrue(recorded["needs_agent_selection"])
+        self.assertEqual(recorded["candidates"], ["2026-08-12 11:00-12:00"])
+        self.assertEqual(recorded["members"], ["나", "민준"])
+        self.assertEqual(recorded["busy_rows"], [MY_BUSY_ROW])
+        self.assertNotIn("final_slot_missing_reason", payload)
+
+    def test_missing_decision_names_the_reason_when_nothing_was_validated(self) -> None:
         never_started = self._run_kana([fake_ai_message(content="조율 요청이 아닙니다")])
 
-        self.assertIsNone(stopped_after_find["final_slot_payload"])
-        self.assertIn("후보 검증까지만", stopped_after_find["final_slot_missing_reason"])
         self.assertIsNone(never_started["final_slot_payload"])
         self.assertIn("decide_final_slot을 호출하지 않아", never_started["final_slot_missing_reason"])
+
+    def test_agent_own_decision_wins_over_the_code_record(self) -> None:
+        payload = self._run_kana(
+            [
+                fake_ai_message([{"name": "find_common_available_slots", "args": {}, "id": "call-1"}]),
+                fake_tool_message(
+                    "find_common_available_slots",
+                    {"ok": True, "tool_name": "find_common_available_slots", "candidate_slots": []},
+                ),
+                fake_ai_message([{"name": "decide_final_slot", "args": {}, "id": "call-2"}]),
+                fake_tool_message("decide_final_slot", DECISION_PAYLOAD, call_id="call-2"),
+                fake_ai_message(content="확정했습니다"),
+            ]
+        )
+
+        self.assertEqual(payload["final_slot_payload"], DECISION_PAYLOAD)
+        self.assertNotIn("recorded_by", payload["final_slot_payload"])
 
     def test_kana_payload_never_exposes_a_top_level_final_slot(self) -> None:
         payload = self._run_kana(
@@ -1119,6 +1165,8 @@ class Week06LiveLLMTest(unittest.TestCase):
         trace = self._run_supervisor("이번 주에 저장된 내 개인 일정만 알려줘")
 
         self.assertEqual(trace["supervisor_selected_agent"], "nana_agent")
+        # 가이드 검증 방법이 개인 일정 조회에서 이 도구 호출을 기대한다.
+        self.assertIn("personal_list_saved_schedules", trace["inner_tool_names"])
         self.assertNotIn("collect_member_schedules", trace["inner_tool_names"])
 
     def test_group_coordination_request_is_delegated_to_kana(self) -> None:
@@ -1154,13 +1202,17 @@ class Week06LiveLLMTest(unittest.TestCase):
         )
         inner = trace["inner_tool_names"]
 
+        # 가이드 검증 방법이 기대하는 연쇄다. 순서는 모델이 정하므로 등장 순서만 본다.
+        self.assertIn("search_previous_conversations", inner)
         self.assertIn("collect_member_schedules", inner)
         self.assertIn("find_common_available_slots", inner)
-        self.assertIn("decide_final_slot", inner)
-        self.assertLess(inner.index("find_common_available_slots"), inner.index("decide_final_slot"))
+        self.assertLess(inner.index("collect_member_schedules"), inner.index("find_common_available_slots"))
+        # collect_member_schedules가 내 일정까지 반환하므로 함께 부르면 중복 조회다.
+        self.assertNotIn("extract_schedules_from_history", inner)
+        # 결정 기록은 모델이 decide_final_slot을 건너뛰어도 코드가 보장한다.
         self.assertIsNotNone(trace["final_slot_payload"])
         self.assertLessEqual(
-            {"final_slot", "reason", "candidates"},
+            {"final_slot", "reason", "candidates", "needs_agent_selection"},
             trace["final_slot_payload"].keys(),
         )
 

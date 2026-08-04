@@ -208,6 +208,7 @@ Week 1~5의 "네가 직접 도구를 호출한다"는 지시는 Week 6에서 다
   내 일정, 메모, 지난 대화만 다루면 nana_agent다.
 - "시간 정하고 내 일정에도 저장해줘"처럼 두 역할이 섞이면 kana_agent로 조율을 먼저 위임하고,
   확정된 시간을 nana_agent에 넘겨 저장한다.
+- 두 agent가 모두 필요해도 한 번에 함께 호출하지 않는다. 앞 결과를 받은 뒤 다음 agent를 호출한다.
 - 하위 agent가 자기 담당이 아니라고 답하면 같은 요청을 다시 보내지 말고 다른 agent에 위임한다.
 - 하위 agent는 이 대화 history를 볼 수 없다. query에 사용자 요청 원문과 필요한 이전 맥락을 함께 넣는다.
 """
@@ -221,6 +222,8 @@ WEEK06_NANA_ROLE_PROMPT = """
 
 - 담당: 내 개인 일정 생성·조회·수정·삭제, 할 일과 알림 저장, 개인 참고자료와 앱 대화 검색.
   supervisor가 확정된 시간을 넘겨 저장을 요청하면 개인 일정 저장 도구로 처리한다.
+- 저장된 내 일정을 조회할 때는 personal_list_saved_schedules를 먼저 쓴다.
+  search_saved_requests는 제목 키워드로 찾을 때만 쓴다. 날짜 범위 조회를 키워드 검색으로 대신하지 않는다.
 - 비담당: 외부 멤버의 과거 대화 검색, 멤버별 바쁜 시간 수집, 공통 가능 시간과 최종 회의 시간 결정.
   이 도구들은 갖고 있지 않으므로 그런 요청은 한 문장으로 Kana 담당이라고만 답하고
   다른 도구로 대신 처리하지 않는다.
@@ -292,21 +295,28 @@ supervisor에게 그룹 조율 업무를 위임받아 실행하고 결과를 sup
 
 # 도구 호출 순서
 1. extract_schedule_request: 자연어 요청에서 날짜, 시간, 멤버를 구조화해야 할 때 먼저 호출한다.
-2. search_previous_conversations: 외부 멤버의 과거 대화에서 일정 단서를 찾을 때 사용한다.
-   query에는 사용자 문장 전체가 아니라 짧은 핵심 명사나 구를 넣는다.
+2. search_previous_conversations: 조율 대상 멤버가 정해지면 바쁜 시간을 모으기 전에 먼저 호출해
+   과거 대화의 일정 단서를 확인한다. query에는 사용자 문장 전체가 아니라 짧은 핵심 명사나 구를 넣는다.
 3. load_conversation_messages: search_previous_conversations가 돌려준 실제 conversation_id가
    있을 때만 사용한다. conversation_id를 추측하거나 새로 만들지 않는다.
 4. collect_member_schedules: 내 일정과 외부 멤버 바쁜 시간을 같은 rows로 모을 때 사용한다.
    내 일정은 member_names에 "나"가 없어도 포함된다.
-5. extract_schedules_from_history: 내 일정이 필요 없을 때만 고른다.
-   같은 멤버와 같은 날짜 범위로 collect_member_schedules와 병행 호출하지 않는다.
+5. extract_schedules_from_history: collect_member_schedules 대신 쓰는 선택지다. 둘 중 하나만 고른다.
+   내 일정이 필요 없다고 명시한 요청에서만 이것을 쓰고, 그 밖에는 호출하지 않는다.
+   collect_member_schedules가 내 일정과 외부 멤버 일정을 이미 함께 반환한다.
 6. list_shared_schedules: 공유 저장소 등록 row, schedule_id, 기록된 날짜 범위를 확인할 때 사용한다.
    이 결과는 범위 확인용 probe이므로 이것만으로 답을 끝내지 않는다.
-7. 시간을 맞추거나 정하는 요청이면 멤버와 기간이 이미 주어져 있어도 반드시
-   collect_member_schedules로 바쁜 시간을 모은 뒤 find_common_available_slots와
-   decide_final_slot까지 이어서 호출한다. 조회만 하고 답을 끝내지 않는다.
+
+# 조율 요청의 호출 연쇄
+- 시간을 맞추거나 정하는 요청이면 멤버와 기간이 이미 주어져 있어도
+  search_previous_conversations → collect_member_schedules → find_common_available_slots
+  → decide_final_slot 네 개를 이 순서로 호출한다. 조회만 하고 답을 끝내지 않는다.
+- decide_final_slot은 예외 없이 마지막에 호출한다. 통과한 후보가 0건이어도 호출해서
+  final_slot=null과 이유를 기록한다. 호출하지 않고 답을 끝내면 결정 근거가 남지 않는다.
+- 이 연쇄에서 extract_schedules_from_history는 호출하지 않는다. collect_member_schedules와 중복이다.
 
 # 멤버나 기간이 빠진 요청
+- 이 절은 멤버 이름이나 기간이 요청에 없을 때만 적용한다. 둘 다 주어졌으면 곧바로 위 연쇄를 실행한다.
 - 기간이 명시되지 않은 요청을 오늘부터의 범위로 임의 보정하지 않는다.
 - "팀원들 시간 맞춰줘"처럼 멤버 이름이나 기간이 빠졌으면 되묻기 전에 무인자
   list_shared_schedules()를 첫 도구로 호출한다.
@@ -770,6 +780,41 @@ def _final_slot_payload_from_events(events: list[dict[str, Any]]) -> dict[str, A
     return found
 
 
+def _validated_slots_from_events(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Kana 하위 trace에서 마지막 후보 검증 결과를 찾습니다."""
+
+    found: dict[str, Any] | None = None
+    for event in events:
+        content = event.get("content")
+        if isinstance(content, dict) and content.get("tool_name") == "find_common_available_slots":
+            found = content
+    return found
+
+
+def _recorded_final_slot_payload(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """후보 검증까지 갔는데 결정 호출이 없으면 미확정 사실을 코드가 대신 기록합니다."""
+
+    validated = _validated_slots_from_events(events)
+    if validated is None:
+        return None
+    # 시간은 고르지 않는다. 결정 근거가 아예 사라지는 것만 막는다.
+    return {
+        "ok": True,
+        "tool_name": "decide_final_slot",
+        "recorded_by": "kana_agent",
+        "candidate_slots_received": len(validated.get("candidate_slots") or []),
+        **decide_final_slot_payload(
+            candidate_slots=validated.get("candidate_slots"),
+            member_names=validated.get("members"),
+            date_from=validated.get("date_from"),
+            date_to=validated.get("date_to"),
+            busy_rows=validated.get("busy_rows"),
+            needs_agent_selection=True,
+            reason="Kana가 후보 검증 뒤 최종 시간을 고르지 않아 미확정으로 기록했습니다.",
+        ),
+    }
+
+
 def _final_decision_payload_from_events(events: list[dict[str, Any]]) -> dict[str, Any] | None:
     """호환용 propose_group_schedule이 남긴 final_decision payload를 찾습니다."""
 
@@ -855,7 +900,8 @@ def kana_agent(query: str) -> str:
 
     events = extract_agent_events(result)
     inner_tool_names = _tool_call_names(events)
-    final_slot_payload = _final_slot_payload_from_events(events)
+    # 연쇄를 prompt로만 강제하면 모델이 결정 호출을 건너뛰므로 기록 자체는 코드가 보장한다.
+    final_slot_payload = _final_slot_payload_from_events(events) or _recorded_final_slot_payload(events)
     payload: dict[str, Any] = {
         "ok": True,
         "tool_name": "kana_agent",
