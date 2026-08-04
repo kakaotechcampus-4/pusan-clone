@@ -411,15 +411,20 @@ validation_note가 비어 있지 않으면 그 내용을 최종 답변에 함께
 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출해 최종 시간을 확정한다."""
 
 
-DECIDE_FINAL_SLOT_DESCRIPTION = (
-    # TODO: decide_final_slot tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 최종 시간을 자동 선택하지 않는다는 점을 분명히 알려야 합니다.
-    #     agent가 selected_index 또는 selected_slot과 final_slot을 직접 골라 넘기게 만듭니다.
-    #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
-    #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
-    #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
-)
+# 최종 선택 주체가 agent라는 계약을 매 호출 근거로 남긴다.
+DECIDE_FINAL_SLOT_DESCRIPTION = """agent가 직접 고른 최종 회의 시간을 앱 계약 payload로 기록합니다.
+
+이 tool은 후보 중에서 최종 시간을 고르지 않는다. 선택은 agent가 한다.
+find_common_available_slots가 검증한 candidate_slots를 그대로 넘기고, 그 중 하나를
+selected_index(0부터 시작하며 지금 넘긴 candidate_slots를 가리켜야 한다) 또는 selected_slot으로 지정한다.
+final_slot은 'YYYY-MM-DD HH:MM-HH:MM' 형식 한 줄로 적고 needs_agent_selection은 false로 둔다.
+아직 고를 수 없으면 final_slot은 null, needs_agent_selection은 true로 두고 reason에 무엇이 부족한지 적는다.
+임의의 시간을 지어내지 않는다.
+final_slot과 범위를 벗어난 selected_index를 함께 넘기면 잘못된 번호가 조용히 무시되므로,
+selected_index는 반드시 넘긴 candidate_slots의 실제 번호로 맞춘다.
+검증을 통과한 후보를 확보하지 않은 상태로 호출하지 않는다. 후보 없이 호출하면 결과가 '가능 시간 없음'으로 기록된다.
+reason에는 사용자에게 보여줄 선택 근거를 한 문장으로 적는다.
+근거를 남기기 위해 candidate_slots, busy_rows, member_names, date_from, date_to도 함께 넘긴다."""
 
 
 class FindCommonAvailableSlotsInput(BaseModel):
@@ -668,10 +673,29 @@ def decide_final_slot(
 ) -> str:
     """LLM이 직접 고른 후보/최종 시간을 course repo payload로 기록합니다."""
 
-    # TODO: Kana agent가 고른 최종 시간 정보를 course repo JSON 계약에 맞춰 기록하세요.
-    #   - 직접 최종 시간을 고르지 말고 받은 인자를 그대로 decide_final_slot_payload(...)에 넘깁니다.
-    #   - 결과를 JSON 문자열로 반환합니다.
-    ...
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "decide_final_slot",
+            # 모든 인자에 default가 있어 무인자 호출도 "가능 시간 없음"으로 단정되므로 받은 후보 수를 남긴다.
+            "candidate_slots_received": len(candidate_slots or []),
+            # fixed payload를 마지막에 펼쳐 top-level final_slot/reason/candidates가 덮이지 않게 한다.
+            **decide_final_slot_payload(
+                candidate_slots=candidate_slots,
+                selected_slot=selected_slot,
+                selected_index=selected_index,
+                member_names=member_names,
+                date_from=date_from,
+                date_to=date_to,
+                duration_minutes=duration_minutes,
+                final_slot=final_slot,
+                needs_agent_selection=needs_agent_selection,
+                reason=reason,
+                busy_rows=busy_rows,
+            ),
+        },
+        ensure_ascii=False,
+    )
 
 
 def kana_tools() -> list[Any]:
