@@ -30,7 +30,8 @@ class _Week03StoreTestCase(unittest.TestCase):
     """각 테스트가 독립된 SQLite와 외부 동기화 mock을 쓰게 하는 공통 fixture입니다."""
 
     def setUp(self) -> None:
-        self.temp_dir = TemporaryDirectory()
+        # SQLite 연결이 호출마다 새로 열리고 닫히지 않아 Windows에서 임시 파일 삭제가 거부됩니다.
+        self.temp_dir = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp_dir.cleanup)
         self.db_path = Path(self.temp_dir.name) / "week03-test.sqlite3"
         self.store = AppSQLiteStore(self.db_path)
