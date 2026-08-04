@@ -759,5 +759,297 @@ class DecideFinalSlotTest(Week06IsolatedTestCase):
         self.assertNotIn("duration_minutes", payload)
 
 
+DECISION_PAYLOAD = {
+    "ok": True,
+    "tool_name": "decide_final_slot",
+    "final_slot": "2026-08-12 11:00-12:00",
+    "reason": "민준과 내 일정이 모두 비어 있다",
+    "candidates": ["2026-08-12 11:00-12:00"],
+    "needs_agent_selection": False,
+}
+
+
+class SubAgentDelegationTest(Week06IsolatedTestCase):
+    """위임 wrapper가 하위 실행 결과를 supervisor가 읽을 payload로 바꾸는지 확인합니다."""
+
+    def test_nana_agent_returns_answer_trace_and_inner_tool_names(self) -> None:
+        messages = [
+            fake_ai_message([{"name": "personal_list_saved_schedules", "args": {}, "id": "call-1"}]),
+            fake_tool_message("personal_list_saved_schedules", {"ok": True, "rows": []}),
+            fake_ai_message(content="8월 12일에 팀 회의가 있습니다"),
+        ]
+        subagent = fake_subagent(messages)
+
+        with patch.object(week06, "create_agent", return_value=subagent) as created:
+            payload = invoke_json(week06.nana_agent, {"query": "이번 주 내 일정 알려줘"})
+
+        self.assertEqual(
+            set(payload),
+            {"ok", "tool_name", "selected_agent", "answer", "trace", "inner_tool_names"},
+        )
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["selected_agent"], "nana_agent")
+        self.assertEqual(payload["answer"], "8월 12일에 팀 회의가 있습니다")
+        self.assertEqual(payload["inner_tool_names"], ["personal_list_saved_schedules"])
+        self.assertEqual(payload["trace"]["events"], extract_agent_events({"messages": messages}))
+        self.assertEqual(created.call_args.kwargs["tools"], week04.week04_tools())
+        self.assertEqual(created.call_args.kwargs["system_prompt"], week06.nana_system_prompt())
+        self.assertIs(created.call_args.kwargs["model"], self.chat_model_sentinel)
+
+    def test_sub_agent_query_is_passed_through_unchanged(self) -> None:
+        subagent = fake_subagent([fake_ai_message(content="ok")])
+
+        with patch.object(week06, "create_agent", return_value=subagent):
+            week06.nana_agent.invoke({"query": "8월 12일 3시에 회의 잡아줘"})
+
+        self.assertEqual(
+            subagent.invoke.call_args.args[0],
+            {"messages": [{"role": "user", "content": "8월 12일 3시에 회의 잡아줘"}]},
+        )
+
+    def test_each_sub_agent_is_built_once_and_reused(self) -> None:
+        for delegate, cache_name in ((week06.nana_agent, "_NANA_SUBAGENT"), (week06.kana_agent, "_KANA_SUBAGENT")):
+            with self.subTest(delegate=delegate.name):
+                self._reset_cached_agents()
+                subagent = fake_subagent([fake_ai_message(content="ok")])
+                with patch.object(week06, "create_agent", return_value=subagent) as created:
+                    delegate.invoke({"query": "첫 요청"})
+                    delegate.invoke({"query": "두 번째 요청"})
+
+                # prompt 조립과 tool 바인딩이 위임마다 반복되면 안 된다.
+                self.assertEqual(created.call_count, 1)
+                self.assertEqual(subagent.invoke.call_count, 2)
+                self.assertIsNotNone(getattr(week06, cache_name))
+
+    def test_kana_agent_is_built_with_kana_tools_and_prompt(self) -> None:
+        subagent = fake_subagent([fake_ai_message(content="ok")])
+
+        with patch.object(week06, "create_agent", return_value=subagent) as created:
+            week06.kana_agent.invoke({"query": "민준이랑 시간 맞춰줘"})
+
+        self.assertEqual(created.call_args.kwargs["tools"], week06.kana_tools())
+        self.assertEqual(created.call_args.kwargs["system_prompt"], week06.kana_system_prompt())
+
+    def test_sub_agent_failure_becomes_a_readable_payload(self) -> None:
+        exploding = SimpleNamespace(invoke=Mock(side_effect=RuntimeError("proxy 응답 없음")))
+
+        with patch.object(week06, "create_agent", return_value=exploding):
+            payload = invoke_json(week06.kana_agent, {"query": "민준이랑 시간 맞춰줘"})
+
+        # 예외를 그대로 올리면 tool 결과가 문자열이 되고 supervisor가 근거 없이 답할 수 있다.
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error_type"], "RuntimeError")
+        self.assertEqual(payload["error"], "proxy 응답 없음")
+        self.assertEqual(payload["inner_tool_names"], [])
+        self.assertEqual(payload["trace"]["events"], [])
+
+
+class KanaFinalSlotLiftTest(Week06IsolatedTestCase):
+    """Kana 하위 trace에서 최종 결정 payload를 끌어올리는 규칙을 확인합니다."""
+
+    def _run_kana(self, messages: list[Any]) -> dict[str, Any]:
+        # 하위 agent가 전역에 캐시되므로 한 테스트에서 두 번 실행하려면 매번 비워야 한다.
+        self._reset_cached_agents()
+        with patch.object(week06, "create_agent", return_value=fake_subagent(messages)):
+            return invoke_json(week06.kana_agent, {"query": "민준이랑 이번 주 시간 맞춰줘"})
+
+    def test_decided_payload_is_lifted_into_final_slot_payload(self) -> None:
+        payload = self._run_kana(
+            [
+                fake_ai_message([{"name": "decide_final_slot", "args": {}, "id": "call-1"}]),
+                fake_tool_message("decide_final_slot", DECISION_PAYLOAD),
+                fake_ai_message(content="8월 12일 11시로 정했습니다"),
+            ]
+        )
+
+        self.assertEqual(payload["final_slot_payload"], DECISION_PAYLOAD)
+        self.assertNotIn("final_slot_missing_reason", payload)
+
+    def test_undecided_payload_is_preserved_instead_of_dropped(self) -> None:
+        undecided = {**DECISION_PAYLOAD, "final_slot": None, "needs_agent_selection": True}
+
+        payload = self._run_kana(
+            [
+                fake_ai_message([{"name": "decide_final_slot", "args": {}, "id": "call-1"}]),
+                fake_tool_message("decide_final_slot", undecided),
+                fake_ai_message(content="아직 확정하지 못했습니다"),
+            ]
+        )
+
+        # final_slot의 참/거짓으로 판별하면 미확정 상태가 통째로 사라진다.
+        self.assertEqual(payload["final_slot_payload"], undecided)
+        self.assertNotIn("final_slot_missing_reason", payload)
+
+    def test_last_decision_wins_when_the_agent_reselects(self) -> None:
+        first = {**DECISION_PAYLOAD, "final_slot": None, "needs_agent_selection": True}
+
+        payload = self._run_kana(
+            [
+                fake_ai_message([{"name": "decide_final_slot", "args": {}, "id": "call-1"}]),
+                fake_tool_message("decide_final_slot", first, call_id="call-1"),
+                fake_ai_message([{"name": "decide_final_slot", "args": {}, "id": "call-2"}]),
+                fake_tool_message("decide_final_slot", DECISION_PAYLOAD, call_id="call-2"),
+                fake_ai_message(content="다시 골라 확정했습니다"),
+            ]
+        )
+
+        self.assertEqual(payload["final_slot_payload"], DECISION_PAYLOAD)
+
+    def test_missing_decision_names_the_reason(self) -> None:
+        stopped_after_find = self._run_kana(
+            [
+                fake_ai_message([{"name": "find_common_available_slots", "args": {}, "id": "call-1"}]),
+                fake_tool_message("find_common_available_slots", {"ok": True, "candidate_slots": []}),
+                fake_ai_message(content="후보만 확인했습니다"),
+            ]
+        )
+        never_started = self._run_kana([fake_ai_message(content="조율 요청이 아닙니다")])
+
+        self.assertIsNone(stopped_after_find["final_slot_payload"])
+        self.assertIn("후보 검증까지만", stopped_after_find["final_slot_missing_reason"])
+        self.assertIsNone(never_started["final_slot_payload"])
+        self.assertIn("decide_final_slot을 호출하지 않아", never_started["final_slot_missing_reason"])
+
+    def test_kana_payload_never_exposes_a_top_level_final_slot(self) -> None:
+        payload = self._run_kana(
+            [
+                fake_ai_message([{"name": "decide_final_slot", "args": {}, "id": "call-1"}]),
+                fake_tool_message("decide_final_slot", DECISION_PAYLOAD),
+                fake_ai_message(content="확정했습니다"),
+            ]
+        )
+
+        # extract_langchain_trace가 top-level final_slot을 보면 wrapper payload 전체를 결정으로 오인한다.
+        self.assertNotIn("final_slot", payload)
+        self.assertNotIn("candidates", payload)
+        self.assertNotIn("needs_agent_selection", payload)
+
+    def test_compatibility_final_decision_is_lifted_when_present(self) -> None:
+        decision = {"title": "사전 미팅", "status": "confirmed", "selected_slot": candidate("11:00", "12:00")}
+
+        payload = self._run_kana(
+            [
+                fake_ai_message([{"name": "propose_group_schedule", "args": {}, "id": "call-1"}]),
+                fake_tool_message(
+                    "propose_group_schedule",
+                    {"ok": True, "tool_name": "propose_group_schedule", "final_decision": decision},
+                ),
+                fake_ai_message(content="제안했습니다"),
+            ]
+        )
+
+        self.assertEqual(payload["final_decision_payload"], decision)
+
+    def test_final_decision_is_none_on_the_real_path(self) -> None:
+        # propose_group_schedule이 kana_tools()에 없으므로 실전 경로에서는 항상 None이다.
+        self.assertNotIn("propose_group_schedule", week06.agent_tool_names("kana_agent"))
+
+        payload = self._run_kana(
+            [
+                fake_ai_message([{"name": "decide_final_slot", "args": {}, "id": "call-1"}]),
+                fake_tool_message("decide_final_slot", DECISION_PAYLOAD),
+                fake_ai_message(content="확정했습니다"),
+            ]
+        )
+
+        self.assertIsNone(payload["final_decision_payload"])
+
+
+class SupervisorTraceContractTest(Week06IsolatedTestCase):
+    """하위 agent JSON 키와 supervisor trace가 읽는 키가 맞물리는지 확인합니다."""
+
+    def _supervisor_result(self, delegate_name: str, delegate_payload: str) -> dict[str, Any]:
+        return {
+            "messages": [
+                fake_ai_message([{"name": delegate_name, "args": {"query": "질문"}, "id": "call-1"}]),
+                fake_tool_message(delegate_name, delegate_payload),
+                fake_ai_message(content="최종 답변"),
+            ]
+        }
+
+    def test_kana_keys_line_up_with_the_supervisor_trace_extractor(self) -> None:
+        messages = [
+            fake_ai_message([{"name": "collect_member_schedules", "args": {}, "id": "inner-1"}]),
+            fake_tool_message("collect_member_schedules", {"ok": True, "rows": []}, call_id="inner-1"),
+            fake_ai_message([{"name": "decide_final_slot", "args": {}, "id": "inner-2"}]),
+            fake_tool_message("decide_final_slot", DECISION_PAYLOAD, call_id="inner-2"),
+            fake_ai_message(content="확정했습니다"),
+        ]
+        with patch.object(week06, "create_agent", return_value=fake_subagent(messages)):
+            delegate_payload = week06.kana_agent.invoke({"query": "민준이랑 시간 맞춰줘"})
+
+        trace = week06.extract_langchain_trace(self._supervisor_result("kana_agent", delegate_payload))
+
+        # 키 이름이 어긋나도 예외 없이 조용히 None이 되는 유일한 경로라 종단으로 고정한다.
+        self.assertEqual(trace["supervisor_selected_agent"], "kana_agent")
+        self.assertEqual(trace["inner_tool_names"], ["collect_member_schedules", "decide_final_slot"])
+        self.assertEqual(trace["final_slot_payload"], DECISION_PAYLOAD)
+        self.assertIsNone(trace["final_decision_payload"])
+
+    def test_nana_keys_line_up_with_the_supervisor_trace_extractor(self) -> None:
+        messages = [
+            fake_ai_message([{"name": "personal_list_saved_schedules", "args": {}, "id": "inner-1"}]),
+            fake_tool_message("personal_list_saved_schedules", {"ok": True, "rows": []}, call_id="inner-1"),
+            fake_ai_message(content="일정을 확인했습니다"),
+        ]
+        with patch.object(week06, "create_agent", return_value=fake_subagent(messages)):
+            delegate_payload = week06.nana_agent.invoke({"query": "내 일정 알려줘"})
+
+        trace = week06.extract_langchain_trace(self._supervisor_result("nana_agent", delegate_payload))
+
+        self.assertEqual(trace["supervisor_selected_agent"], "nana_agent")
+        self.assertEqual(trace["inner_tool_names"], ["personal_list_saved_schedules"])
+        self.assertIsNone(trace["final_slot_payload"])
+
+    def test_undecided_kana_result_does_not_reach_the_ui_as_confirmed(self) -> None:
+        undecided = {**DECISION_PAYLOAD, "final_slot": None, "needs_agent_selection": True}
+        messages = [
+            fake_ai_message([{"name": "decide_final_slot", "args": {}, "id": "inner-1"}]),
+            fake_tool_message("decide_final_slot", undecided, call_id="inner-1"),
+            fake_ai_message(content="확정하지 못했습니다"),
+        ]
+        with patch.object(week06, "create_agent", return_value=fake_subagent(messages)):
+            delegate_payload = week06.kana_agent.invoke({"query": "민준이랑 시간 맞춰줘"})
+
+        trace = week06.extract_langchain_trace(self._supervisor_result("kana_agent", delegate_payload))
+
+        self.assertIsNone(trace["final_slot_payload"]["final_slot"])
+        self.assertTrue(trace["final_slot_payload"]["needs_agent_selection"])
+
+    def test_ui_trace_keeps_the_events_shape_the_renderer_reads(self) -> None:
+        trace = week06.extract_langchain_trace(self._supervisor_result("nana_agent", '{"ok": true}'))
+
+        self.assertIn("events", trace)
+        for event in trace["events"]:
+            self.assertIn(event["event"], {"tool_call", "tool_result"})
+
+    def test_last_delegation_wins_when_the_supervisor_calls_both(self) -> None:
+        result = {
+            "messages": [
+                fake_ai_message([{"name": "kana_agent", "args": {}, "id": "call-1"}]),
+                fake_tool_message("kana_agent", {"inner_tool_names": ["decide_final_slot"]}, call_id="call-1"),
+                fake_ai_message([{"name": "nana_agent", "args": {}, "id": "call-2"}]),
+                fake_tool_message("nana_agent", {"inner_tool_names": ["personal_create_schedule"]}, call_id="call-2"),
+                fake_ai_message(content="조율하고 저장했습니다"),
+            ]
+        }
+
+        trace = week06.extract_langchain_trace(result)
+
+        # 두 agent를 모두 쓰는 요청에서는 마지막 위임만 기록되므로 inner_tool_names로 전체를 본다.
+        self.assertEqual(trace["supervisor_selected_agent"], "nana_agent")
+        self.assertEqual(trace["inner_tool_names"], ["decide_final_slot", "personal_create_schedule"])
+
+    def test_supervisor_agent_is_built_once_with_only_delegation_tools(self) -> None:
+        with patch.object(week06, "create_agent", return_value=SimpleNamespace(name="supervisor")) as created:
+            first = week06.build_week_agent()
+            second = week06.build_week_agent()
+
+        self.assertIs(first, second)
+        self.assertEqual(created.call_count, 1)
+        self.assertEqual(created.call_args.kwargs["tools"], week06.supervisor_tools())
+        self.assertEqual(created.call_args.kwargs["system_prompt"], week06.supervisor_system_prompt())
+
+
 if __name__ == "__main__":
     unittest.main()
