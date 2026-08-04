@@ -7,7 +7,10 @@ from langchain.agents import create_agent
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from fixed.external_people_store import normalize_external_member_names
+from fixed.external_people_store import (
+    PERSONAL_SHARED_MEMBER_NAME,
+    normalize_external_member_names,
+)
 from fixed.langchain_trace import extract_agent_events, extract_final_text
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
@@ -316,8 +319,10 @@ supervisor에게 그룹 조율 업무를 위임받아 실행하고 결과를 sup
 # 후보와 최종 시간
 - 두 도구는 시간을 계산해 주지 않는다. 수집한 바쁜 시간을 직접 읽고 겹치지 않는 후보와
   최종 시간을 골라 argument로 넘긴다.
-- find_common_available_slots가 돌려준 candidate_slots가 비어 있으면 후보가 전부 걸러진 것이다.
+- find_common_available_slots 결과의 candidate_slots가 비었거나 candidate_slots_dropped가 0보다 크면
   바쁜 시간을 다시 읽고 후보를 고쳐 재호출한다. 통과한 후보가 없는데 시간을 확정하지 않는다.
+- validation_note가 비어 있지 않으면 그 내용을 최종 답변에 함께 전달한다.
+- ok가 false면 error를 그대로 supervisor에게 전달하고 시간을 확정하지 않는다.
 - 고를 수 없으면 decide_final_slot에 final_slot=null, needs_agent_selection=true와
   무엇이 부족한지를 reason으로 넘긴다. 시간을 지어내지 않는다.
 
@@ -390,16 +395,20 @@ def tool_name(tool_object: Any) -> str:
     return getattr(tool_object, "name", getattr(tool_object, "__name__", str(tool_object)))
 
 
-FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
-    # TODO: find_common_available_slots tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 후보를 계산하지 않는다는 점을 Kana agent에게 분명히 알려야 합니다.
-    #     agent가 busy_rows를 읽고 candidate_slots를 직접 채워 넘기게 만드는 것이 핵심입니다.
-    #   - candidate_slots 각 항목이 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM),
-    #     duration_minutes, reason을 포함해야 한다는 형식을 적습니다.
-    #   - 후보는 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다.
-    #   - 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다.
-    ""
-)
+# 후보 계산을 tool에 떠넘기지 않게 계약을 매 호출 근거로 못박는다.
+FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = """수집한 바쁜 시간을 근거로 agent가 직접 고른 공통 가능 시간 후보를 검증하고 기록합니다.
+
+이 tool은 후보를 계산하거나 추천하지 않는다. 후보 선택은 agent가 한다.
+호출 전에 collect_member_schedules로 멤버별 바쁜 시간 rows를 확보하고, 그 rows와 겹치지 않는 시간대를 직접 고른다.
+candidate_slots의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), duration_minutes, reason을 모두 채운다.
+후보는 date_from~date_to 안이고 workday_start~workday_end 안이어야 하며,
+어떤 바쁜 시간과도 겹치면 안 되고 duration_minutes보다 짧으면 안 된다.
+busy_rows에는 앞선 조회 tool 결과의 rows를 그대로 복사해 넘긴다. 임의로 줄이거나 비워 보내지 않는다.
+member_names에는 조율 대상 외부 멤버 이름을 넣는다. 외부 멤버가 없으면 이 tool을 호출하지 않는다.
+반환 candidate_slots는 검증을 통과한 후보만 담는다.
+candidate_slots가 비었거나 candidate_slots_dropped가 0보다 크면 바쁜 시간을 다시 읽고 후보를 고쳐 재호출한다.
+validation_note가 비어 있지 않으면 그 내용을 최종 답변에 함께 전달한다.
+이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출해 최종 시간을 확정한다."""
 
 
 DECIDE_FINAL_SLOT_DESCRIPTION = (
@@ -471,6 +480,61 @@ class AgentQueryInput(BaseModel):
     query: str
 
 
+def _find_common_slots_error_payload(error: str, *, members: list[str]) -> dict[str, Any]:
+    """후보 검증을 시작하지 못한 이유를 성공 payload와 같은 키 구성으로 돌려줍니다."""
+
+    return {
+        "ok": False,
+        "tool_name": "find_common_available_slots",
+        "members": members,
+        "busy_rows": [],
+        "candidate_slots": [],
+        "error": error,
+        "candidate_slots_submitted": 0,
+        "candidate_slots_dropped": 0,
+        "candidate_limit_reached": False,
+        "validation_note": error,
+    }
+
+
+def _busy_rows_source(collected_rows: list[dict[str, Any]], agent_rows: list[dict[str, Any]]) -> str:
+    """겹침 검증이 어떤 증거로 이뤄졌는지 trace에 남깁니다."""
+
+    if collected_rows and agent_rows:
+        return "collected+agent"
+    if collected_rows:
+        return "collected"
+    return "agent" if agent_rows else "none"
+
+
+def _validation_note(
+    *,
+    submitted: int,
+    accepted: int,
+    limit: int,
+    limit_reached: bool,
+    rows: list[dict[str, Any]],
+    collected: dict[str, Any],
+) -> str:
+    """후보 0건이 "안 냈음"인지 "전부 걸러졌음"인지 구분해 문장으로 남깁니다."""
+
+    notes: list[str] = []
+    dropped = max(0, submitted - accepted)
+    if dropped and not limit_reached:
+        notes.append(f"후보 {dropped}건이 겹침, 업무시간 범위, 최소 길이 조건으로 제외됐습니다.")
+    elif dropped:
+        # 상한에 도달하면 남은 후보는 평가되지 않으므로 제외와 미검증을 개수로 구분할 수 없다.
+        notes.append(f"후보 상한 {limit}건에 도달했습니다. 넘긴 {submitted}건 중 {dropped}건은 제외되거나 검증되지 않았습니다.")
+    if not rows:
+        notes.append("조회된 바쁜 시간이 없어 모든 후보가 겹침 검증 없이 통과했습니다.")
+    if collected.get("external_tool_called") is False:
+        notes.append("외부 멤버 일정 조회가 실행되지 않았습니다.")
+    undated = collected.get("undated_personal_schedules") or []
+    if undated:
+        notes.append(f"날짜가 없는 내 일정 {len(undated)}건은 바쁜 시간에서 제외됐습니다.")
+    return " ".join(notes)
+
+
 def find_common_available_slots_dict(
     member_names: list[str],
     date_from: str,
@@ -485,12 +549,75 @@ def find_common_available_slots_dict(
 ) -> dict[str, Any]:
     """멤버별 busy-time rows와 LLM이 고른 후보 payload를 검증 결과로 바꿉니다."""
 
-    # TODO: 멤버 이름/날짜 범위를 정규화하고, busy_rows를 수집한 뒤 후보 검증 payload를 만드세요.
-    #   - normalize_external_member_names(...)로 멤버 이름을, normalize_date_bound(...)로 날짜를 정규화합니다.
-    #   - busy_rows가 None이면 collect_member_schedules.invoke({...})를 호출해 rows를 채웁니다.
-    #   - 검증 payload 생성은 find_common_available_slots_payload(...)에 넘깁니다. 이때 내 일정도 근거이므로
-    #     member_names에는 "나"를 함께 포함합니다.
-    ...
+    requested_members = normalize_external_member_names(member_names)
+    external_members = [
+        name for name in requested_members if name != PERSONAL_SHARED_MEMBER_NAME
+    ]
+    # 외부 멤버가 없으면 겹침 검증이 내 일정만 보고도 통과하므로 진행 전에 막는다.
+    if not external_members:
+        return _find_common_slots_error_payload(
+            "공통 가능 시간을 찾을 외부 멤버 이름이 없습니다. list_shared_schedules로 실제 멤버를 먼저 확인해 주세요.",
+            members=requested_members,
+        )
+
+    normalized_date_from = normalize_date_bound(date_from)
+    normalized_date_to = normalize_date_bound(date_to)
+    # 내 일정도 겹침 근거이므로 조회 대상에 "나"를 함께 넣는다.
+    members_with_me = [PERSONAL_SHARED_MEMBER_NAME, *external_members]
+
+    try:
+        collected = json.loads(
+            collect_member_schedules.invoke(
+                {
+                    "member_names": members_with_me,
+                    "date_from": normalized_date_from,
+                    "date_to": normalized_date_to,
+                }
+            )
+        )
+    except Exception as error:  # noqa: BLE001 - 날짜 형식·범위 검증은 week05 입력 스키마가 이미 한다
+        return _find_common_slots_error_payload(str(error), members=members_with_me)
+
+    collected_rows = collected.get("rows") or []
+    agent_rows = list(busy_rows or [])
+    # args_schema의 busy_rows는 agent가 위조하거나 누락할 수 있어 ground truth를 코드에서 다시 모아 합친다.
+    rows = [*collected_rows, *agent_rows]
+
+    submitted = len(candidate_slots or [])
+    payload = find_common_available_slots_payload(
+        member_names=members_with_me,
+        date_from=normalized_date_from,
+        date_to=normalized_date_to,
+        busy_rows=rows,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+        limit=limit,
+        candidate_slots=candidate_slots,
+        llm_reason=llm_reason,
+    )
+    accepted = len(payload.get("candidate_slots") or [])
+    limit_reached = accepted >= max(1, int(limit or 1))
+    # 걸러진 후보와 검증하지 못한 증거가 조용히 사라지지 않게 개수와 사유를 함께 남긴다.
+    payload.update(
+        {
+            "date_from": normalized_date_from,
+            "date_to": normalized_date_to,
+            "busy_rows_source": _busy_rows_source(collected_rows, agent_rows),
+            "candidate_slots_submitted": submitted,
+            "candidate_slots_dropped": max(0, submitted - accepted),
+            "candidate_limit_reached": limit_reached,
+            "validation_note": _validation_note(
+                submitted=submitted,
+                accepted=accepted,
+                limit=limit,
+                limit_reached=limit_reached,
+                rows=rows,
+                collected=collected,
+            ),
+        }
+    )
+    return payload
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
@@ -508,8 +635,21 @@ def find_common_available_slots(
 ) -> str:
     """수집된 멤버 일정에서 LLM이 직접 고른 공통 가능 후보 시간을 검증합니다."""
 
-    # TODO: find_common_available_slots_dict(...) 결과를 JSON 문자열로 반환하세요.
-    ...
+    return json.dumps(
+        find_common_available_slots_dict(
+            member_names=member_names,
+            date_from=date_from,
+            date_to=date_to,
+            duration_minutes=duration_minutes,
+            workday_start=workday_start,
+            workday_end=workday_end,
+            limit=limit,
+            busy_rows=busy_rows,
+            candidate_slots=candidate_slots,
+            llm_reason=llm_reason,
+        ),
+        ensure_ascii=False,
+    )
 
 
 @tool(description=DECIDE_FINAL_SLOT_DESCRIPTION, args_schema=DecideFinalSlotInput)
