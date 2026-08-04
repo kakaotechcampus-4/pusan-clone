@@ -20,6 +20,19 @@ PriorityLevel = Literal["high", "medium", "low"]
 _WEEK02_AGENT: Any | None = None
 
 
+# Week 2 agent에만 적용되는 조각입니다.
+#
+# Week 2는 structured_response로 최종 답을 내지만 상위 주차는 그렇지 않고, 저장·검색·조율도
+# 모두 수행합니다. 그래서 `week02_prompt_parts(active_week)`가 Week 3 이상에서는 이 조각을
+# 제외합니다. 모듈 상수로 둔 이유는 테스트가 문구를 복사하지 않고 이 객체와 비교해
+# 게이트 동작만 확인할 수 있게 하기 위해서입니다.
+WEEK02_ONLY_PROMPT_PARTS = [
+    "Week 2 agent의 역할은 일정 생성 요청에서 personal_create_schedule이 반환한 created_schedule JSON payload를 읽고 response_format=StructuredRequestBatch로 최종 구조화 결과를 출력하는 것이다.",
+    "Week 2 agent가 personal_create_schedule의 tool 결과 JSON을 받은 경우에는 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어라.",
+    "Week 2 agent에서는 SQLite 저장, RAG 사용, 외부 멤버 일정 조율을 하지 않음에 주의하여라.",
+]
+
+
 # [2주차 수강생 구현 가이드]
 #
 # 목표
@@ -264,15 +277,24 @@ def week02_system_prompt() -> str:
     ])
 
 
-def week02_prompt_parts() -> list[str]:
-    """2주차 structured output agent가 따르는 system prompt 조각입니다."""
+def week02_prompt_parts(active_week: int = 2) -> list[str]:
+    """2주차 structured output agent가 따르는 system prompt 조각입니다.
+
+    이 prompt parts을 사용하는 함수는 두 개가 있습니다:
+
+    1. `week02_system_prompt()` — Week 2 agent 본체
+    2. `extract_structured_request()` — Week 3 이상이 저장 전에 부르는 구조화 sub-call
+
+    2번은 인자 없이 부르므로 `active_week=2`가 되고, "저장·검색·조율을 하지 않는다" 같은
+    Week 2 한정 지시를 그대로 받습니다. 그 호출은 실제로 구조화만 하므로 맞는 동작입니다.
+    반면 Week 3 이상의 **agent 프롬프트**는 `active_week`에 자기 주차를 넘겨서 이 지시를
+    받지 않습니다. 상위 주차는 저장·검색·조율을 모두 수행하기 때문입니다.
+    """
 
     return [
-        *week01_prompt_parts(),
-        # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        "Week 2 agent의 역할은 일정 생성 요청에서 personal_create_schedule이 반환한 created_schedule JSON payload를 읽고 response_format=StructuredRequestBatch로 최종 구조화 결과를 출력하는 것이다.",
+        *week01_prompt_parts(active_week),
         f"오늘 날짜는 {current_app_date_iso()}이다. 만약 '내일', '다음 주'와 같은 상대적인 날짜가 입력되었다면 오늘 날짜를 참고하여라.",
-        # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
+        # 아래 구조화 규칙은 주차와 무관하게 유효합니다.
         "자연어, 즉 비정형 데이터를 StructuredRequest를 이용하여 구조화하라.",
         f"요청사항에 대한 종류로는 다음과 같은 것들이 있다 : {','.join(RequestKind.__args__)}",
         "불확실한 필드의 내용은 지어내지 말고 기본값으로 두어라.",
@@ -280,10 +302,7 @@ def week02_prompt_parts() -> list[str]:
         "요청에 나 이외의 다른 사람이 등장하면 group_schedule, 나 혼자면 personal_schedule로 분류하라.",
         "created_schedule의 attendees는 StructuredRequest의 members로 그대로 옮긴다. "
         "members가 비어있지 않으면 kind는 group_schedule이다.",
-        # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
-        "Week 2 agent가 personal_create_schedule의 tool 결과 JSON을 받은 경우에는 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들어라.",
-        # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
-        "Week 2 agent에서는 SQLite 저장, RAG 사용, 외부 멤버 일정 조율을 하지 않음에 주의하여라."
+        *(WEEK02_ONLY_PROMPT_PARTS if active_week == 2 else []),
     ]
 
 

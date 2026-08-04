@@ -11,6 +11,7 @@ import student_parts.week02_structure_natural_language_requests as week02
 from student_parts.week02_structure_natural_language_requests import (
     RequestKind,
     StructuredRequest,
+    WEEK02_ONLY_PROMPT_PARTS,
     StructuredRequestBatch,
     _coerce_structured_request,
     build_week02_agent,
@@ -200,10 +201,38 @@ class TestPromptAndTools:
             assert kind in joined
 
     def test_week02_only_restrictions_are_scoped_to_week02_agent(self):
-        joined = "\n".join(week02_prompt_parts())
-        assert "Week 2 agent의 역할" in joined
-        assert "Week 2 agent가 personal_create_schedule의 tool 결과 JSON을 받은 경우" in joined
-        assert "Week 2 agent에서는 SQLite 저장, RAG 사용" in joined
+        """Week 2 전용 조각이 상위 주차 프롬프트에 새지 않는지 확인합니다.
+
+        문구를 복사해 비교하지 않고 `WEEK02_ONLY_PROMPT_PARTS` 객체와 대조합니다.
+        프롬프트 표현을 다듬어도 게이트만 살아 있으면 계속 통과해야 합니다.
+        """
+
+        own = week02_prompt_parts()
+        for part in WEEK02_ONLY_PROMPT_PARTS:
+            assert part in own
+
+        # extract_structured_request()가 인자 없이 부르는 경로도 Week 2로 취급된다.
+        for upper_week in (3, 4, 5):
+            inherited = week02_prompt_parts(upper_week)
+            for part in WEEK02_ONLY_PROMPT_PARTS:
+                assert part not in inherited
+            # 주차 무관한 구조화 규칙은 그대로 남아야 한다.
+            assert any("StructuredRequest" in part for part in inherited)
+
+    def test_system_prompt_calls_week02_parts_without_overriding_active_week(
+        self,
+        monkeypatch,
+    ):
+        calls = []
+
+        def fake_prompt_parts():
+            calls.append("called")
+            return ["week02-default-parts"]
+
+        monkeypatch.setattr(week02, "week02_prompt_parts", fake_prompt_parts)
+
+        assert "week02-default-parts" in week02_system_prompt()
+        assert calls == ["called"]
 
     def test_system_prompt_is_str_with_batch_rules(self):
         prompt = week02_system_prompt()

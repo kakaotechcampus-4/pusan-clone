@@ -203,7 +203,11 @@ def _create_personal_schedule_dict(
 
 @tool(
     "personal_create_schedule", 
-    description="개인 일정을 생성한다. date는 YYYY-MM-DD, start_time, end_time은 HH:MM 형식이다."
+    description=(
+        "개인 일정을 생성한다. date는 YYYY-MM-DD, start_time은 HH:MM 형식이다. "
+        "end_time도 HH:MM 형식이지만 종료 시각을 모르면 생략한다 — 기본값 \"미정\"이 들어간다. "
+        "모르는 값을 지어내지 말아라."
+    )
 )
 def personal_create_schedule(
     title: str,
@@ -264,7 +268,12 @@ personal_list_schedules.handle_tool_error = True
 
 @tool(
     "personal_delete_schedule",
-    description="schedule_id와 일치하는 개인 일정을 삭제한다. schedule_id 예 : personal_e9c8e63704"
+    description=(
+        "현재 대화의 임시 메모리에서 schedule_id와 일치하는 개인 일정을 삭제한다. "
+        "schedule_id 예 : personal_e9c8e63704. "
+        "SQLite에 저장된 일정은 이 도구로 지워지지 않으므로, "
+        "저장된 일정 삭제 요청에는 personal_delete_saved_schedules를 사용한다."
+    )
 )
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
@@ -299,9 +308,18 @@ def week01_system_prompt() -> str:
     return join_system_prompt(week01_prompt_parts())
 
 
-def week01_prompt_parts() -> list[str]:
-    """1주차부터 누적되는 system prompt 조각입니다."""
+def week01_prompt_parts(active_week: int = 1) -> list[str]:
+    """1주차부터 누적되는 system prompt 조각입니다.
 
+    `active_week`는 이 조각들을 실제로 사용하는 agent의 주차입니다. 상위 주차가
+    `*week01_prompt_parts(active_week)`로 상속할 때 자기 주차 번호를 넘기므로,
+    "이 주차에만 해당하는" 지시를 상위 주차 프롬프트에서 빼낼 수 있습니다.
+    기본값이 자기 주차라 인자 없이 부르면 종전과 같습니다.
+    """
+
+    # Week 1 조각은 주차와 무관하게 항상 유효해서 게이트할 것이 없습니다.
+    # active_week를 받는 이유는 상속 사슬의 시그니처를 맞추기 위해서입니다.
+    _ = active_week
     return [
         CHAT_MEMORY_PROMPT,
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.

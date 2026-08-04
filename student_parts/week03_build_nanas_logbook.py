@@ -34,7 +34,6 @@ SQLITE_MEMORY_PROMPT = """
 Week 3의 영속 메모리는 현재 대화 내용이 아니라 SQLite 저장 결과를 기준으로 한다.
 새 대화에서도 저장된 일정, 할 일, 알림을 확인하려면 SQLite 조회 tool을 사용하여라.
 
-사용자가 저장된 개인 일정을 물으면 personal_list_saved_schedules를 사용하여라.
 사용자가 저장된 요청의 원본 기록이나 할 일, 알림을 물으면 list_saved_requests 또는 get_saved_request를 사용하여라.
 
 조회 결과가 없으면 내용을 추측하거나 만들어내지 말고 저장된 항목이 없다고 답하여라.
@@ -42,8 +41,11 @@ Week 3의 영속 메모리는 현재 대화 내용이 아니라 SQLite 저장 �
 Week 1의 임시 메모리와 Week 3의 SQLite 저장 데이터는 구분하여라.
 """.strip()
 
-# TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = """
+# Week 3 agent에만 적용되는 규칙입니다.
+#
+# Week 4 이상은 자체 저장 순서(extract -> 필드 점검 -> 필요 시 검색 -> save)와 자체 조회
+# 규칙을 쓰므로, `week03_prompt_parts(active_week)`가 이 프롬프트를 제외합니다.
+WEEK03_ONLY_PROMPT = """
 새로운 자연어 저장 요청은 다음 순서로 처리하여라.
 
 1. extract_schedule_request를 호출하여 사용자 요청을 StructuredRequest로 구조화하여라.
@@ -52,40 +54,33 @@ WEEK03_TOOL_CALL_PROMPT = """
 3. 해당 필드를 save_structured_request에 전달하여 SQLite에 저장하여라.
 4. 저장 결과를 확인한 뒤 사용자에게 저장 성공 여부를 알려라.
 
+사용자가 저장된 개인 일정을 물으면 personal_list_saved_schedules를 사용하여라.
+
+저장된 기록을 날짜로 조회할 때 kind는 넘기지 말고 한 번만 호출하여라.
+그래야 개인 일정, 그룹 일정, 할 일, 알림이 한 번에 들어온다.
+종류를 좁혀 조회한 뒤 저장된 것이 없다고 답하지 말아라.
+
+Week 1 호환 personal_create_schedule은 개인 일정 생성과 SQLite 저장을 함께 수행하는 tool이다.
+이 tool을 사용한 경우 같은 일정을 save_structured_request로 다시 저장하여 중복 생성하지 말아라.
+이 tool로 만든 일정도 SQLite에 저장되므로 삭제할 때는 personal_delete_saved_schedules를 사용하여라.
+""".strip()
+
+# 주차와 무관하게 유효한 SQLite 도구 선택 규칙입니다.
+# 개별 tool의 인자 규칙과 한계(어떤 필드를 넘기는지, 무엇을 조회하지 못하는지)는
+# 각 @tool docstring으로 옮겼습니다. 프롬프트에는 "언제 어느 도구를 고르는가"만 남깁니다.
+WEEK03_TOOL_CALL_PROMPT = """
 저장된 기록을 날짜로 조회할 때는 list_saved_requests를 사용하여라.
 조회 날짜가 명확하면 date_from과 date_to를 사용하여 범위를 좁혀라.
-kind는 넘기지 말고 한 번만 호출하여라. 그래야 개인 일정, 그룹 일정, 할 일, 알림이
-한 번에 들어온다. 종류를 좁혀 조회한 뒤 저장된 것이 없다고 답하지 말아라.
 
 personal_list_saved_schedules는 사용자가 개인 일정 또는 그룹 일정으로 종류를 분명히
 한정했을 때, 그리고 수정·삭제 대상을 찾을 때 사용하여라.
 
-저장 일정 수정 요청에서 schedule_id를 모르면 먼저 personal_list_saved_schedules로 후보를 조회하여라.
-그 다음 personal_update_saved_schedule에 실제로 변경할 필드만 전달하여라.
-None인 필드는 수정하지 않는다는 뜻이다.
+저장 일정을 수정하거나 삭제할 때 schedule_id를 모르면
+먼저 personal_list_saved_schedules로 후보를 조회하여라.
 
-저장 일정 삭제 요청에서도 먼저 후보를 확인하여라.
-personal_delete_saved_schedules에는 schedule_ids 또는 사용자가 명시한 날짜, 제목, 시간 필터를 전달하여라.
-사용자가 명시적으로 전체 삭제를 요청하지 않았다면 delete_all을 사용하지 말고,
-삭제 조건이 없으면 삭제하지 말고 추가 정보를 요청하여라.
-
-Week 1 호환 personal_create_schedule은 개인 일정 생성과 SQLite 저장을 함께 수행하는 tool이다.
-이 tool을 사용한 경우 같은 일정을 save_structured_request로 다시 저장하여 중복 생성하지 말아라.
-
-Week 3에서 사용자가 저장 일정 삭제를 요청하면 예외 없이
-personal_delete_saved_schedules를 사용하여라.
-
-personal_delete_schedule은 Week 1 임시 메모리 전용 도구이므로
-Week 3의 사용자 일정 삭제 요청에는 절대 사용하지 말아라.
-
-personal_create_schedule로 생성한 일정도 SQLite에 저장되므로
-삭제할 때는 personal_delete_saved_schedules를 사용하여라.
-
-삭제 성공 여부는 personal_delete_saved_schedules 결과의
-deleted_count가 1 이상인지 확인하여 판단하여라.
-
-삭제 후 같은 조건으로 personal_list_saved_schedules를 다시 호출하고,
-해당 schedule_id가 목록에서 사라진 것을 확인한 뒤 사용자에게 성공을 알려라.
+삭제 성공 여부는 personal_delete_saved_schedules 결과의 deleted_count로 판단하여라.
+목록을 다시 조회해 확인할 필요는 없다. 목록 도구는 날짜와 종류만 받으므로 제목이나 시간으로
+삭제한 경우에는 같은 조건으로 되짚을 수도 없다.
 
 조회 대상 종류를 사용자가 한정하지 않았다면 어떤 종류로도 좁히지 말아라.
 사용자가 쓴 표현이 일정처럼 들리는지 여부로 종류를 짐작하지 말아라.
@@ -585,7 +580,15 @@ def save_structured_request(
     original_text: str = "",
     source_schedule_id: str | None = None,
 ) -> str:
-    """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
+    """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다.
+
+    결과의 saved.saved_rows에서 table이 "schedules"인 항목의 id가 이 일정의 schedule_id
+    (`personal_` 접두)입니다. 같은 대화에서 이 일정을 수정하거나 삭제할 때는 그 값을
+    personal_update_saved_schedule / personal_delete_saved_schedules에 그대로 넘기세요.
+    다시 목록을 조회할 필요가 없습니다.
+
+    같은 항목의 request_id(`req_` 접두)는 구조화 요청 기록의 ID이며 일정 삭제에는 쓰지 않습니다.
+    """
 
     # TODO: 검증된 함수 인자를 저장 dict로 만들고 None 값을 제외한 뒤 SQLite에 저장하세요.
     saving_data = {
@@ -622,8 +625,13 @@ def list_saved_requests(
     """저장된 일정·할 일·알림 목록을 날짜 범위로 조회합니다.
 
     개인 일정, 그룹 일정, 할 일, 알림이 모두 이 목록에 함께 들어 있습니다.
-    kind를 생략하면 네 종류를 한 번에 반환합니다.
+    kind를 생략하면 종류를 가리지 않고 반환합니다. 분류가 애매해 unknown으로 저장된 요청도
+    함께 나올 수 있습니다.
     date_from과 date_to는 YYYY-MM-DD 형태이며 저장된 date를 기준으로 거릅니다.
+
+    키워드 인자가 없습니다. 제목이나 주제어로 찾으려면 search_saved_requests의 query를
+    쓰세요. 이 도구에 키워드를 넘겨도 무시되고 날짜 조건만 걸린 목록이 오므로, 그 결과를
+    키워드로 걸러진 것처럼 다루면 안 됩니다.
     """
 
     # TODO: kind/date_from/date_to 필터로 저장 요청을 조회하고 rows를 JSON 문자열로 반환하세요.
@@ -658,15 +666,38 @@ def personal_list_saved_schedules(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+    """앱 DB에 저장된 내 일정만 조회하거나 수정·삭제 후보를 찾을 때 사용합니다.
+
+    다른 사람과 내 바쁜 일정을 함께 모으는 요청에는 사용하지 마세요. 이 도구는 앱 DB의
+    일정만 반환하므로 외부 멤버 일정과 합쳐서 답하는 용도가 아닙니다.
+
+    schedules 테이블만 조회하므로 할 일(todo)과 알림(reminder)은 결과에 들어오지 않습니다.
+    종류를 가리지 않고 저장 기록을 조회할 때는 list_saved_requests를 사용하세요.
+
+    kind를 생략하면 개인 일정과 그룹 일정을 함께 반환합니다. 종류를 좁히려면
+    kind="personal_schedule" 또는 kind="group_schedule"을 명시하세요.
+
+    수정·삭제 대상을 찾을 때 필요한 schedule_id가 이 결과에 들어 있습니다.
+    """
 
     filters = {
-        "kind" : (kind or "personal_schedule"),
+        "kind" : kind,
         "date_from" : date_from,
         "date_to" : date_to,
         "limit" : limit
     }
     # TODO: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
+    #
+    # [의도적 이탈] 가이드는 기본 kind를 personal_schedule로 정하라고 하지만 kind=None(전체)로 둔다.
+    #
+    # 기본값을 personal_schedule로 두면 "생략 = 개인 일정만"이 되어, 참석자가 있는 일정을
+    # 찾을 때 kind를 명시하지 않으면 조용히 빈 결과가 온다. 실제로 그룹 일정을 만든 직후
+    # "방금 만든 거 삭제해줘"가 여기서 막혔다 — 삭제에 필요한 schedule_id를 얻는 유일한
+    # 도구인데 group_schedule row가 걸러져서 "저장된 일정이 없습니다"로 답했다.
+    # description을 강화해도 kind를 넘기게 만들지 못했다(4회 시도).
+    #
+    # 같은 앱의 list_saved_requests는 kind 생략 시 네 종류를 모두 반환한다. 두 조회 도구가
+    # 생략의 의미를 반대로 해석하는 것 자체가 함정이므로 "생략 = 필터 없음"으로 통일한다.
     schedules = _store().list_schedules(**filters)
 
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
@@ -711,7 +742,12 @@ def personal_update_saved_schedule(
     end_time: str | None = None,
     attendees: list[str] | None = None,
 ) -> str:
-    """앱 DB에 저장된 내 일정 원본을 수정하고 공유 일정 복사본을 같은 값으로 갱신합니다."""
+    """앱 DB에 저장된 내 일정 원본을 수정하고 공유 일정 복사본을 같은 값으로 갱신합니다.
+
+    실제로 바꿀 필드만 전달하세요. None으로 둔 필드는 "수정하지 않음"이라는 뜻이며
+    기존 값을 그대로 유지합니다. schedule_id를 모르면 먼저 personal_list_saved_schedules로
+    후보를 조회하세요.
+    """
 
     # TODO: None이 아닌 수정 필드를 AppSQLiteStore.update_schedule(...)에 전달하세요.
     schedule = {
@@ -748,7 +784,27 @@ def personal_delete_saved_schedules(
     time_unspecified: bool = False,
     delete_all: bool = False,
 ) -> str:
-    """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다."""
+    """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다.
+
+    SQLite에 저장된 일정을 지우는 도구는 이것뿐입니다. personal_delete_schedule은
+    현재 대화의 임시 메모리만 지우므로 저장된 일정에는 쓸 수 없습니다.
+
+    이 도구는 공유 일정 저장소에 있는 복사본까지 함께 정리합니다. 그래서 앱에 저장한 일정을
+    지울 때 delete_shared_schedule을 따로 부를 필요가 없습니다. 공유본만 지우고 이 도구를
+    부르지 않으면 앱 DB에는 일정이 남아 두 저장소가 어긋납니다.
+
+    schedule_ids 또는 사용자가 명시한 날짜/제목/시간 필터 중 하나는 반드시 넘겨야 합니다.
+    조건 없이 호출하면 아무것도 지우지 않고 실패를 돌려주므로, 조건을 모르면 삭제하지 말고
+    사용자에게 되물으세요. delete_all은 사용자가 전체 삭제를 분명히 요청했을 때만 씁니다.
+
+    schedule_ids에는 `personal_` 로 시작하는 **schedule_id**를 넣습니다.
+    이 값은 personal_list_saved_schedules 결과의 schedule_id 필드에 있습니다.
+    list_saved_requests 결과의 request_id(`req_` 로 시작)는 다른 ID이므로 넣으면 안 됩니다.
+    넘겨도 오류가 나지 않고 deleted_count가 0으로 돌아오니, 삭제 대상을 찾을 때는
+    personal_list_saved_schedules를 쓰세요.
+
+    삭제 성공 여부는 결과의 deleted_count가 1 이상인지로 판단하세요.
+    """
 
     # TODO: _delete_saved_schedules(...)에 삭제 조건을 전달하고 결과를 JSON 문자열로 반환하세요.
     filters = {
@@ -792,15 +848,20 @@ def week03_system_prompt() -> str:
     return join_system_prompt(week03_prompt_parts())
 
 
-def week03_prompt_parts() -> list[str]:
-    """1~3주차 system prompt 조각을 누적합니다."""
+def week03_prompt_parts(active_week: int = 3) -> list[str]:
+    """1~3주차 system prompt 조각을 누적합니다.
+
+    `active_week`가 3이 아니면 Week 3 전용 조각(WEEK03_ONLY_PROMPT)을 제외합니다.
+    자세한 배경은 `week02_prompt_parts`의 docstring을 보세요.
+    """
 
     return [
-        *week02_prompt_parts(),
+        *week02_prompt_parts(active_week),
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
-        "Week 3의 일정 저장, 조회, 수정, 삭제 요청에서는 위 안내에 명시된 SQLite 도구를 우선적으로 고려하여라."
-    ]   
+        *([WEEK03_ONLY_PROMPT] if active_week == 3 else []),
+        "일정 저장, 조회, 수정, 삭제 요청에서는 위 안내에 명시된 SQLite 도구를 우선적으로 고려하여라."
+    ]
 
 
 def build_week03_agent() -> object:
