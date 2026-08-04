@@ -584,28 +584,123 @@ def propose_group_schedule(
     return json.dumps({"ok": True, "tool_name": "propose_group_schedule", "final_decision": payload}, ensure_ascii=False)
 
 
+def _final_slot_payload_from_events(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Kana 하위 trace에서 decide_final_slot 결과 payload를 찾습니다."""
+
+    # final_slot이 None인 미확정 상태도 보존해야 하므로 값이 아니라 키 구성으로 판별한다.
+
+    decision_keys = {"final_slot", "candidates", "needs_agent_selection"}
+    found: dict[str, Any] | None = None
+    for event in events:
+        content = event.get("content")
+        if not isinstance(content, dict):
+            continue
+        if event.get("tool_name") == "decide_final_slot" or decision_keys <= content.keys():
+            # 후보를 다시 고르는 재호출이 있으면 마지막 결정이 유효하다.
+            found = content
+    return found
+
+
+def _final_decision_payload_from_events(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """호환용 propose_group_schedule이 남긴 final_decision payload를 찾습니다."""
+
+    found: dict[str, Any] | None = None
+    for event in events:
+        content = event.get("content")
+        if isinstance(content, dict) and content.get("final_decision"):
+            found = content["final_decision"]
+    return found
+
+
+def _final_slot_missing_reason(inner_tool_names: list[str]) -> str:
+    """최종 시간이 없는 이유를 구분해 supervisor가 확정으로 오인하지 않게 합니다."""
+
+    if "find_common_available_slots" in inner_tool_names:
+        return "후보 검증까지만 진행되어 최종 시간이 확정되지 않았습니다."
+    return "Kana 하위 agent가 decide_final_slot을 호출하지 않아 최종 시간이 확정되지 않았습니다."
+
+
+def _subagent_failure_payload(agent_name: str, error: Exception) -> dict[str, Any]:
+    """하위 agent 실행 실패를 supervisor가 감출 수 없는 dict payload로 바꿉니다."""
+
+    # 예외를 그대로 올리면 tool 결과가 문자열이 되고 trace 추출이 건너뛴다.
+
+    return {
+        "ok": False,
+        "tool_name": agent_name,
+        "selected_agent": agent_name,
+        "answer": f"{agent_name} 하위 agent 실행이 실패했습니다.",
+        "trace": {"events": []},
+        "inner_tool_names": [],
+        "error": str(error),
+        "error_type": type(error).__name__,
+    }
+
+
 @tool(args_schema=AgentQueryInput)
 def nana_agent(query: str) -> str:
     """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다."""
 
-    # TODO: Week 4 도구를 가진 Nana 하위 agent를 실행하고 answer/trace/inner_tool_names를 반환하세요.
-    #   - _NANA_SUBAGENT가 None일 때만 create_agent(model=chat_model(), tools=week04_tools(),
-    #     system_prompt=nana_system_prompt())로 만들고 이후에는 재사용합니다.
-    #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
-    #     trace와 answer를 뽑습니다.
-    #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    # 위임마다 agent를 새로 만들면 prompt 조립과 tool 바인딩이 반복되므로 전역에 한 번만 만든다.
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=week04_tools(),
+            system_prompt=nana_system_prompt(),
+        )
+    try:
+        result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    except Exception as error:  # noqa: BLE001 - 실패를 supervisor가 읽을 payload로 바꿔야 한다
+        return json.dumps(_subagent_failure_payload("nana_agent", error), ensure_ascii=False)
+
+    events = extract_agent_events(result)
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "nana_agent",
+            "selected_agent": "nana_agent",
+            "answer": extract_final_text(result),
+            "trace": {"events": events},
+            "inner_tool_names": _tool_call_names(events),
+        },
+        ensure_ascii=False,
+    )
 
 
 @tool(args_schema=AgentQueryInput)
 def kana_agent(query: str) -> str:
     """그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다."""
 
-    # TODO: Kana 하위 agent를 실행하고 trace에서 final_slot_payload/final_decision_payload를 끌어올려 반환하세요.
-    #   - _KANA_SUBAGENT를 kana_tools()와 kana_system_prompt()로 한 번만 만들고 재사용합니다.
-    #   - trace event의 content를 훑어 final_slot이 들어 있는 dict와 final_decision 값을 찾습니다.
-    #   - answer, trace, inner_tool_names, final_slot_payload, final_decision_payload를 JSON으로 반환합니다.
-    ...
+    global _KANA_SUBAGENT
+    if _KANA_SUBAGENT is None:
+        _KANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=kana_tools(),
+            system_prompt=kana_system_prompt(),
+        )
+    try:
+        result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    except Exception as error:  # noqa: BLE001 - 실패를 supervisor가 읽을 payload로 바꿔야 한다
+        return json.dumps(_subagent_failure_payload("kana_agent", error), ensure_ascii=False)
+
+    events = extract_agent_events(result)
+    inner_tool_names = _tool_call_names(events)
+    final_slot_payload = _final_slot_payload_from_events(events)
+    payload: dict[str, Any] = {
+        "ok": True,
+        "tool_name": "kana_agent",
+        "selected_agent": "kana_agent",
+        "answer": extract_final_text(result),
+        "trace": {"events": events},
+        "inner_tool_names": inner_tool_names,
+        # top-level final_slot을 두면 trace 추출이 이 payload 전체를 결정으로 오인한다.
+        "final_slot_payload": final_slot_payload,
+        "final_decision_payload": _final_decision_payload_from_events(events),
+    }
+    if final_slot_payload is None:
+        payload["final_slot_missing_reason"] = _final_slot_missing_reason(inner_tool_names)
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def build_langchain_supervisor_agent() -> object:
