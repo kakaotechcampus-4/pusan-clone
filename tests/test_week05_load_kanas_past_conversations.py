@@ -290,7 +290,7 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
             ],
         )
 
-    def test_reads_schedule_kind_from_row(self) -> None:
+    def test_reads_schedule_kind_and_notes_from_row(self) -> None:
         group_request = week05._structured_request_from_schedule_row(
             {
                 "request_kind": "group_schedule",
@@ -309,6 +309,11 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
 
         self.assertEqual(group_request.kind, "group_schedule")
         self.assertEqual(personal_request.kind, "personal_schedule")
+        self.assertEqual(
+            week05._my_schedule_notes(group_request),
+            "Nana 그룹 일정 · 참석자: 나, 하린",
+        )
+        self.assertEqual(week05._my_schedule_notes(personal_request), "Nana 개인 일정")
 
     def test_deduplicates_saved_id_and_keeps_only_current_session_memory(self) -> None:
         self.sqlite_store.save_structured_request(
@@ -455,7 +460,7 @@ class CollectMemberSchedulesHelperTest(Week05IsolatedTestCase):
         stored_row = next(row for row in rows if row.get("schedule_id") == "stored-1")
         self.assertEqual(stored_row["start_time"], "미정")
         self.assertEqual(stored_row["end_time"], "미정")
-        self.assertEqual(stored_row["notes"], week05.MY_SCHEDULE_NOTES["app_sqlite"])
+        self.assertEqual(stored_row["notes"], "Nana 개인 일정")
         self.assertNotIn("stored-1", stored_row["notes"])
         self.assertEqual(
             payload["undated_personal_schedules"][0]["schedule_id"],
@@ -505,6 +510,38 @@ class CollectMemberSchedulesHelperTest(Week05IsolatedTestCase):
         self.assertEqual(len(payload["rows"]), 1)
         self.assertEqual(payload["rows"][0]["schedule_id"], "personal-only")
         self.assertEqual(payload["rows"][0]["member_name"], "나")
+
+    def test_group_schedule_row_becomes_my_busy_time(self) -> None:
+        mcp_result = json.dumps({"ok": True, "rows": []}, ensure_ascii=False)
+        with patch.object(week05, "call_mcp_tool_sync", return_value=mcp_result):
+            payload = week05._collect_member_schedules(
+                member_names=["민준"],
+                date_from="2026-07-14",
+                date_to="2026-07-14",
+                personal_schedules=[
+                    {
+                        "schedule_id": "group-1",
+                        "request_kind": "group_schedule",
+                        "title": "하린과 사전 미팅",
+                        "date": "2026-07-14",
+                        "start_time": "15:00",
+                        "end_time": "16:00",
+                        "attendees": ["하린"],
+                        "source_store": "app_sqlite",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(payload["rows"]), 1)
+        row = payload["rows"][0]
+        self.assertEqual(row["member_name"], "나")
+        self.assertEqual(row["title"], "하린과 사전 미팅")
+        # 조율 대상에 없는 참석자도 notes에 남아야 어떤 회의가 시간을 막는지 알 수 있다.
+        self.assertEqual(row["notes"], "Nana 그룹 일정 · 참석자: 하린")
+        self.assertEqual(
+            payload["sources"],
+            {"app_sqlite": 1, "session_memory": 0, "external_mcp": 0},
+        )
 
     def test_three_external_members_use_one_mcp_call(self) -> None:
         mcp_result = json.dumps({"ok": True, "rows": []}, ensure_ascii=False)

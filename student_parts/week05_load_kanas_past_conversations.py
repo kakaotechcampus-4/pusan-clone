@@ -40,12 +40,6 @@ _WEEK05_AGENT: Any | None = None
 # 날짜 선필터 뒤에도 범위 내 일정이 기본 12건에서 잘리지 않도록 후보 상한을 500건으로 둔다.
 PERSONAL_SCHEDULE_CANDIDATE_LIMIT = 500
 
-# 병합 결과만으로 내 일정의 저장 위치를 추적할 수 있도록 출처별 notes를 고정한다.
-MY_SCHEDULE_NOTES = {
-    "app_sqlite": "내 일정 · 앱 SQLite 저장",
-    "session_memory": "내 일정 · 현재 대화 임시",
-}
-
 # 이전 주차의 외부 조회 금지와 충돌하지 않도록 Week 5의 허용 범위를 명시한다.
 WEEK05_EXTERNAL_SOURCE_PROMPT = """
 # Week 5 외부 데이터 범위
@@ -436,6 +430,15 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     )
 
 
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
+
+    if request.kind != "group_schedule":
+        return "Nana 개인 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+
+
 def _collect_member_schedules(
     *,
     member_names: list[str],
@@ -473,7 +476,7 @@ def _collect_member_schedules(
             "date": structured.date,
             "start_time": structured.start_time or "미정",
             "end_time": structured.end_time or "미정",
-            "notes": MY_SCHEDULE_NOTES.get(source_store, "내 일정"),
+            "notes": _my_schedule_notes(structured),
             "schedule_id": schedule.get("schedule_id") or schedule.get("id"),
             "source_store": source_store,
         }
