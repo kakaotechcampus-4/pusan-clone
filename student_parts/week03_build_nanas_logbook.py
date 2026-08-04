@@ -42,8 +42,11 @@ WEEK03_TOOL_CALL_PROMPT = (
     "같은 요청에 대해 저장 tool(save_structured_request 또는 personal_create_schedule)은 정확히 한 번만 호출해. "
     "personal_create_schedule은 Week 1 호환용 별도 경로이니, 방금 설명한 extract_schedule_request → "
     "save_structured_request 경로를 쓸 때는 호출하지 마. "
-    "저장된 일정 조회는 personal_list_saved_schedules를, 저장된 요청 원본 조회는 "
-    "list_saved_requests/get_saved_request를 사용해. "
+    "조회 도구는 대상 종류로 정확히 구분해. "
+    "'일정/회의/약속'(날짜·시간이 있는 캘린더 항목) 조회·수정·삭제는 personal_list_saved_schedules 계열을 써. "
+    "이 도구는 schedules 테이블만 보므로 할 일(todo)·알림(reminder)은 여기서 절대 나오지 않아. "
+    "'할 일(todo)'이나 '알림(reminder)' 기록을 조회할 때는 list_saved_requests에 kind='todo' 또는 kind='reminder'를 지정해 "
+    "structured_requests에서 조회하고, 저장 요청 원본 1건은 get_saved_request로 봐. "
     "일정을 수정하거나 삭제하기 전에는 반드시 먼저 personal_list_saved_schedules로 후보를 조회해서 "
     "schedule_id를 확인한 뒤, 그 schedule_id를 personal_update_saved_schedule이나 "
     "personal_delete_saved_schedules에 넘겨. 사용자의 표현만으로 필터를 추측해서 바로 삭제/수정하지 마. "
@@ -53,7 +56,10 @@ WEEK03_TOOL_CALL_PROMPT = (
     "오늘 날짜를 기준으로 '이번 주'는 이번 주 월요일부터 일요일까지, '다음 주'는 다음 주 월요일부터 일요일까지, "
     "'이번 달'은 이번 달 1일부터 말일까지로 계산해. "
     "'오늘'/'내일'처럼 하루만 가리키면 date_from과 date_to를 같은 날짜로 맞추고, "
-    "범위를 특정할 수 없으면 date_from/date_to를 비워 둬(전체 조회)."
+    "범위를 특정할 수 없으면 date_from/date_to를 비워 둬(전체 조회). "
+    "Week 1의 '생성/삭제 후 personal_list_schedules로 확인' 지시는 이번 주차부터 덮어써: "
+    "save_structured_request로 저장하거나 저장 일정을 수정/삭제한 뒤 결과를 확인할 때는 "
+    "임시 메모리 도구(personal_list_schedules)가 아니라 personal_list_saved_schedules로 조회해."
 )
 
 

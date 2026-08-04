@@ -426,16 +426,22 @@ def week04_prompt_parts() -> list[str]:
         *week03_prompt_parts(),
         "Week 2에서 'RAG는 하지마'라고 안내했지만, Week 4부터는 그 지시를 덮어써: "
         "이제부터 개인 참고자료/저장된 일정·할 일/과거 대화 기록에 대한 RAG 검색을 필요할 때 적극적으로 사용해.",
-        "저장된 일정/할 일을 조회할 땐 목적에 맞게 골라 써: "
-        "kind나 날짜 범위로 정확히 조회하려면 list_saved_requests/personal_list_saved_schedules를, "
-        "사용자가 키워드나 자연어로 막연하게 찾을 땐 search_saved_requests를 사용해.",
-        "'내가 적어둔 거 기억나?' 같은 질문엔 search_personal_references로, "
-        "'예전에 무슨 얘기했었지?' 같은 지난 잡담 회상은 search_conversation_messages로 답을 찾아.",
+        "저장 기록 조회 도구는 대상과 방식으로 정확히 갈라 써: "
+        "(1) 확정된 '일정/회의/약속'은 personal_list_saved_schedules(schedules 테이블 전용)로, "
+        "(2) '할 일/알림'이나 kind·날짜가 분명한 조회는 list_saved_requests(kind='todo'/'reminder' 등)로, "
+        "(3) 종류가 애매하거나 키워드·자연어로 막연히 찾을 때만 search_saved_requests로 검색해. "
+        "할 일·알림은 schedules 테이블에 없으니 personal_list_saved_schedules로 조회하면 빈 결과가 나온다는 점을 반드시 기억해.",
+        "'검색/찾아줘/기억나?' 같은 회상 요청은 우선 '그 정보를 어디에 넣었을지(출처)'로 가장 그럴듯한 도구부터 시작해: "
+        "'메모/적어둬'로 남긴 지식은 search_personal_references, 일정/할 일/알림으로 저장한 기록은 search_saved_requests(정확 조회는 list 계열), "
+        "대화 중에 오간 말은 search_conversation_messages. "
+        "다만 그 내용을 예전에 '어떻게' 저장했는지는 지금 대화만으로 알 수 없을 때가 많으니, 첫 도구가 빈 결과를 주면 "
+        "'저장된 내용이 없다'고 단정하지 말고 search_personal_references·search_saved_requests·search_conversation_messages를 차례로 모두 시도해. "
+        "세 출처를 전부 검색해도 관련 결과가 없을 때에만 '저장된 내용이 없다'고 답해.",
         "search_conversation_messages 결과에는 과거 assistant 발화도 섞여 있을 수 있으니, "
         "그 안의 assistant 답변 내용만으로 사실을 확정하지 말고 근거로만 참고해.",
-        "search_nana_memory는 예전 버전 호환용 통합 검색이야. "
-        "가능하면 search_personal_references/search_saved_requests/search_conversation_messages를 상황에 맞게 따로 쓰고, "
-        "여러 출처를 정말 한 번에 봐야 할 때만 보조적으로 사용해.",
+        "search_nana_memory는 예전 버전 호환용 통합 검색이며 대화 RAG를 포함하지 않는 불완전한 검색이야. "
+        "회상 요청의 fan-out은 반드시 search_personal_references·search_saved_requests·search_conversation_messages 세 개별 도구로 처리하고, "
+        "search_nana_memory는 새 요청 처리에 사용하지 마.",
     ]
 
 
