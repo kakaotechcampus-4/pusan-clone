@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import unittest
+from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -14,7 +15,9 @@ from langchain_core.messages import AIMessage, ToolMessage
 from fixed import app_store as app_store_module
 from fixed import mcp_client
 from fixed.app_store import AppSQLiteStore
+from fixed.config import CONFIG
 from fixed.langchain_trace import extract_agent_events
+from fixed.runtime_clock import current_app_date
 from student_parts import week01_wake_up_nana as week01
 from student_parts import week02_structure_natural_language_requests as week02
 from student_parts import week03_build_nanas_logbook as week03
@@ -269,7 +272,10 @@ class PromptContractTest(Week06IsolatedTestCase):
     def test_kana_prompt_chains_find_then_decide_and_refuses_saving(self) -> None:
         prompt = week06.kana_system_prompt()
 
-        self.assertIn("decide_final_slot까지 반드시 이어서 호출한다", prompt)
+        # 문구가 바뀌어도 깨지지 않게 도구 이름과 연쇄 의무만 고정한다.
+        self.assertIn("find_common_available_slots", prompt)
+        self.assertIn("decide_final_slot", prompt)
+        self.assertIn("조회만 하고 답을 끝내지 않는다", prompt)
         self.assertIn("needs_agent_selection=true", prompt)
         self.assertIn("Nana 담당", prompt)
         self.assertIn("저장했다고 말하지 않는다", prompt)
@@ -1049,6 +1055,114 @@ class SupervisorTraceContractTest(Week06IsolatedTestCase):
         self.assertEqual(created.call_count, 1)
         self.assertEqual(created.call_args.kwargs["tools"], week06.supervisor_tools())
         self.assertEqual(created.call_args.kwargs["system_prompt"], week06.supervisor_system_prompt())
+
+
+class Week06LiveLLMTest(unittest.TestCase):
+    """실제 LLM은 답변 문구가 아니라 위임 경로와 도구 선택만 검증합니다."""
+
+    def setUp(self) -> None:
+        if os.getenv("KANANA_LIVE_LLM_TESTS") != "1":
+            self.skipTest("실제 LLM 호출 테스트는 KANANA_LIVE_LLM_TESTS=1일 때만 실행")
+        # week06은 CONFIG를 import하지 않으므로 fixed.config에서 직접 읽습니다.
+        if not CONFIG.has_openai_key:
+            self.skipTest("실제 LLM 호출에는 .env의 PROXY_TOKEN이 필요")
+
+        # SQLite 연결이 호출마다 새로 열리고 닫히지 않아 Windows에서 임시 파일 삭제가 거부됩니다.
+        self.temp_dir = TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self.temp_dir.cleanup)
+        base = Path(self.temp_dir.name)
+        self.sqlite_store = AppSQLiteStore(base / "app.sqlite3")
+
+        # 라이브 테스트도 사용자의 실제 DB와 공유 저장소를 건드리면 안 됩니다.
+        self.patchers = [
+            patch.dict(os.environ, {"KANANA_EXTERNAL_DB_PATH": str(base / "external.sqlite3")}),
+            patch.object(week05, "SQLITE_STORE", self.sqlite_store),
+            patch.object(week04, "SQLITE_STORE", self.sqlite_store),
+            patch.object(week04, "REFERENCE_STORE", FakeReferenceStore()),
+            patch.object(week04, "CONVERSATION_RAG_STORE", FakeConversationRAGStore()),
+            patch.object(week03, "_store", return_value=self.sqlite_store),
+        ]
+        for patcher in self.patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        for function_name in (
+            "sync_personal_schedule_to_shared",
+            "sync_group_schedule_to_shared",
+            "delete_personal_schedule_from_shared",
+            "delete_group_schedule_from_shared",
+        ):
+            sync_patcher = patch.object(
+                app_store_module,
+                function_name,
+                return_value={"ok": True, "status": "mocked"},
+            )
+            sync_patcher.start()
+            self.addCleanup(sync_patcher.stop)
+
+        week01.PERSONAL_SCHEDULES.clear()
+        self.addCleanup(week01.PERSONAL_SCHEDULES.clear)
+        self._reset_cached_agents()
+        self.addCleanup(self._reset_cached_agents)
+
+    def _reset_cached_agents(self) -> None:
+        week06._NANA_SUBAGENT = None
+        week06._KANA_SUBAGENT = None
+        week06._SUPERVISOR_AGENT = None
+
+    def _run_supervisor(self, question: str) -> dict[str, Any]:
+        agent = week06.build_week_agent()
+        result = agent.invoke({"messages": [{"role": "user", "content": question}]})
+        return week06.extract_langchain_trace(result)
+
+    def test_personal_schedule_request_is_delegated_to_nana(self) -> None:
+        trace = self._run_supervisor("이번 주에 저장된 내 개인 일정만 알려줘")
+
+        self.assertEqual(trace["supervisor_selected_agent"], "nana_agent")
+        self.assertNotIn("collect_member_schedules", trace["inner_tool_names"])
+
+    def test_group_coordination_request_is_delegated_to_kana(self) -> None:
+        date_from = (current_app_date() + timedelta(days=7)).isoformat()
+        date_to = (current_app_date() + timedelta(days=14)).isoformat()
+
+        trace = self._run_supervisor(f"민준이랑 {date_from}부터 {date_to} 사이에 회의 시간 맞춰줘")
+
+        self.assertEqual(trace["supervisor_selected_agent"], "kana_agent")
+        self.assertIn("collect_member_schedules", trace["inner_tool_names"])
+
+    def test_supervisor_never_calls_a_worker_tool_directly(self) -> None:
+        trace = self._run_supervisor("민준이랑 다음 주에 시간 맞춰줘")
+
+        supervisor_tool_calls = [
+            event["tool_name"]
+            for event in trace["events"]
+            if event.get("event") == "tool_call" and event.get("tool_name")
+        ]
+        worker_tool_names = set(week06.agent_tool_names("kana_agent")) | set(
+            week06.agent_tool_names("nana_agent")
+        )
+        # supervisor에게는 위임 도구 둘만 있으므로 worker 도구 이름이 나오면 구조가 깨진 것이다.
+        self.assertTrue(supervisor_tool_calls)
+        self.assertFalse(worker_tool_names & set(supervisor_tool_calls))
+
+    def test_group_request_chains_collect_find_and_decide(self) -> None:
+        date_from = (current_app_date() + timedelta(days=7)).isoformat()
+        date_to = (current_app_date() + timedelta(days=14)).isoformat()
+
+        trace = self._run_supervisor(
+            f"민준이랑 {date_from}부터 {date_to} 사이에 한 시간짜리 회의 시간을 정해줘"
+        )
+        inner = trace["inner_tool_names"]
+
+        self.assertIn("collect_member_schedules", inner)
+        self.assertIn("find_common_available_slots", inner)
+        self.assertIn("decide_final_slot", inner)
+        self.assertLess(inner.index("find_common_available_slots"), inner.index("decide_final_slot"))
+        self.assertIsNotNone(trace["final_slot_payload"])
+        self.assertLessEqual(
+            {"final_slot", "reason", "candidates"},
+            trace["final_slot_payload"].keys(),
+        )
 
 
 if __name__ == "__main__":

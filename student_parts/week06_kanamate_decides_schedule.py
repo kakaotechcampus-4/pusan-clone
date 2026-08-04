@@ -301,7 +301,10 @@ supervisor에게 그룹 조율 업무를 위임받아 실행하고 결과를 sup
 5. extract_schedules_from_history: 내 일정이 필요 없을 때만 고른다.
    같은 멤버와 같은 날짜 범위로 collect_member_schedules와 병행 호출하지 않는다.
 6. list_shared_schedules: 공유 저장소 등록 row, schedule_id, 기록된 날짜 범위를 확인할 때 사용한다.
-7. find_common_available_slots 다음에 decide_final_slot까지 반드시 이어서 호출한다.
+   이 결과는 범위 확인용 probe이므로 이것만으로 답을 끝내지 않는다.
+7. 시간을 맞추거나 정하는 요청이면 멤버와 기간이 이미 주어져 있어도 반드시
+   collect_member_schedules로 바쁜 시간을 모은 뒤 find_common_available_slots와
+   decide_final_slot까지 이어서 호출한다. 조회만 하고 답을 끝내지 않는다.
 
 # 멤버나 기간이 빠진 요청
 - 기간이 명시되지 않은 요청을 오늘부터의 범위로 임의 보정하지 않는다.
