@@ -2,7 +2,7 @@
 
 LLM 호출도, MCP subprocess 기동도 필요 없는 부분만 검증한다(멘토 3주 제안 반영).
 - _personal_schedules_for_current_scope : 실제 임시 SQLite 주입으로 마이그레이션 전환기 읽기 검증
-- _external_member_names_excluding_me   : "나" 제외 규칙(이번 주 가장 조용히 깨지는 규칙)
+- _dedupe_schedule_rows                 : 앱 DB/공유 저장소 중복 제거(이번 주 가장 조용히 깨지는 규칙)
 - _personal_schedule_rows               : 내 일정 -> 공통 row 스키마 성형, 날짜 경계
 - _is_within_date_range                 : 형식을 못 믿으면 버리지 않고 포함
 - _collect_member_schedules             : 내 일정 포함 여부, rows 를 자르지 않는 것
@@ -40,7 +40,7 @@ from student_parts.week05_load_kanas_past_conversations import (
     ExtractSchedulesFromHistoryInput,
     ListSharedSchedulesInput,
     _collect_member_schedules,
-    _external_member_names_excluding_me,
+    _dedupe_schedule_rows,
     _is_within_date_range,
     _personal_schedule_rows,
     _personal_schedules_for_current_scope,
@@ -80,40 +80,60 @@ def tearDownModule() -> None:
         _EXTERNAL_DB_TMP.cleanup()
 
 
-class ExternalMemberNamesExcludingMeTest(unittest.TestCase):
-    """외부 MCP 조회 대상에서 "나"를 제외한다.
+class DedupeScheduleRowsTest(unittest.TestCase):
+    """앱 DB 와 공유 저장소에서 같은 일정이 두 번 들어와도 한 번만 남긴다.
 
-    내 일정의 진실은 앱 SQLite 이고, 외부 공유 저장소의 "나" row 는 앱 저장 경로가
-    자동 생성하는 파생 복사본이다. 둘을 같이 읽으면 같은 일정이 두 번 들어간다.
+    앱에 저장한 내 일정은 공유 저장소에 "나" 이름으로 자동 동기화되므로, member_names 에
+    "나"가 들어오면 같은 일정이 두 경로로 들어온다. 두 경로가 제목/시각을 다르게 다듬어서
+    값을 그대로 비교하면 안 걸린다.
     """
 
-    def test_나를_제외한다(self):
-        self.assertEqual(_external_member_names_excluding_me(["나", "철수"]), ["철수"])
+    def _row(self, **overrides):
+        row = {
+            "member_name": "나",
+            "title": "팀 회의 (온라인)",
+            "date": "2026-07-15",
+            "start_time": "15:00",
+            "end_time": "미정",
+            "notes": "앱에 저장된 내 일정",
+        }
+        row.update(overrides)
+        return row
 
-    def test_나만_있으면_외부조회_대상이_없다(self):
-        # 이 경우 MCP subprocess 를 띄우지 않아야 한다.
-        self.assertEqual(_external_member_names_excluding_me(["나"]), [])
+    def test_소괄호_차이는_같은_일정으로_본다(self):
+        # 공유 저장소는 제목에서 소괄호를 지운다. 값 비교로는 이게 안 걸린다.
+        rows = _dedupe_schedule_rows(
+            [self._row(), self._row(title="팀 회의", notes="앱 개인 일정 자동 동기화")]
+        )
+        self.assertEqual(len(rows), 1)
+
+    def test_앞에_온_row가_남는다(self):
+        # 호출부가 my_rows 를 앞에 두므로 앱 DB row 가 남아야 참석자 notes 가 유지된다.
+        rows = _dedupe_schedule_rows(
+            [self._row(), self._row(title="팀 회의", notes="앱 개인 일정 자동 동기화")]
+        )
+        self.assertEqual(rows[0]["notes"], "앱에 저장된 내 일정")
+
+    def test_end_time만_다르면_같은_일정으로_본다(self):
+        # 앱 DB 경로와 공유 저장소 경로가 end_time 을 다르게 다듬어도 하나로 본다.
+        rows = _dedupe_schedule_rows([self._row(), self._row(end_time="18:00")])
+        self.assertEqual(len(rows), 1)
+
+    def test_사람이_다르면_남긴다(self):
+        rows = _dedupe_schedule_rows([self._row(), self._row(member_name="민준")])
+        self.assertEqual(len(rows), 2)
+
+    def test_시작_시각이_다르면_남긴다(self):
+        rows = _dedupe_schedule_rows([self._row(), self._row(start_time="16:00")])
+        self.assertEqual(len(rows), 2)
+
+    def test_빈_start_time은_미정과_같게_본다(self):
+        # 공유 저장소는 빈 start_time 을 "미정"으로 저장한다.
+        rows = _dedupe_schedule_rows([self._row(start_time=""), self._row(start_time="미정")])
+        self.assertEqual(len(rows), 1)
 
     def test_빈_입력은_빈_list다(self):
-        self.assertEqual(_external_member_names_excluding_me([]), [])
-
-    def test_공백_이름은_걸러진다(self):
-        self.assertEqual(_external_member_names_excluding_me(["철수", "  ", ""]), ["철수"])
-
-    def test_앞뒤_공백은_정규화된다(self):
-        self.assertEqual(_external_member_names_excluding_me([" 철수 "]), ["철수"])
-
-    def test_공백_붙은_나도_제외한다(self):
-        # 정규화 뒤에 판정해야 " 나 " 같은 입력이 새어 들어오지 않는다.
-        self.assertEqual(_external_member_names_excluding_me([" 나 ", "영희"]), ["영희"])
-
-    def test_중복_멤버는_한_번만_남는다(self):
-        self.assertEqual(_external_member_names_excluding_me(["철수", "철수"]), ["철수"])
-
-    def test_순서를_보존한다(self):
-        self.assertEqual(
-            _external_member_names_excluding_me(["영희", "나", "철수"]), ["영희", "철수"]
-        )
+        self.assertEqual(_dedupe_schedule_rows([]), [])
 
 
 class PersonalScheduleRowsTest(unittest.TestCase):

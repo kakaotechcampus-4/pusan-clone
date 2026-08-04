@@ -16,6 +16,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_parenthetical_text,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -192,7 +193,7 @@ _WEEK05_AGENT: Any | None = None
 #
 #   2. 가이드에 없는 순수 helper 5개를 추가했습니다. MCP/저장소 접근이 있는 함수에서
 #      '판단'만 떼어내 mocking 없이 테스트하기 위해서입니다.
-#        _external_member_names_excluding_me : 외부 조회 대상에서 "나" 제외
+#        _dedupe_schedule_rows               : 앱 DB/공유 저장소 중복 row 제거
 #        _my_schedule_notes                  : 내 일정 row 의 개인/그룹 구분 문구
 #        _personal_schedule_rows             : 내 일정 -> 공통 row 스키마 성형
 #        _is_within_date_range               : 날짜 범위 판정(형식 불명이면 포함)
@@ -414,24 +415,34 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     )
 
 
-def _external_member_names_excluding_me(member_names: list[str]) -> list[str]:
-    """외부 MCP 조회 대상 멤버 이름만 남깁니다. "나"는 제외합니다. (순수 함수)
+def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """같은 일정이 앱 DB 와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다. (순수 함수)
 
-    내 일정의 진실은 앱 SQLite 다. 외부 공유 저장소의 "나" row 는 앱 저장 경로가
-    자동으로 만드는 파생 복사본이라(sync_personal_schedule_to_shared), 원본과 같이 읽으면
-    같은 일정이 rows 에 두 번 들어간다. 동기화가 title/end_time/notes 값을 바꾸므로
-    합친 뒤 값으로 거르는 방법은 안정적이지 않아, member_name 으로 출처를 고른다.
+    앱에 저장한 내 일정은 공유 저장소에도 "나" 이름으로 자동 동기화되므로
+    (sync_personal_schedule_to_shared), member_names 에 "나"가 들어온 호출에서는
+    같은 일정이 앱 DB 경로와 공유 저장소 경로 두 갈래로 들어온다.
+
+    두 경로가 같은 일정을 다르게 다듬기 때문에 값을 그대로 비교하면 안 걸린다.
+      - 공유 저장소는 제목에서 소괄호를 지우고 연속 공백을 하나로 줄인다. 앱 DB 는 원문을 둔다.
+      - start_time 이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춘다.
+      - end_time 은 키에서 뺀다. 같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의
+        일정은 하나로 본다.
+
+    앞에 오는 row 를 남긴다(dict 는 넣은 순서를 유지하고 setdefault 는 덮어쓰지 않는다).
+    호출부가 my_rows 를 외부 rows 보다 앞에 두므로 앱 DB row 가 살아남고, 그래야
+    _my_schedule_notes() 가 만든 참석자 notes 가 "앱 개인 일정 자동 동기화"로 덮이지 않는다.
     """
 
-    normalized = normalize_external_member_names(member_names)
-    external_names: list[str] = []
-    for name in normalized:
-        if name == PERSONAL_SHARED_MEMBER_NAME:
-            continue
-        if name in external_names:
-            continue
-        external_names.append(name)
-    return external_names
+    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("member_name") or "").strip(),
+            str(row.get("date") or "").strip(),
+            str(row.get("start_time") or "").strip() or "미정",
+            strip_parenthetical_text(str(row.get("title") or "")),
+        )
+        deduped.setdefault(key, row)
+    return list(deduped.values())
 
 
 def _is_within_date_range(date: str, date_from: str, date_to: str) -> bool:
@@ -519,17 +530,20 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다.
 
-    출처를 '합치는' 게 아니라 멤버별로 **권위 있는 출처 하나씩만** 읽는다.
+    두 출처를 모두 읽고 합친 뒤 중복을 걸러낸다.
       - "나"      -> 앱 SQLite + 현재 대화의 임시 일정 (personal_schedules 로 주입)
       - 외부 멤버 -> 외부 SQLite/MCP 의 extract_schedules_from_history
+
+    member_names 에 "나"가 들어오면 공유 저장소의 "나" 복사본도 함께 들어오므로
+    _dedupe_schedule_rows() 로 한 번 거른다. my_rows 를 외부 rows 보다 **앞에** 두어야
+    앱 DB row 가 살아남고 참석자 notes 가 유지된다.
 
     내 일정은 항상 포함한다. 넣을지 말지는 이 tool 을 고르는 순간 이미 정해진 것이고
     (남 일정만 필요하면 extract_schedules_of_members_exclude_me 다), 인자로 한 번 더
     물으면 같은 판단을 두 곳에서 하게 된다.
-
-    판단 로직은 위의 순수 helper 두 개가 갖고, 이 함수는 그 둘과 MCP 호출 한 번을 엮는다.
     """
 
+    normalized_members = normalize_external_member_names(member_names)
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
         member_names, date_from, date_to
     )
@@ -539,24 +553,24 @@ def _collect_member_schedules(
         raise ValueError(
             f"date_from({normalized_date_from})이 date_to({normalized_date_to})보다 뒤입니다."
         )
-    external_members = _external_member_names_excluding_me(member_names)
-
     rows = _personal_schedule_rows(personal_schedules, normalized_date_from, normalized_date_to)
 
-    # 외부 조회 대상이 "나"뿐이면 MCP subprocess 를 띄울 이유가 없다.
-    if external_members:
+    # 조회 대상이 없으면 MCP subprocess 를 띄울 이유가 없다.
+    if normalized_members:
         # call_external_tool_payload 는 call_mcp_tool_sync + json.loads 다.
         # 여기서는 rows 를 꺼내 써야 하므로 문자열 그대로가 아니라 payload 로 읽는다.
         payload = call_external_tool_payload(
             "extract_schedules_from_history",
             {
-                "member_names": external_members,
+                "member_names": normalized_members,
                 "date_from": normalized_date_from,
                 "date_to": normalized_date_to,
             },
         )
         rows.extend(row for row in payload.get("rows", []) if isinstance(row, dict))
 
+    # 정렬보다 먼저 거른다. dedupe 는 앞에 오는 row 를 남기는데, 정렬이 그 순서를 흩뜨린다.
+    rows = _dedupe_schedule_rows(rows)
     rows.sort(
         key=lambda row: (
             str(row.get("date") or ""),
@@ -572,7 +586,11 @@ def _collect_member_schedules(
     return {
         "ok": True,
         "tool_name": "extract_schedules_of_members_include_me",
-        "member_names": [PERSONAL_SHARED_MEMBER_NAME, *external_members],
+        # "나"는 항상 맨 앞에 한 번만 둔다. 호출자가 "나"를 함께 넘겨도 두 번 들어가지 않는다.
+        "member_names": [
+            PERSONAL_SHARED_MEMBER_NAME,
+            *[name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME],
+        ],
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
         "rows": rows,
