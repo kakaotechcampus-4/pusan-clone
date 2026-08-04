@@ -191,10 +191,7 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
-    store = AppSQLiteStore(CONFIG.app_db_path)
-    personal = store.list_schedules(kind="personal_schedule", limit=100)
-    group = store.list_schedules(kind="group_schedule", limit=100)
-    result = personal + group
+    result = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=100)
     stored = {r.get("schedule_id") for r in result}
     scope = current_session_scope()
     return result + [s for s in PERSONAL_SCHEDULES if _schedule_scope(s) == scope and s.get("id") not in stored]
@@ -468,8 +465,6 @@ def week05_prompt_parts() -> list[str]:
         "등록된 공유 일정을 지워야 하면 delete_shared_schedule('schedule_id' 또는 'source_conversation_id' 항상 포함)를 사용한다. ",
         "이 두 도구는 사용자가 공유 일정 등록/수정/삭제를 명확히 요청했을 때만 호출한다. ",
         "delete_shared_schedule는 schedule_id 또는 source_conversation_id로 대상을 특정한다. ",
-
-        "외부 멤버 일정을 모아 여러 사람의 최종 회의 시간을 확정해달라는 요청이 들어오면 아직 불가능하다고 답변한다. "
     ]
 
 
