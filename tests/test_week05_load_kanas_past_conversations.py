@@ -179,7 +179,7 @@ class Week05IsolatedTestCase(unittest.TestCase):
 
 
 class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
-    def test_filters_personal_kind_before_applying_candidate_limit(self) -> None:
+    def test_keeps_group_schedule_within_candidate_limit(self) -> None:
         personal_rows = [
             {
                 "schedule_id": f"stored-{index}",
@@ -202,24 +202,24 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
         with patch.object(week05, "SQLITE_STORE", store):
             rows = week05._personal_schedules_for_current_scope()
 
-        self.assertEqual(len(rows), 20)
+        self.assertEqual(len(rows), 21)
         self.assertEqual(
             store.calls,
             [
                 {
                     "limit": week05.PERSONAL_SCHEDULE_CANDIDATE_LIMIT,
-                    "kind": "personal_schedule",
+                    "kind": None,
                     "date_from": None,
                     "date_to": None,
                 }
             ],
         )
-        self.assertTrue(all(row["request_kind"] == "personal_schedule" for row in rows))
-        self.assertNotIn("group-stored", {row["schedule_id"] for row in rows})
+        # 그룹 일정도 owner가 '나'인 내 일정이므로 바쁜 시간 후보에서 빠지면 안 된다.
+        self.assertIn("group-stored", {row["schedule_id"] for row in rows})
         self.assertTrue(all(row["source_store"] == "app_sqlite" for row in rows))
         self.assertEqual(original_rows, original_copy)
 
-    def test_real_store_excludes_group_schedule(self) -> None:
+    def test_real_store_includes_group_schedule(self) -> None:
         self.sqlite_store.save_structured_request(
             {
                 "kind": "personal_schedule",
@@ -235,15 +235,15 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
                 "title": "그룹 일정",
                 "date": "2026-07-08",
                 "members": ["나", "철수"],
-                "source_schedule_id": "group-excluded",
+                "source_schedule_id": "group-included",
             }
         )
 
         rows = week05._personal_schedules_for_current_scope()
 
         self.assertEqual(
-            [row["schedule_id"] for row in rows],
-            ["personal-only"],
+            {row["schedule_id"] for row in rows},
+            {"personal-only", "group-included"},
         )
 
     def test_collect_tool_filters_dates_before_candidate_limit(self) -> None:
@@ -283,22 +283,32 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
             [
                 {
                     "limit": week05.PERSONAL_SCHEDULE_CANDIDATE_LIMIT,
-                    "kind": "personal_schedule",
+                    "kind": None,
                     "date_from": "2026-07-07",
                     "date_to": "2026-07-17",
                 }
             ],
         )
 
-    def test_rejects_group_row_before_personal_relabeling(self) -> None:
-        with self.assertRaisesRegex(ValueError, "개인 일정"):
-            week05._structured_request_from_schedule_row(
-                {
-                    "request_kind": "group_schedule",
-                    "title": "그룹 일정",
-                    "date": "2026-07-07",
-                }
-            )
+    def test_reads_schedule_kind_from_row(self) -> None:
+        group_request = week05._structured_request_from_schedule_row(
+            {
+                "request_kind": "group_schedule",
+                "title": "하린과 사전 미팅",
+                "date": "2026-07-14",
+                "attendees": ["나", "하린"],
+            }
+        )
+        # Week 1 임시 일정 row에는 request_kind가 없으므로 개인 일정으로 봐야 한다.
+        personal_request = week05._structured_request_from_schedule_row(
+            {
+                "title": "개인 일정",
+                "date": "2026-07-14",
+            }
+        )
+
+        self.assertEqual(group_request.kind, "group_schedule")
+        self.assertEqual(personal_request.kind, "personal_schedule")
 
     def test_deduplicates_saved_id_and_keeps_only_current_session_memory(self) -> None:
         self.sqlite_store.save_structured_request(

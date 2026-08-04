@@ -280,9 +280,9 @@ def _personal_schedules_for_current_scope(
 ) -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
+    # 그룹 일정도 owner가 '나'인 내 일정이므로 kind 필터 없이 개인·그룹을 모두 바쁜 시간 근거로 읽는다.
     stored_schedules = SQLITE_STORE.list_schedules(
         limit=PERSONAL_SCHEDULE_CANDIDATE_LIMIT,
-        kind="personal_schedule",
         date_from=date_from,
         date_to=date_to,
     )
@@ -422,13 +422,11 @@ class CollectMemberSchedulesInput(_RequiredScheduleDateRangeInput):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 개인 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
 
-    row_kind = row.get("request_kind") or row.get("kind")
-    if row_kind not in {None, "personal_schedule"}:
-        raise ValueError("개인 일정 row만 busy-time으로 변환할 수 있습니다.")
+    # Week 1 임시 일정 row에는 request_kind가 없으므로 그때만 개인 일정으로 본다.
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
