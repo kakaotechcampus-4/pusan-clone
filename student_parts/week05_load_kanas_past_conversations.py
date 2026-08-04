@@ -190,9 +190,10 @@ _WEEK05_AGENT: Any | None = None
 #      extract_schedules_from_history 는 MCP 서버 tool 의 이름이기도 해서
 #      call_mcp_tool_sync 호출 문자열로는 그대로 씁니다.
 #
-#   2. 가이드에 없는 순수 helper 4개를 추가했습니다. MCP/저장소 접근이 있는 함수에서
+#   2. 가이드에 없는 순수 helper 5개를 추가했습니다. MCP/저장소 접근이 있는 함수에서
 #      '판단'만 떼어내 mocking 없이 테스트하기 위해서입니다.
 #        _external_member_names_excluding_me : 외부 조회 대상에서 "나" 제외
+#        _my_schedule_notes                  : 내 일정 row 의 개인/그룹 구분 문구
 #        _personal_schedule_rows             : 내 일정 -> 공통 row 스키마 성형
 #        _is_within_date_range               : 날짜 범위 판정(형식 불명이면 포함)
 #        _validate_date_order                : 조회 tool 3종의 날짜 역전 검증(스키마에서 호출)
@@ -395,10 +396,15 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    kind 를 개인 일정으로 고정하지 않는다. schedules 테이블은 개인/그룹을 구분해 담고
+    (`request_kind`), 조율 화면에서 "이 시간은 누구와의 약속인가"가 개인 일정과 다르게
+    읽히기 때문이다. Week 1 임시 일정 row 에는 이 값이 없으므로 그때만 개인 일정으로 본다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -453,6 +459,22 @@ def _is_within_date_range(date: str, date_from: str, date_to: str) -> bool:
     return True
 
 
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row 가 개인 일정인지, 참석자가 있는 그룹 일정인지 적습니다. (순수 함수)
+
+    row 구조가 개인/그룹 모두 같아서, notes 가 없으면 조율 결과를 읽는 쪽이 "이 시간이 왜
+    막혔는지"를 알 수 없다. 참석자를 함께 적어 두면 이미 그 사람과 잡아둔 약속인지
+    바로 보인다. 반면 busy-time 판정 자체는 종류와 무관하므로 rows 에서 빼지 않는다.
+    """
+
+    if request.kind != "group_schedule":
+        return "앱에 저장된 내 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    if not members:
+        return "앱에 저장된 내 그룹 일정"
+    return f"앱에 저장된 내 그룹 일정 · 참석자: {', '.join(members)}"
+
+
 def _personal_schedule_rows(
     personal_schedules: list[dict[str, Any]],
     date_from: str,
@@ -482,7 +504,7 @@ def _personal_schedule_rows(
                 "date": date,
                 "start_time": request.start_time or "미정",
                 "end_time": request.end_time or "미정",
-                "notes": "앱에 저장된 내 일정",
+                "notes": _my_schedule_notes(request),
             }
         )
     return rows
@@ -773,6 +795,15 @@ WEEK05_EXTERNAL_MEMBER_PROMPT = (
     "'오늘 하루'로 좁히면 실제로 있는 일정을 없다고 답하게 되기 때문이다. "
     "list_shared_schedules 는 필터가 모두 선택이라 이 규칙과 무관하다 — 그대로 호출한다.\n"
     "조회 결과의 rows와 schedule_summary만 근거로 답한다. 사용자가 묻지 않은 사람의 일정은 언급하지 않는다.\n"
+    # notes 는 rows 에 이미 실려 있지만, 쓰라고 말하지 않으면 "선약이 있습니다"까지만
+    # 답하고 사용자는 그 시간을 옮길 수 있는지 판단할 수 없다.
+    "notes는 그 시간이 왜 막혔는지 설명할 때 쓴다 — "
+    "내 그룹 일정이면 참석자를 밝혀 누구와의 선약인지 알린다(내 일정을 말하는 것이므로 "
+    "위의 '묻지 않은 사람' 규칙에 걸리지 않는다). "
+    # 내 일정의 참석자는 '내가 그때 약속을 잡아뒀다'는 사실일 뿐, 그 사람이 지금도
+    # 그 시간에 바쁘다는 근거가 아니다. 상대가 그 약속을 옮겼어도 내 row 는 남는다.
+    "다만 그 이름을 그 사람의 현재 일정으로 읽지 않는다 — "
+    "다른 사람이 그 시간에 가능한지는 그 사람을 조회한 rows로만 판단한다.\n"
     "조회를 하지 않은 채 '기록이 없다'고 말하지 않는다. 처음 보는 이름이라도 일단 tool로 조회하고, "
     "결과가 비어 있을 때만 없다고 답한다."
 )

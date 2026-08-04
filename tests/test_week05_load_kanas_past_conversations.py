@@ -169,6 +169,58 @@ class PersonalScheduleRowsTest(unittest.TestCase):
         self.assertEqual(rows[0]["title"], "스터디")
         self.assertEqual(rows[0]["end_time"], "미정")
 
+    def test_그룹_일정은_notes에_참석자가_적힌다(self):
+        # row 구조가 개인/그룹 모두 같아서, notes 가 없으면 조율 결과를 읽는 쪽이
+        # "이 시간이 왜 막혔는지"를 알 수 없다.
+        rows = _personal_schedule_rows(
+            [
+                {
+                    "title": "사전 미팅",
+                    "date": "2026-07-15",
+                    "start_time": "15:00",
+                    "end_time": "16:00",
+                    "attendees": ["하린", "민준"],
+                    "request_kind": "group_schedule",
+                }
+            ],
+            "",
+            "",
+        )
+        self.assertEqual(rows[0]["notes"], "앱에 저장된 내 그룹 일정 · 참석자: 하린, 민준")
+
+    def test_참석자_없는_그룹_일정도_그룹으로_적는다(self):
+        rows = _personal_schedule_rows(
+            [
+                {
+                    "title": "정리 안 된 그룹 일정",
+                    "date": "2026-07-15",
+                    "start_time": "15:00",
+                    "attendees": [],
+                    "request_kind": "group_schedule",
+                }
+            ],
+            "",
+            "",
+        )
+        self.assertEqual(rows[0]["notes"], "앱에 저장된 내 그룹 일정")
+
+    def test_Week1_임시_row는_개인_일정으로_본다(self):
+        # 임시 일정 row 에는 request_kind 가 없다. 참석자가 있어도 그룹으로 단정하지 않는다.
+        rows = _personal_schedule_rows(
+            [
+                {
+                    "id": "personal_1",
+                    "title": "스터디",
+                    "date": "2026-07-15",
+                    "start_time": "10:00",
+                    "attendees": ["철수"],
+                }
+            ],
+            "",
+            "",
+        )
+        self.assertEqual(rows[0]["notes"], "앱에 저장된 내 일정")
+
     def test_날짜없는_일정은_제외한다(self):
         # 날짜가 없으면 busy-time 근거가 될 수 없다.
         rows = _personal_schedule_rows(
