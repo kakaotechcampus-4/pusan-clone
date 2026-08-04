@@ -315,6 +315,30 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
         )
         self.assertEqual(week05._my_schedule_notes(personal_request), "Nana 개인 일정")
 
+    def test_dedupes_rows_ignoring_parentheticals_and_end_time(self) -> None:
+        app_row = {
+            "member_name": "나",
+            "title": "팀 회의 (온라인)",
+            "date": "2026-07-14",
+            "start_time": "15:00",
+            "end_time": "18:00",
+            "notes": "Nana 개인 일정",
+        }
+        shared_row = {
+            "member_name": "나",
+            "title": "팀 회의",
+            "date": "2026-07-14",
+            "start_time": "15:00",
+            "end_time": "미정",
+            "notes": "앱 개인 일정 자동 동기화",
+        }
+
+        rows = week05._dedupe_schedule_rows([app_row, shared_row])
+
+        self.assertEqual(len(rows), 1)
+        # 앞에 오는 앱 DB row가 남아야 notes가 내 일정 설명으로 유지된다.
+        self.assertEqual(rows[0]["notes"], "Nana 개인 일정")
+
     def test_deduplicates_saved_id_and_keeps_only_current_session_memory(self) -> None:
         self.sqlite_store.save_structured_request(
             {
@@ -510,6 +534,18 @@ class CollectMemberSchedulesHelperTest(Week05IsolatedTestCase):
         self.assertEqual(len(payload["rows"]), 1)
         self.assertEqual(payload["rows"][0]["schedule_id"], "personal-only")
         self.assertEqual(payload["rows"][0]["member_name"], "나")
+
+    def test_repeated_me_stays_once_in_filters(self) -> None:
+        payload = week05._collect_member_schedules(
+            member_names=["나", " 나 "],
+            date_from="2026-07-07",
+            date_to="2026-07-17",
+            personal_schedules=[],
+        )
+
+        self.mcp_mock.assert_not_called()
+        self.assertEqual(payload["filters"]["member_names"], ["나"])
+        self.assertEqual(payload["filters"]["excluded_member_names"], ["나"])
 
     def test_group_schedule_row_becomes_my_busy_time(self) -> None:
         mcp_result = json.dumps({"ok": True, "rows": []}, ensure_ascii=False)

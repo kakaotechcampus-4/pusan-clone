@@ -16,6 +16,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_parenthetical_text,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -39,6 +40,9 @@ _WEEK05_AGENT: Any | None = None
 
 # 날짜 선필터 뒤에도 범위 내 일정이 기본 12건에서 잘리지 않도록 후보 상한을 500건으로 둔다.
 PERSONAL_SCHEDULE_CANDIDATE_LIMIT = 500
+
+# 병합 결과만으로 내 일정의 저장 위치를 추적할 수 있도록 출처별 source_store 값을 고정한다.
+MY_SCHEDULE_SOURCE_STORES = ("app_sqlite", "session_memory")
 
 # 이전 주차의 외부 조회 금지와 충돌하지 않도록 Week 5의 허용 범위를 명시한다.
 WEEK05_EXTERNAL_SOURCE_PROMPT = """
@@ -439,6 +443,22 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
     return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
 
 
+def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다."""
+
+    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        # 두 경로가 제목과 end_time을 다르게 다듬어 값 비교로는 중복이 안 걸린다.
+        key = (
+            str(row.get("member_name") or "").strip(),
+            str(row.get("date") or "").strip(),
+            str(row.get("start_time") or "").strip() or "미정",
+            strip_parenthetical_text(str(row.get("title") or "")),
+        )
+        deduped.setdefault(key, row)
+    return list(deduped.values())
+
+
 def _collect_member_schedules(
     *,
     member_names: list[str],
@@ -448,7 +468,14 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    normalized_members = normalize_external_member_names(member_names)
+    # "나"를 여러 번 넘겨도 filters와 조회 대상에 한 번만 남도록 내 이름의 중복을 먼저 없앤다.
+    requested_members = normalize_external_member_names(member_names)
+    normalized_members = [
+        member_name
+        for index, member_name in enumerate(requested_members)
+        if member_name != PERSONAL_SHARED_MEMBER_NAME
+        or requested_members.index(member_name) == index
+    ]
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
         member_names,
         date_from,
@@ -505,7 +532,8 @@ def _collect_member_schedules(
         )
     external_rows = external_payload.get("rows", [])
 
-    rows = [*personal_rows, *external_rows]
+    # 앱 DB row의 notes를 살리려면 personal_rows가 external_rows보다 앞에 와야 한다.
+    rows = _dedupe_schedule_rows([*personal_rows, *external_rows])
     rows.sort(
         key=lambda row: (
             str(row.get("date") or ""),
@@ -513,11 +541,12 @@ def _collect_member_schedules(
             str(row.get("member_name") or ""),
         )
     )
-    sources = {
-        "app_sqlite": sum(row.get("source_store") == "app_sqlite" for row in personal_rows),
-        "session_memory": sum(row.get("source_store") == "session_memory" for row in personal_rows),
-        "external_mcp": len(external_rows),
+    # 중복 제거 후의 rows를 세어 병합 결과와 출처 집계가 어긋나지 않게 한다.
+    my_row_counts = {
+        source_store: sum(row.get("source_store") == source_store for row in rows)
+        for source_store in MY_SCHEDULE_SOURCE_STORES
     }
+    sources = {**my_row_counts, "external_mcp": len(rows) - sum(my_row_counts.values())}
 
     return {
         "ok": bool(external_payload.get("ok", True)),
