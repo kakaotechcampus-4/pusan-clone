@@ -425,6 +425,25 @@ class PersonalSchedulesForCurrentScopeTest(unittest.TestCase):
             }
         )
 
+    def test_저장된_그룹_일정도_읽는다(self):
+        # 그룹 일정을 빠뜨리면 이미 잡아둔 회의 시간이 "빈 시간"으로 추천된다.
+        # 공유 저장소는 참석자 이름으로만 복사본을 만들고 "나" row 는 만들지 않으므로,
+        # 여기서 빠지면 그 일정은 어느 경로에서도 내 busy-time 으로 잡히지 않는다.
+        self.store.save_structured_request(
+            {
+                "kind": "group_schedule",
+                "title": "하린과 사전 미팅",
+                "date": "2026-07-14",
+                "start_time": "15:00",
+                "end_time": "16:00",
+                "members": ["하린"],
+                "original_text": "하린과 사전 미팅",
+            }
+        )
+        merged = _personal_schedules_for_current_scope(app_store=self.store)
+        self.assertEqual([row["title"] for row in merged], ["하린과 사전 미팅"])
+        self.assertEqual(merged[0]["request_kind"], "group_schedule")
+
     def test_SQLite_저장_일정을_읽는다(self):
         self._save_schedule("저장된 일정", "2026-07-15")
         merged = _personal_schedules_for_current_scope(app_store=self.store)
