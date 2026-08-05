@@ -617,7 +617,7 @@ def propose_group_schedule(
 
 
 @tool(args_schema=AgentQueryInput)
-def nana_agent(query: str) -> str:
+def nana_agent(query: str) -> str:  # nana 에이전트 실행 구현하기
     """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다."""
 
     # TODO: Week 4 도구를 가진 Nana 하위 agent를 실행하고 answer/trace/inner_tool_names를 반환하세요.
@@ -626,18 +626,110 @@ def nana_agent(query: str) -> str:
     #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
     #     trace와 answer를 뽑습니다.
     #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+
+    global _NANA_SUBAGENT  # <- 를 사용해서 Agent를 매 요청마다 새로 만들지 않음
+
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=week04_tools(),
+            system_prompt=nana_system_prompt(),
+        )
+
+    result = _NANA_SUBAGENT.invoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": query,
+                }
+            ]
+        }
+    )
+
+    trace = extract_agent_events(result)
+    answer = extract_final_text(result)
+
+    payload = {
+        "selected_agent": "nana_agent",
+        "answer": answer,
+        "trace": trace,
+        "inner_tool_names": _tool_call_names(
+            trace
+        ),  # Nana가 실제로 어떤 tool을 썼는지 가져오기
+    }
+
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @tool(args_schema=AgentQueryInput)
-def kana_agent(query: str) -> str:
+def kana_agent(
+    query: str,
+) -> str:  # Kana 에이전트 실행 구현 (최종 일정 결과까지 supervisor로 끌어올려야 함)
     """그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다."""
 
     # TODO: Kana 하위 agent를 실행하고 trace에서 final_slot_payload/final_decision_payload를 끌어올려 반환하세요.
     #   - _KANA_SUBAGENT를 kana_tools()와 kana_system_prompt()로 한 번만 만들고 재사용합니다.
     #   - trace event의 content를 훑어 final_slot이 들어 있는 dict와 final_decision 값을 찾습니다.
     #   - answer, trace, inner_tool_names, final_slot_payload, final_decision_payload를 JSON으로 반환합니다.
-    ...
+
+    global _KANA_SUBAGENT
+
+    if _KANA_SUBAGENT is None:
+        _KANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=kana_tools(),
+            system_prompt=kana_system_prompt(),
+        )
+
+    result = _KANA_SUBAGENT.invoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": query,
+                }
+            ]
+        }
+    )
+
+    trace = extract_agent_events(result)
+    answer = extract_final_text(result)
+
+    final_slot_payload: dict[str, Any] | None = None
+    final_decision_payload: dict[str, Any] | None = None
+
+    for event in trace:
+        content = event.get("content")
+
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        if not isinstance(content, dict):
+            continue
+
+        if "final_slot" in content:
+            final_slot_payload = content
+
+        if content.get("final_decision_payload"):
+            final_decision_payload = content["final_decision_payload"]
+        elif content.get("final_decision"):
+            final_decision_payload = content["final_decision"]
+
+    # final_slot_payload, final_decision_payload, inner_tool_names 를 위로 올려주기
+    payload = {
+        "selected_agent": "kana_agent",
+        "answer": answer,
+        "trace": trace,
+        "inner_tool_names": _tool_call_names(trace),
+        "final_slot_payload": final_slot_payload,
+        "final_decision_payload": final_decision_payload,
+    }
+
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def build_langchain_supervisor_agent() -> object:
