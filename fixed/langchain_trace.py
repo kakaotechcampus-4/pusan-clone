@@ -94,7 +94,7 @@ def message_tool_call_names(message: Any) -> list[str]:
             names.append(str(call["name"]))
     return names
 
-
+_FAIL_CREATE_ANSWER = "응답을 생성하지 못했습니다."
 def extract_final_text(result: dict[str, Any]) -> str:
     """LangChain 실행 결과의 마지막 비어 있지 않은 메시지를 최종 답변으로 사용합니다."""
 
@@ -108,7 +108,7 @@ def extract_final_text(result: dict[str, Any]) -> str:
         text = message_content_to_text(message)
         if text:
             return text
-    return "응답을 생성하지 못했습니다."
+    return _FAIL_CREATE_ANSWER
 
 
 def extract_agent_events(result: dict[str, Any]) -> list[dict[str, Any]]:

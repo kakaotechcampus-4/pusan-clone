@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from fixed.external_people_store import normalize_external_member_names
-from fixed.langchain_trace import extract_agent_events, extract_final_text
+from fixed.langchain_trace import extract_agent_events, extract_final_text, _FAIL_CREATE_ANSWER
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.schedule_decision import (
@@ -605,7 +605,6 @@ def propose_group_schedule(
     }
     return json.dumps({"ok": True, "tool_name": "propose_group_schedule", "final_decision": payload}, ensure_ascii=False)
 
-_FAIL_CREATE_ANSWER = "응답을 생성하지 못했습니다."
 _DECISION_KEYS = {"final_slot", "candidates", "needs_agent_selection"}
 
 @tool(args_schema=AgentQueryInput)
