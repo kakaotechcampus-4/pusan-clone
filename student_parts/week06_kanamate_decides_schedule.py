@@ -442,6 +442,56 @@ class AgentQueryInput(BaseModel):
 
     query: str
 
+MARGIN_MINUTES = 3 * 60   # 3시간
+
+def _refine_busy_row(row: dict[str, Any]) -> dict[str, Any]:
+    """시간이 미정인 일정을 겹침 계산용 시각으로 보정해서 반환합니다."""
+    # case 1: start, end 둘 다 미정 => (00:00, 00:00)으로 변환
+    # case 2: start만 미정 => end 전 MARGIN_MINUTES 만큼만 busy(00:00 이하면 clip)
+    # case 3: end만 미정 => start부터 MARGIN_MINUTES 만큼만 busy(23:59가 넘으면 clip)
+    # 그 외: 원본 유지
+
+    start = row.get("start_time")
+    end = row.get("end_time")
+    start_missing = not start or start == "미정"
+    end_missing = not end or end == "미정"
+
+    def _to_minutes(value: str) -> int:
+        h, m = value.split(":")
+        return int(h)*60 + int(m)
+
+    def _to_hhmm(minutes: int) -> str:
+        if minutes >= 24*60:
+            return "23:59"
+        if minutes < 0:
+            minutes = 0
+        return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+    # case 1: 둘 다 미정
+    if start_missing and end_missing:
+        return {**row, "start_time": "00:00", "end_time": "00:00"}
+
+    # case 2: start만 미정
+    if start_missing and not end_missing:
+        try:
+            e_min = _to_minutes(end)
+        except ValueError:
+            return row
+        s_min = max(0, e_min-MARGIN_MINUTES)   # 00:00 이하면 clip
+        return {**row, "start_time": _to_hhmm(s_min)}
+
+    # case 3: end만 미정
+    if end_missing and not start_missing:
+        try:
+            s_min = _to_minutes(start)
+        except ValueError:
+            return row
+        e_min = min(24*60, s_min+MARGIN_MINUTES)   # 24:00 넘으면 clip
+        return {**row, "end_time": _to_hhmm(e_min)}
+
+    # 그 외: 원본 유지
+    return row
+
 
 def find_common_available_slots_dict(
     member_names: list[str],
@@ -468,16 +518,10 @@ def find_common_available_slots_dict(
             "member_names": normalized_members, "date_from": norm_from, "date_to": norm_to}))
         available_rows = recollect.get("rows", [])
 
-    available_rows = [
-        r for r in available_rows
-        if not (
-            (not r.get("start_time") or r.get("start_time") == "미정")
-            and
-            (not r.get("end_time") or r.get("end_time") == "미정")
-        )
-    ]
+    # raw_busy_rows = list(available_rows)
+    refined_rows = [_refine_busy_row(r) for r in available_rows]
     
-    return find_common_available_slots_payload(
+    payload = find_common_available_slots_payload(
         member_names=normalized_members,
         date_from=norm_from,
         date_to=norm_to,
@@ -485,9 +529,11 @@ def find_common_available_slots_dict(
         workday_start=workday_start,
         workday_end=workday_end,
         limit=limit,
-        busy_rows= available_rows,
+        busy_rows= refined_rows,
         candidate_slots=candidate_slots,
         llm_reason=llm_reason)
+    # payload["raw_busy_rows"] = raw_busy_rows
+    return payload
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
