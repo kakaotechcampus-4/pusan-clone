@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""실제 LLM과 케이스 고정 mock tool로 Week 4·5 routing을 평가합니다."""
+"""실제 LLM과 케이스 고정 mock tool로 Week 4~6 agent 행동을 평가합니다."""
 
 import dataclasses
 import importlib
@@ -22,12 +22,14 @@ from fixed.llm import chat_model
 from fixed.session_scope import conversation_session_scope
 from tests.evals.cases_week04_routing import WEEK04_ROUTING_CASES
 from tests.evals.cases_week05_routing import WEEK05_ROUTING_CASES
+from tests.evals.cases_week06_routing import WEEK06_ROUTING_CASES
 from tests.evals.mock_tools import CaseMockTools
 
 
 WEEK03_MODULE = "student_parts.week03_build_nanas_logbook"
 WEEK04_MODULE = "student_parts.week04_retrieve_nanas_memory"
 WEEK05_MODULE = "student_parts.week05_load_kanas_past_conversations"
+WEEK06_MODULE = "student_parts.week06_kanamate_decides_schedule"
 CASE_PASS_RATE_FLOOR = 0.8
 EVAL_TODAY = date(2026, 7, 26)
 
@@ -40,10 +42,11 @@ def _freeze_eval_clock(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @dataclasses.dataclass(frozen=True)
 class EvalEnvironment:
-    """저장소 없이 import한 Week 4·5 모듈과 실제 채팅 모델입니다."""
+    """저장소 없이 import한 Week 4~6 모듈과 실제 채팅 모델입니다."""
 
     week04: Any
     week05: Any
+    week06: Any
     model: Any
 
 
@@ -64,7 +67,7 @@ def eval_env() -> Any:
         lambda _path: object(),
     )
 
-    module_names = (WEEK05_MODULE, WEEK04_MODULE, WEEK03_MODULE)
+    module_names = (WEEK06_MODULE, WEEK05_MODULE, WEEK04_MODULE, WEEK03_MODULE)
     previous_modules = {
         name: sys.modules.pop(name)
         for name in module_names
@@ -72,9 +75,15 @@ def eval_env() -> Any:
     }
 
     try:
+        week06 = importlib.import_module(WEEK06_MODULE)
         week05 = importlib.import_module(WEEK05_MODULE)
         week04 = importlib.import_module(WEEK04_MODULE)
-        yield EvalEnvironment(week04=week04, week05=week05, model=chat_model())
+        yield EvalEnvironment(
+            week04=week04,
+            week05=week05,
+            week06=week06,
+            model=chat_model(),
+        )
     finally:
         for name in module_names:
             sys.modules.pop(name, None)
@@ -118,6 +127,16 @@ def week05_case_results(
 ) -> dict[str, dict[str, Any]]:
     cases = _selected_cases(request.session, WEEK05_ROUTING_CASES)
     return _run_cases(request, week05_eval_env, cases, eval_repeats)
+
+
+@pytest.fixture(scope="session")
+def week06_case_results(
+    request: pytest.FixtureRequest,
+    eval_env: EvalEnvironment,
+    eval_repeats: int | None,
+) -> dict[str, dict[str, Any]]:
+    cases = _selected_cases(request.session, WEEK06_ROUTING_CASES)
+    return _run_cases(request, eval_env, cases, eval_repeats)
 
 
 def _run_cases(
@@ -235,11 +254,29 @@ def _run_week05_once(
     )
 
 
+def _run_week06_once(
+    environment: EvalEnvironment,
+    case: dict[str, Any],
+    index: int,
+) -> RunOutcome:
+    if case["surface"] == "supervisor":
+        tools = environment.week06.supervisor_tools()
+        system_prompt = environment.week06.supervisor_system_prompt()
+    elif case["surface"] == "kana":
+        tools = environment.week06.kana_tools()
+        system_prompt = environment.week06.kana_system_prompt()
+    else:
+        raise ValueError(f"알 수 없는 Week 6 eval surface: {case['surface']}")
+    return _run_agent_once(environment, tools, system_prompt, case, index)
+
+
 def _run_case_once(
     environment: EvalEnvironment,
     case: dict[str, Any],
     index: int,
 ) -> RunOutcome:
+    if case["id"].startswith("week06."):
+        return _run_week06_once(environment, case, index)
     if case["id"].startswith("week05."):
         return _run_week05_once(environment, case, index)
     return _run_once(environment, case, index)

@@ -11,6 +11,7 @@ import pytest
 from fixed.langchain_trace import to_jsonable
 from tests.evals.cases_week04_routing import WEEK04_ROUTING_CASES
 from tests.evals.cases_week05_routing import WEEK05_ROUTING_CASES
+from tests.evals.cases_week06_routing import WEEK06_ROUTING_CASES
 from tests.evals.conftest import RunOutcome
 
 
@@ -60,11 +61,12 @@ def _case_record(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]
 def test_routing_answers_are_exported(
     case_results: dict[str, dict[str, Any]],
     week05_case_results: dict[str, dict[str, Any]],
+    week06_case_results: dict[str, dict[str, Any]],
 ) -> None:
     """추가 LLM 호출 없이 모든 routing 답변을 한 artifact에 기록합니다."""
 
-    cases = [*WEEK04_ROUTING_CASES, *WEEK05_ROUTING_CASES]
-    results = {**case_results, **week05_case_results}
+    cases = [*WEEK04_ROUTING_CASES, *WEEK05_ROUTING_CASES, *WEEK06_ROUTING_CASES]
+    results = {**case_results, **week05_case_results, **week06_case_results}
     missing = [case["id"] for case in cases if case["id"] not in results]
     assert not missing, f"artifact에 포함할 routing 결과가 없다: {missing}"
 
