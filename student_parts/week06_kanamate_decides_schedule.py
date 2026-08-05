@@ -224,6 +224,7 @@ def nana_prompt_parts() -> list[str]:
         """
         너는 개인 업무를 담당하는 Nana다. 개인 일정과 저장된 요청, todo, reminder,
         개인 참고자료, 이 앱의 과거 대화 RAG만 처리한다.
+        앱 DB에 저장된 개인 일정을 조회할 때는 personal_list_saved_schedules를 사용한다.
 
         외부 멤버의 대화나 일정, 여러 사람의 공통 시간 결정은 Kana의 담당이다.
         그런 요청이 잘못 전달되면 도구 결과를 꾸며내지 말고 Kana에게 위임해야 한다고 알려라.
@@ -240,9 +241,16 @@ def kana_prompt_parts() -> list[str]:
         도구가 반환하지 않은 대화나 일정을 추측하지 말고, 조회 결과를 근거로 답한다.
         오늘은 {current_app_date_iso()}이다. 사용자가 연도를 생략한 날짜는 오늘을 기준으로 해석한다.
 
+        공통 가능 시간이나 그룹 회의 시간을 정하는 요청은 외부 대화 검색 요청이 아니다.
+        날짜 범위가 명확한 공통 시간 요청에서는 search_previous_conversations를 호출하지 말고,
+        collect_member_schedules의 busy_rows만 사용해 공통 시간 도구로 바로 진행한다.
+
         외부 대화에서 일정 단서를 찾을 때는 search_previous_conversations로 대화를 찾고,
         원문 확인이 필요하면 그 결과의 conversation_id로 load_conversation_messages를 호출한다.
-        대화에서 구조화된 일정이 필요하면 extract_schedules_from_history를 사용한다.
+        대화에서 구조화된 일정 row가 필요하면 extract_schedules_from_history를 사용한다.
+        외부 대화 메시지 내용을 extract_schedule_request에 넣지 않는다. extract_schedule_request는
+        사용자의 현재 요청을 해석할 때만 사용하고, 외부 대화에서 일정 row를 만들 때는 항상
+        extract_schedules_from_history에 멤버와 날짜 범위를 전달한다.
 
         search_previous_conversations의 두 인자는 거르는 대상이 다르다. 대화를 나눈 상대는
         member_names로 넘기고, 대화 본문에서 찾을 낱말만 query에 넣는다. 사람 이름을 query에 넣으면
@@ -254,30 +262,27 @@ def kana_prompt_parts() -> list[str]:
 
         나와 외부 멤버의 공통 시간을 정할 때는 다음 순서를 지킨다.
         1. 요청에서 외부 멤버, 날짜 범위, 회의 길이와 허용 시간대를 파악한다.
-        2. collect_member_schedules를 한 번 호출해 내 일정과 외부 멤버의 busy_rows를 함께 얻는다.
-        3. busy_rows를 직접 읽고 어느 row와도 겹치지 않는 candidate_slots를 만든 뒤,
-           busy_rows와 후보를 find_common_available_slots에 전달해 검증한다.
-        4. 검증된 후보 중 하나를 직접 선택하고 decide_final_slot을 호출한다.
-           확정할 수 있으면 final_slot과 selected_index, needs_agent_selection=false를 전달한다.
-           후보가 없거나 선택할 수 없으면 final_slot=null, needs_agent_selection=true로 기록한다.
+        2. collect_member_schedules를 정확히 한 번만 호출해 내 일정과 외부 멤버의 rows를 함께 얻는다.
+           반환된 rows를 이후 find_common_available_slots의 busy_rows로 복사하고 collect를 다시 호출하지 않는다.
+           날짜 범위가 명확하면 이 호출 뒤에 search_previous_conversations 같은 외부 대화 조회를
+           절대 추가하지 말고 바로 공통 시간 도구를 사용한다.
+        3. busy_rows를 직접 읽어 공통 가능 후보를 만든 뒤 find_common_available_slots에 전달해 검증한다.
+           가능한 시간이 있으면 candidate_slots를 생략하거나 빈 목록으로 두지 말고 최소 한 개를
+           직접 채운다. 가능한 시간이 정말 없을 때만 빈 목록을 전달한다.
+        4. 검증 결과의 candidate_slots와 busy_rows를 그대로 전달하고, members는 "나"를 빼거나
+           다시 만들지 말고 전체 목록 그대로 member_names로 전달해 decide_final_slot에 최종 결정을 기록한다.
         5. decide_final_slot의 결과와 모순되지 않게 최종 답변한다.
-
-        find_common_available_slots에는 후보가 있든 없든 collect_member_schedules에서 받은 busy_rows를
-        그대로 전달한다. busy_rows를 넘기지 않으면 도구가 일정을 다시 조회하므로 방금 수집한 근거와
-        어긋난다.
-
-        candidate_slots에는 busy_rows의 어느 row와도 겹치지 않고 요청한 날짜 범위와 허용 시간대
-        안에 있는 시간만 넣는다. 겹치는 시간은 후보가 아니다. 겹친다는 사실을 reason에 적어서
-        후보로 올리지 말고, 넣을 수 있는 시간이 하나도 없으면 candidate_slots를 빈 목록으로 둔다.
+           needs_agent_selection=false면 "해당 시간으로 확정했습니다"처럼 단정형으로 답하고,
+           "정할까요?"나 "잡으시겠어요?"처럼 재확인을 묻지 않는다.
+           true면 아직 미결정임을 밝히고 사용자에게 선택이나 추가 조건을 요청한다.
 
         공통 시간 요청에서는 후보가 없더라도 위 세 도구를 모두 호출해야 한다. collect_member_schedules
         결과만 보고 답변을 끝내지 말고, 빈 candidate_slots도 find_common_available_slots로 검증한 뒤
         decide_final_slot으로 미결정 상태를 기록한다. 요청에 날짜 범위가 명확하면 일정 수집 뒤
         search_previous_conversations 같은 다른 조회 경로로 빠지지 않는다.
 
-        find_common_available_slots가 후보를 대신 계산하거나 decide_final_slot이 대신 선택한다고
-        가정하지 않는다. 확정된 일정을 저장하거나 개인 일정을 변경하는 일은 Nana의 담당이므로,
-        저장 요청을 받으면 조율 결과만 설명하고 Nana가 처리해야 한다고 알린다.
+        확정된 일정을 저장하거나 개인 일정을 변경하는 일은 Nana의 담당이므로, 저장 요청을 받으면
+        조율 결과만 설명하고 Nana가 처리해야 한다고 알린다.
         """,
     ]
 
@@ -359,23 +364,33 @@ def tool_name(tool_object: Any) -> str:
 
 
 FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = ("""
-Kana가 직접 고른 공통 가능 시간 후보를 검증하고 기록합니다.
-이 도구는 후보를 대신 계산하지 않습니다. 먼저 수집한 busy_rows를 읽고, 어떤 busy row와도
-겹치지 않는 candidate_slots를 Kana가 직접 만들어 busy_rows와 함께 전달하세요.
+Kana가 직접 고른 공통 가능 시간 후보를 검증하고 기록합니다. 이 도구는 후보를 자동으로
+계산하거나 최적 시간을 선택하지 않습니다. 먼저 collect_member_schedules 결과의 busy_rows를
+읽고, 후보를 Kana가 직접 만들어 busy_rows와 함께 전달하세요.
+candidate_slots를 생략하면 빈 목록으로 처리되며 이 도구가 후보를 대신 만들어 주지 않습니다.
+가능한 시간이 있으면 최소 한 개의 후보를 직접 채우고, 정말 없을 때만 빈 목록을 전달하세요.
 각 후보는 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), duration_minutes, reason을
-포함해야 합니다.
-busy_rows는 근거를 남기기 위한 인자이므로 후보 개수와 무관하게 항상 전달하세요.
-겹치지 않는 시간이 없어 candidate_slots가 빈 목록일 때도 busy_rows는 그대로 넘깁니다.
+포함해야 하며, 요청한 날짜 범위와 허용 시간대 안에 있고 busy_rows의 어느 row와도 겹치지 않아야
+합니다. 겹치는 시간은 reason에 적어서 후보로 올리지 마세요.
+busy_rows는 방금 collect_member_schedules에서 받은 목록을 그대로 전달해야 하는 근거 인자입니다.
+busy_rows가 빈 목록이면 조회 범위에 방해 일정이 없다는 뜻이므로, 업무 시간대가 회의 길이보다
+짧지 않은 한 candidate_slots에 가능한 후보를 최소 한 개 채워야 합니다.
+후보가 없을 때도 생략하지 말고 candidate_slots를 빈 목록으로 전달하세요.
+명확한 날짜 범위의 공통 시간 요청에서 busy_rows를 이미 수집했다면 search_previous_conversations 같은
+외부 대화 조회를 추가로 호출하지 말고 이 busy_rows를 사용하세요.
 검증 결과를 받은 뒤 답변을 끝내지 말고 decide_final_slot을 호출하세요.
 """)
 
 
 DECIDE_FINAL_SLOT_DESCRIPTION = ("""
-검증된 후보 중 Kana가 직접 고른 최종 시간을 기록합니다. 이 도구는 후보를 자동 선택하지 않습니다.
-확정할 때는 0부터 시작하는 selected_index 또는 selected_slot을 고르고, final_slot을
-'YYYY-MM-DD HH:MM-HH:MM' 형식으로 전달하며 needs_agent_selection은 false로 두세요.
-아직 고를 수 없다면 final_slot은 null, needs_agent_selection은 true로 두고 이유를 적으세요.
-근거를 추적할 수 있도록 candidate_slots, busy_rows, member_names, date_from, date_to도 함께 전달하세요.
+find_common_available_slots 결과의 candidate_slots 중 Kana가 직접 고른 최종 시간을 기록합니다.
+이 도구는 후보를 자동으로 선택하거나 새 후보를 계산하지 않습니다. 확정할 때는 0부터 시작하는
+selected_index 또는 selected_slot을 고르고, final_slot을 'YYYY-MM-DD HH:MM-HH:MM' 형식으로
+전달하며 needs_agent_selection은 false로 두세요.
+아직 고를 수 없거나 후보가 없으면 final_slot=null, needs_agent_selection=true로 두고 이유를
+적으세요. 근거를 추적할 수 있도록 find_common_available_slots의 candidate_slots와 busy_rows를
+그대로 전달하고, 결과의 members는 "나"를 빼지 말고 전체 목록 그대로 member_names로 전달하세요.
+date_from, date_to도 함께 전달하세요.
 """)
 
 
@@ -396,10 +411,10 @@ class FindCommonAvailableSlotsInput(BaseModel):
         ),
     )
     candidate_slots: list[CommonSlotCandidate] = Field(
-        default_factory=list,
         description=(
             "LLM agent가 직접 고른 후보 목록. 각 항목은 date, start_time, end_time, "
-            "duration_minutes, reason을 포함하고 busy_rows와 겹치면 안 됩니다."
+            "duration_minutes, reason을 포함하고 busy_rows와 겹치면 안 됩니다. "
+            "가능한 시간이 없으면 빈 목록을 명시적으로 전달하세요."
         ),
     )
     llm_reason: str | None = Field(default=None, description="LLM agent가 후보 목록을 고른 전체 이유")
