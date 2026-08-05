@@ -240,8 +240,7 @@ def supervisor_system_prompt() -> str:
     return join_system_prompt(
         [
             *week06_prompt_parts(),
-            # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
-            #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            "반드시 nana_agent 또는 kana_agent를 중 하나를 호출한 뒤, 그 결과만 근거로 답하세요"
         ]
     )
 
