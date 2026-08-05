@@ -192,17 +192,16 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
-    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
+def _saved_schedules_for_current_scope(kind: str | None = None) -> list[dict[str, Any]]:
+    """앱 SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환합니다.
+
+    `kind`를 넘기면 그 종류의 저장 일정만 읽습니다. 조회, 현재 대화 범위 필터,
+    저장 일정과 임시 일정의 중복 제거는 용도와 무관하게 같으므로 여기 한 곳에 둡니다.
+    예외는 삼키지 않고 tool 경계에서 한 번만 처리합니다.
+    """
 
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
-    # Week 3 이후 저장 경로를 통과한 확정 일정. 예외는 삼키지 않고 tool 경계에서 한 번만 처리한다.
-    # kind를 지정하지 않아 personal_schedule과 group_schedule을 함께 읽는다. 이 목록은 개인 일정
-    # 목록이 아니라 회의 조율에 쓸 내 busy-time이므로, 이미 확정된 그룹 일정도 바쁜 시간에 포함해야 한다.
-    # personal_schedule로 좁히면 참석 중인 그룹 회의가 빠져 그 시간이 비어 있는 것처럼 계산된다.
-    # 공유 저장소는 그룹 일정을 참석자 이름으로만 동기화해 "나" row를 만들지 않으므로, 여기서 빠지면
-    # 외부 조회에서도 잡히지 않아 양쪽 모두에서 사라진다.
-    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
+    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200, kind=kind)
 
     # Week 3 저장 경로가 Week 1 임시 id를 schedule_id로 그대로 쓰므로, 같은 id는 이미 저장된 일정이다.
     saved_ids = {str(schedule.get("schedule_id")) for schedule in saved_schedules}
@@ -213,6 +212,23 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
         if _schedule_scope(schedule) == session_id and str(schedule.get("id")) not in saved_ids
     ]
     return [*saved_schedules, *pending_schedules]
+
+
+def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
+    """개인 일정으로 저장된 것만 현재 대화 기준으로 모읍니다."""
+
+    return _saved_schedules_for_current_scope(kind="personal_schedule")
+
+
+def _busy_time_schedules_for_current_scope() -> list[dict[str, Any]]:
+    """회의 조율에 쓸 내 busy-time을 모읍니다. 확정된 그룹 일정도 포함합니다.
+
+    개인 일정만 모으면 이미 참석하기로 한 그룹 회의가 빠져 그 시간이 비어 있는 것처럼
+    계산됩니다. 공유 저장소는 그룹 일정을 참석자 이름으로만 동기화해 "나" row를 만들지
+    않으므로, 여기서 빠지면 외부 조회에서도 잡히지 않아 양쪽 모두에서 사라집니다.
+    """
+
+    return _saved_schedules_for_current_scope()
 
 
 def json_payload(payload: dict[str, Any]) -> str:
@@ -685,9 +701,10 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
 
     error_payload: dict[str, Any] = {"ok": False, "tool_name": "collect_member_schedules", "rows": []}
 
-    # helper가 던진 앱 SQLite 예외를 tool 경계인 여기서 처음 잡는다.
+    # 확정된 그룹 회의도 내가 바쁜 시간이므로 busy-time 목록을 쓴다.
+    # helper가 던진 앱 SQLite 예외는 tool 경계인 여기서 처음 잡는다.
     try:
-        personal_schedules = _personal_schedules_for_current_scope()
+        personal_schedules = _busy_time_schedules_for_current_scope()
     except Exception as error:
         return json_payload({**error_payload, "error": f"내 일정을 읽지 못했습니다: {error}"})
 
