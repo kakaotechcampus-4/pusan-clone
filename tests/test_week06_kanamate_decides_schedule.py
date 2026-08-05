@@ -6,6 +6,7 @@ import sys
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 import fixed.app_store as app_store_module
 import fixed.conversation_rag_store as conversation_rag_store_module
@@ -79,6 +80,80 @@ class RecordingAgent:
 
 
 class TestFindCommonAvailableSlots:
+    def test_candidate_slots_argument_is_required_but_may_be_an_empty_list(self, week06):
+        required_arguments = {
+            "member_names": ["철수"],
+            "date_from": "2026-08-10",
+            "date_to": "2026-08-10",
+        }
+
+        with pytest.raises(ValidationError):
+            week06.FindCommonAvailableSlotsInput(**required_arguments)
+
+        parsed = week06.FindCommonAvailableSlotsInput(
+            **required_arguments,
+            candidate_slots=[],
+        )
+        assert parsed.candidate_slots == []
+
+    def test_delegates_normalized_payload_to_fixed_helper_without_an_llm(
+        self,
+        week06,
+        monkeypatch,
+    ):
+        busy_rows = [{"member_name": "철수", "date": "2026-08-10"}]
+        candidates = [
+            {
+                "date": "2026-08-10",
+                "start_time": "13:00",
+                "end_time": "14:00",
+                "duration_minutes": 60,
+                "reason": "모두 가능",
+            }
+        ]
+        sentinel = {"payload": "fixed-helper"}
+        calls: list[dict[str, Any]] = []
+
+        def fake_payload(**arguments: Any) -> dict[str, Any]:
+            calls.append(arguments)
+            return sentinel
+
+        def fail_if_llm_is_created(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("공통 시간 payload 도구가 nested LLM을 만들면 안 됩니다.")
+
+        monkeypatch.setattr(week06, "find_common_available_slots_payload", fake_payload)
+        monkeypatch.setattr(week06, "chat_model", fail_if_llm_is_created)
+        monkeypatch.setattr(week06, "create_agent", fail_if_llm_is_created)
+
+        payload = week06.find_common_available_slots_dict(
+            member_names=["철수", "철수"],
+            date_from="2026-08-10T00:00:00+09:00",
+            date_to="2026-08-11T23:59:59+09:00",
+            duration_minutes=90,
+            workday_start="10:00",
+            workday_end="17:00",
+            limit=3,
+            busy_rows=busy_rows,
+            candidate_slots=candidates,
+            llm_reason="직접 고른 후보",
+        )
+
+        assert payload is sentinel
+        assert calls == [
+            {
+                "member_names": ["나", "철수"],
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-11",
+                "busy_rows": busy_rows,
+                "duration_minutes": 90,
+                "workday_start": "10:00",
+                "workday_end": "17:00",
+                "limit": 3,
+                "candidate_slots": candidates,
+                "llm_reason": "직접 고른 후보",
+            }
+        ]
+
     def test_collects_busy_rows_with_normalized_members_and_dates(self, week06, monkeypatch):
         rows = [
             {
@@ -180,7 +255,68 @@ class TestFindCommonAvailableSlots:
         assert "철수와 내가 모두 가능" in raw
         assert "\\u" not in raw
 
+
 class TestDecideFinalSlot:
+    def test_delegates_all_arguments_to_fixed_helper_without_an_llm(self, week06, monkeypatch):
+        candidates = [
+            {
+                "date": "2026-08-10",
+                "start_time": "13:00",
+                "end_time": "14:00",
+                "duration_minutes": 60,
+                "reason": "모두 가능",
+            }
+        ]
+        busy_rows = [{"member_name": "철수", "date": "2026-08-10"}]
+        calls: list[dict[str, Any]] = []
+
+        def fake_payload(**arguments: Any) -> dict[str, Any]:
+            calls.append(arguments)
+            return {
+                "final_slot": "2026-08-10 13:00-14:00",
+                "reason": "모두 가능",
+                "candidates": [],
+            }
+
+        def fail_if_llm_is_created(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("최종 시간 기록 도구가 nested LLM을 만들면 안 됩니다.")
+
+        monkeypatch.setattr(week06, "decide_final_slot_payload", fake_payload)
+        monkeypatch.setattr(week06, "chat_model", fail_if_llm_is_created)
+        monkeypatch.setattr(week06, "create_agent", fail_if_llm_is_created)
+
+        raw = week06.decide_final_slot.invoke(
+            {
+                "candidate_slots": candidates,
+                "selected_index": 0,
+                "final_slot": "2026-08-10 13:00-14:00",
+                "needs_agent_selection": False,
+                "member_names": ["나", "철수"],
+                "date_from": "2026-08-10T00:00:00+09:00",
+                "date_to": "2026-08-10T23:59:59+09:00",
+                "duration_minutes": 60,
+                "reason": "모두 가능",
+                "busy_rows": busy_rows,
+            }
+        )
+
+        assert json.loads(raw)["final_slot"] == "2026-08-10 13:00-14:00"
+        assert calls == [
+            {
+                "candidate_slots": candidates,
+                "selected_slot": None,
+                "selected_index": 0,
+                "final_slot": "2026-08-10 13:00-14:00",
+                "needs_agent_selection": False,
+                "member_names": ["나", "철수"],
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-10",
+                "duration_minutes": 60,
+                "reason": "모두 가능",
+                "busy_rows": busy_rows,
+            }
+        ]
+
     def test_selected_index_records_the_final_slot_and_evidence(self, week06):
         candidates = [
             {
@@ -345,7 +481,11 @@ class TestSubagents:
         monkeypatch.setattr(week06, "kana_system_prompt", lambda: "kana-prompt")
         monkeypatch.setattr(week06, "create_agent", fake_create_agent)
         monkeypatch.setattr(week06, "extract_agent_events", lambda value: events)
-        monkeypatch.setattr(week06, "extract_final_text", lambda value: "이 시간으로 정했습니다.")
+        monkeypatch.setattr(
+            week06,
+            "extract_final_text",
+            lambda value: "2026-08-11 15:00-16:00로 확정했습니다.",
+        )
 
         first = json.loads(week06.kana_agent.invoke({"query": "그룹 회의 잡아줘"}))
         second = json.loads(week06.kana_agent.invoke({"query": "결과 다시 알려줘"}))
@@ -363,7 +503,7 @@ class TestSubagents:
         ]
         assert first == second == {
             "selected_agent": "kana_agent",
-            "answer": "이 시간으로 정했습니다.",
+            "answer": "2026-08-11 15:00-16:00로 확정했습니다.",
             "trace": events,
             "inner_tool_names": ["find_common_available_slots", "decide_final_slot"],
             "final_slot_payload": final_slot_payload,
@@ -386,4 +526,35 @@ class TestToolComposition:
         assert [item.name for item in week06.supervisor_tools()] == [
             "nana_agent",
             "kana_agent",
+        ]
+
+    def test_supervisor_builder_is_cached_and_build_week_agent_reuses_it(
+        self,
+        week06,
+        monkeypatch,
+    ):
+        sentinel = object()
+        calls: list[dict[str, Any]] = []
+        expected_tools = [object(), object()]
+
+        def fake_create_agent(**arguments: Any) -> object:
+            calls.append(arguments)
+            return sentinel
+
+        monkeypatch.setattr(week06, "chat_model", lambda: "fake-model")
+        monkeypatch.setattr(week06, "supervisor_tools", lambda: expected_tools)
+        monkeypatch.setattr(week06, "supervisor_system_prompt", lambda: "supervisor-prompt")
+        monkeypatch.setattr(week06, "create_agent", fake_create_agent)
+
+        first = week06.build_langchain_supervisor_agent()
+        second = week06.build_langchain_supervisor_agent()
+        entrypoint = week06.build_week_agent()
+
+        assert first is second is entrypoint is sentinel
+        assert calls == [
+            {
+                "model": "fake-model",
+                "tools": expected_tools,
+                "system_prompt": "supervisor-prompt",
+            }
         ]

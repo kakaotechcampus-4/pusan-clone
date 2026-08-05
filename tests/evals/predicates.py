@@ -72,10 +72,11 @@ from __future__ import annotations
     }
 
 `args`와 `args_if_called`에 쓸 수 있는 검사는 `is_null`, `equals`, `contains`, `not_contains`,
-`max_words`입니다.
+`contains_text`, `min_items`, `max_words`입니다.
 `contains`는 list 인자가 지정한 항목을 모두 담았는지 보므로, 순서나 여분 항목에 영향받지 않습니다.
 `not_contains`는 지정한 항목이 **없어야** 통과합니다. 문자열 인자는 부분 문자열로, list 인자는
 항목으로 확인하므로, "이 인자에 저 값을 넣지 말라"는 도구 계약을 그대로 인코딩할 수 있습니다.
+`contains_text`는 문자열 부분 포함을, `min_items`는 list의 최소 항목 수를 검사합니다.
 `args`는 tool 호출을 요구하고, `args_if_called`는 실제로 호출된 경우에만 인자를 검사합니다.
 `max_words`는 비어 있지 않은 문자열에만 적용됩니다.
 
@@ -232,6 +233,22 @@ def _check_argument(tool_name: str, argument: str, value: Any, checks: dict[str,
         ]
         if present:
             reasons.append(f"{label}에 {present!r}가 들어가면 안 된다 (넘긴 값: {value!r})")
+
+    if "contains_text" in checks:
+        expected_text = str(checks["contains_text"])
+        if not isinstance(value, str) or expected_text not in value:
+            reasons.append(
+                f"{label}은 {expected_text!r}를 포함한 문자열이어야 하는데 {value!r}이다"
+            )
+
+    if "min_items" in checks:
+        minimum = int(checks["min_items"])
+        if not isinstance(value, list):
+            reasons.append(f"{label}은 항목이 {minimum}개 이상인 list여야 하는데 {value!r}이다")
+        elif len(value) < minimum:
+            reasons.append(
+                f"{label}은 항목이 {minimum}개 이상이어야 하는데 {len(value)}개이다"
+            )
 
     if "max_words" in checks:
         maximum = int(checks["max_words"])

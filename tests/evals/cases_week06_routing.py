@@ -138,6 +138,14 @@ COMMON_SLOT = {
     "reason": "세 사람의 바쁜 시간과 겹치지 않습니다.",
 }
 
+OPEN_WEEK_SLOT = {
+    "date": "2026-08-17",
+    "start_time": "09:00",
+    "end_time": "10:00",
+    "duration_minutes": 60,
+    "reason": "조회된 방해 일정이 없어 모두 가능합니다.",
+}
+
 # 공통 시간 없음 케이스: 허용 창(09:00~10:00)이 철수의 고정 일정과 정확히 겹칩니다.
 BLOCKED_ROWS = [
     {
@@ -149,7 +157,7 @@ BLOCKED_ROWS = [
     }
 ]
 
-# collect -> find -> decide 데이터 연결 검사입니다. 케이스 11·12가 공유합니다.
+# collect -> find -> decide 데이터 연결 검사입니다. 공통 시간 결정 케이스들이 공유합니다.
 GROUP_SLOT_DATA_LINKS = [
     {
         "tool": "find_common_available_slots",
@@ -169,6 +177,18 @@ GROUP_SLOT_DATA_LINKS = [
         # 스키마 기본값이 빈 list이고 trace에는 기본값 적용 전 원본 인자가 담기므로,
         # 후보가 없을 때 인자를 생략하는 것과 []를 넘기는 것은 동작상 같습니다.
         "missing_is_empty": True,
+    },
+    {
+        "tool": "decide_final_slot",
+        "argument": "busy_rows",
+        "source_tool": "find_common_available_slots",
+        "source_path": "busy_rows",
+    },
+    {
+        "tool": "decide_final_slot",
+        "argument": "member_names",
+        "source_tool": "find_common_available_slots",
+        "source_path": "members",
     },
 ]
 
@@ -381,6 +401,69 @@ WEEK06_ROUTING_CASES = [
             "role_expectation": "Nana는 개인 참고자료를 조회해 그 내용만 근거로 답한다.",
         },
     },
+    # 검증 가이드가 직접 지정한 개인 일정 조회 trace입니다.
+    {
+        "id": "week06.nana.personal_schedule_lookup",
+        "surface": "nana",
+        "group": "Nana 개인 일정 조회",
+        "rule": "list-personal-schedules",
+        "repeats": 3,
+        "user": "8월 10일에 저장된 내 개인 일정만 알려줘.",
+        "tool_results": {
+            "personal_list_saved_schedules": {
+                "ok": True,
+                "tool_name": "personal_list_saved_schedules",
+                "filters": {
+                    "kind": None,
+                    "date_from": "2026-08-10",
+                    "date_to": "2026-08-10",
+                    "limit": 50,
+                },
+                "schedules": [
+                    {
+                        "schedule_id": "sch_week06_focus",
+                        "kind": "personal_schedule",
+                        "title": "집중 업무",
+                        "date": "2026-08-10",
+                        "start_time": "09:00",
+                        "end_time": "10:00",
+                    }
+                ],
+            }
+        },
+        "expect": {
+            "called": ["personal_list_saved_schedules"],
+            "not_called": ["personal_list_schedules"],
+            "max_calls": {"personal_list_saved_schedules": 1},
+            "args": {
+                "personal_list_saved_schedules": {
+                    "date_from": {"equals": "2026-08-10"},
+                    "date_to": {"equals": "2026-08-10"},
+                }
+            },
+            "result_contains": [
+                {
+                    "tool": "personal_list_saved_schedules",
+                    "path": "schedules",
+                    "row": {
+                        "title": "집중 업무",
+                        "date": "2026-08-10",
+                        "start_time": "09:00",
+                    },
+                }
+            ],
+        },
+        "judge": {
+            "reference_answer": "8월 10일 저장된 개인 일정은 09:00~10:00 집중 업무입니다.",
+            "required_facts": ["집중 업무", "2026-08-10", "09:00-10:00"],
+            "forbidden_claims": [
+                "저장된 일정이 없다고 말한다",
+                "조회되지 않은 다른 일정을 덧붙인다",
+                "외부 멤버의 일정이라고 말한다",
+            ],
+            "role_expectation": "Nana는 앱 DB에 저장된 개인 일정을 조회하고 결과만 근거로 답한다.",
+        },
+    },
     # 근거(Nana): "외부 멤버의 대화나 일정, 여러 사람의 공통 시간 결정은 Kana의 담당이다.
     # 그런 요청이 잘못 전달되면 도구 결과를 꾸며내지 말고 Kana에게 위임해야 한다고 알려라."
     #
@@ -577,7 +660,10 @@ WEEK06_ROUTING_CASES = [
                     "member_names": {"contains": ["영희"]},
                     # 상대 이름을 query에 붙이는 것이 도구 설명이 경고하는 안티패턴입니다.
                     # query는 본문에 그대로 나올 짧은 낱말이어야 합니다.
-                    "query": {"not_contains": ["영희"], "max_words": 2},
+                    "query": {
+                        "contains_text": "워크숍",
+                        "not_contains": ["영희"],
+                    },
                 }
             },
             "args_if_called": {
@@ -649,6 +735,44 @@ WEEK06_ROUTING_CASES = [
                 "공통 시간을 결정했다고 말한다",
             ],
             "role_expectation": "Kana는 공유 저장소 row 조회 결과만 근거로 답한다.",
+        },
+    },
+    # Kana에 잘못 전달된 개인 일정 저장 요청은 처리 성공을 꾸며내지 않고 Nana 경계를 안내해야 합니다.
+    {
+        "id": "week06.kana.personal_save_boundary",
+        "surface": "kana",
+        "group": "Kana 개인 저장 역할 경계",
+        "rule": "delegate-personal-save-to-nana",
+        "repeats": 1,
+        "held_out": True,
+        "user": "8월 10일 오전 11시 회의를 내 개인 일정에 저장해줘.",
+        "tool_results": {},
+        "expect": {
+            "not_called": [
+                "extract_schedule_request",
+                "search_previous_conversations",
+                "load_conversation_messages",
+                "extract_schedules_from_history",
+                "list_shared_schedules",
+                "collect_member_schedules",
+                "find_common_available_slots",
+                "decide_final_slot",
+            ],
+        },
+        "judge": {
+            "reference_answer": "개인 일정 저장은 Nana가 담당하므로 Nana에게 요청해 주세요.",
+            "required_facts": [
+                "개인 일정 저장은 Nana 담당",
+                "Kana가 직접 저장하지 않는다는 안내",
+            ],
+            "forbidden_claims": [
+                "개인 일정을 저장했다고 말한다",
+                "공유 저장소에 등록했다고 말한다",
+                "참석자에게 통보했다고 말한다",
+            ],
+            "role_expectation": (
+                "Kana는 외부 멤버 일정과 그룹 조율만 담당하며 개인 일정 저장 성공을 주장하지 않는다."
+            ),
         },
     },
     # held-out: 수집만 요청하는 경계 케이스입니다.
@@ -766,6 +890,7 @@ WEEK06_ROUTING_CASES = [
                     "date_from": {"equals": "2026-08-10"},
                     "date_to": {"equals": "2026-08-10"},
                     "duration_minutes": {"equals": 60},
+                    "candidate_slots": {"min_items": 1},
                 },
                 "decide_final_slot": {
                     "final_slot": {"equals": "2026-08-10 11:00-12:00"},
@@ -791,6 +916,99 @@ WEEK06_ROUTING_CASES = [
             ],
             "role_expectation": (
                 "Kana는 조율 결과만 설명한다. 확정된 일정 저장은 Nana 담당이므로 저장했다고 말하지 않는다."
+            ),
+        },
+    },
+    # 회귀: collect 결과가 빈 rows이면 일정이 없다는 뜻이지 가능한 시간이 없다는 뜻이 아닙니다.
+    # Kana가 빈 candidate_slots를 넘겨 반대로 결론 내리지 않고, 열린 업무시간 후보를 만들어야 합니다.
+    {
+        "id": "week06.kana.empty_busy_rows_have_availability",
+        "surface": "kana",
+        "group": "Kana 빈 일정 결과 처리",
+        "rule": "empty-busy-means-open",
+        "repeats": 3,
+        "held_out": True,
+        "user": "민수, 철수와 8월 17일부터 23일 사이에 한 시간 회의 시간을 정해줘.",
+        "tool_results": {
+            "extract_schedule_request": {
+                "kind": "group_schedule",
+                "date_from": "2026-08-17",
+                "date_to": "2026-08-23",
+                "duration_minutes": 60,
+            },
+            "collect_member_schedules": {
+                "ok": True,
+                "tool_name": "collect_member_schedules",
+                "rows": [],
+            },
+            "find_common_available_slots": {
+                "ok": True,
+                "tool_name": "find_common_available_slots",
+                "members": ["나", "민수", "철수"],
+                "busy_rows": [],
+                "candidate_slots": [OPEN_WEEK_SLOT],
+            },
+            "decide_final_slot": {
+                "final_slot": "2026-08-17 09:00-10:00",
+                "needs_agent_selection": False,
+                "selected_index": 0,
+                "candidate_slots": [OPEN_WEEK_SLOT],
+                "busy_rows": [],
+            },
+        },
+        "expect": {
+            "called": [
+                "collect_member_schedules",
+                "find_common_available_slots",
+                "decide_final_slot",
+            ],
+            "order": [
+                "collect_member_schedules",
+                "find_common_available_slots",
+                "decide_final_slot",
+            ],
+            "max_calls": {
+                "collect_member_schedules": 1,
+                "find_common_available_slots": 1,
+                "decide_final_slot": 1,
+            },
+            "args": {
+                "collect_member_schedules": {
+                    "member_names": {"contains": ["민수", "철수"]},
+                    "date_from": {"equals": "2026-08-17"},
+                    "date_to": {"equals": "2026-08-23"},
+                },
+                "find_common_available_slots": {
+                    "date_from": {"equals": "2026-08-17"},
+                    "date_to": {"equals": "2026-08-23"},
+                    "duration_minutes": {"equals": 60},
+                    "candidate_slots": {"min_items": 1},
+                },
+                "decide_final_slot": {
+                    "final_slot": {"equals": "2026-08-17 09:00-10:00"},
+                    "needs_agent_selection": {"equals": False},
+                    "selected_index": {"equals": 0},
+                },
+            },
+            "arg_equals_result": GROUP_SLOT_DATA_LINKS,
+            "candidates_are_valid": candidates_are_valid(
+                date_from="2026-08-17",
+                date_to="2026-08-23",
+                duration_minutes=60,
+            ),
+        },
+        "judge": {
+            "reference_answer": (
+                "8월 17일 09:00~10:00로 확정했습니다. 민수, 철수와 겹치는 일정이 없습니다."
+            ),
+            "required_facts": ["2026-08-17", "09:00-10:00", "확정됨", "민수와 철수"],
+            "forbidden_claims": [
+                "가능한 시간이 없다고 말한다",
+                "다른 날짜나 시간대를 요청한다",
+                "공유 저장소나 개인 일정에 저장했다",
+            ],
+            "role_expectation": (
+                "Kana는 빈 일정 조회 결과를 전체 업무시간이 열린 상태로 해석하고, 검증한 후보 중 하나를 확정한다."
             ),
         },
     },

@@ -330,6 +330,63 @@ class TestOrderPredicate:
 
 
 class TestArgumentPredicates:
+    @pytest.mark.parametrize(
+        ("query", "passes"),
+        [("워크숍", True), ("다음 워크숍 일정", True), ("회의 일정", False)],
+    )
+    def test_contains_text(self, query, passes):
+        events = [tool_call("search_previous_conversations", query=query)]
+        expect = {
+            "args": {
+                "search_previous_conversations": {
+                    "query": {"contains_text": "워크숍"},
+                }
+            }
+        }
+
+        assert (predicates.check_case(expect, events, "") == []) is passes
+
+    @pytest.mark.parametrize("query", [None, 123, ["워크숍"]])
+    def test_contains_text_requires_a_string(self, query):
+        events = [tool_call("search_previous_conversations", query=query)]
+        expect = {
+            "args": {
+                "search_previous_conversations": {
+                    "query": {"contains_text": "워크숍"},
+                }
+            }
+        }
+
+        assert predicates.check_case(expect, events, "") != []
+
+    @pytest.mark.parametrize(
+        ("candidate_slots", "passes"),
+        [([], False), ([{"date": "2026-08-10"}], True), (None, False)],
+    )
+    def test_min_items(self, candidate_slots, passes):
+        events = [tool_call("find_common_available_slots", candidate_slots=candidate_slots)]
+        expect = {
+            "args": {
+                "find_common_available_slots": {
+                    "candidate_slots": {"min_items": 1},
+                }
+            }
+        }
+
+        assert (predicates.check_case(expect, events, "") == []) is passes
+
+    def test_min_items_rejects_non_collection_argument(self):
+        events = [tool_call("find_common_available_slots", candidate_slots=1)]
+        expect = {
+            "args": {
+                "find_common_available_slots": {
+                    "candidate_slots": {"min_items": 1},
+                }
+            }
+        }
+
+        assert predicates.check_case(expect, events, "") != []
+
     def test_is_null_true_passes_for_omitted_argument(self):
         events = [tool_call("search_conversation_messages", query="철수")]
         expect = {"args": {"search_conversation_messages": {"conversation_id": {"is_null": True}}}}
@@ -869,8 +926,10 @@ def test_only_representative_routing_cases_repeat_by_default():
         "week06.supervisor.personal_schedule",
         "week06.supervisor.group_coordination",
         "week06.nana.group_request_boundary",
+        "week06.nana.personal_schedule_lookup",
         "week06.kana.collect_only",
         "week06.kana.decide_common_slot",
+        "week06.kana.empty_busy_rows_have_availability",
         "week06.kana.no_common_slot",
     }
 
@@ -1045,16 +1104,37 @@ class TestWeek06RoutingCaseDataset:
         cases = cases_week06_routing.WEEK06_ROUTING_CASES
         ids = [case["id"] for case in cases]
 
-        assert len(cases) == 13
+        assert len(cases) == 16
         assert len(ids) == len(set(ids)), "케이스 id가 중복됐다"
         assert {case["surface"] for case in cases} == {"supervisor", "kana", "nana"}
 
     def test_total_runs_match_the_planned_budget(self):
-        """대표 6개는 3회, 나머지 7개는 1회 = 25회입니다."""
+        """대표 8개는 3회, 나머지 8개는 1회 = 32회입니다."""
 
         cases = cases_week06_routing.WEEK06_ROUTING_CASES
 
-        assert sum(case.get("repeats", 1) for case in cases) == 25
+        assert sum(case.get("repeats", 1) for case in cases) == 32
+
+    def test_requirement_cases_and_strong_expectations_are_declared(self):
+        cases = {
+            case["id"]: case
+            for case in cases_week06_routing.WEEK06_ROUTING_CASES
+        }
+
+        assert "week06.nana.personal_schedule_lookup" in cases
+        assert "week06.kana.personal_save_boundary" in cases
+        assert cases["week06.kana.history_member_and_topic"]["expect"]["args"][
+            "search_previous_conversations"
+        ]["query"] == {
+            "contains_text": "워크숍",
+            "not_contains": ["영희"],
+        }
+        assert cases["week06.kana.decide_common_slot"]["expect"]["args"][
+            "find_common_available_slots"
+        ]["candidate_slots"] == {"min_items": 1}
+        assert cases["week06.kana.empty_busy_rows_have_availability"]["expect"]["args"][
+            "find_common_available_slots"
+        ]["candidate_slots"] == {"min_items": 1}
 
     @pytest.mark.parametrize(
         "case",
@@ -1140,14 +1220,17 @@ def group_slot_events(
     proposed: list[dict[str, Any]] | None = None,
     validated: list[dict[str, Any]] | None = None,
     decided: list[dict[str, Any]] | None = None,
+    decide_busy_rows: list[dict[str, Any]] | None = None,
+    decide_member_names: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """collect -> find -> decide 합성 trace를 만듭니다."""
 
     slots = [cases_week06_routing.COMMON_SLOT] if proposed is None else proposed
     validated = slots if validated is None else validated
     decided = validated if decided is None else decided
+    members = ["나", "철수", "영희"]
     return [
-        tool_call("collect_member_schedules", member_names=["나", "철수", "영희"]),
+        tool_call("collect_member_schedules", member_names=members),
         tool_result("collect_member_schedules", {"ok": True, "rows": busy_rows}),
         tool_call(
             "find_common_available_slots",
@@ -1156,19 +1239,26 @@ def group_slot_events(
         ),
         tool_result(
             "find_common_available_slots",
-            {"ok": True, "busy_rows": busy_rows, "candidate_slots": validated},
+            {
+                "ok": True,
+                "members": members,
+                "busy_rows": busy_rows,
+                "candidate_slots": validated,
+            },
         ),
         tool_call(
             "decide_final_slot",
             candidate_slots=decided,
             final_slot="2026-08-10 11:00-12:00",
+            busy_rows=busy_rows if decide_busy_rows is None else decide_busy_rows,
+            member_names=members if decide_member_names is None else decide_member_names,
         ),
         tool_result("decide_final_slot", {"final_slot": "2026-08-10 11:00-12:00"}),
     ]
 
 
-# 케이스 11(2026-08-10, 60분, 09:00~18:00)의 계약입니다. 합성 trace 테스트가 공유합니다.
-CASE11_CANDIDATE_CONTRACT = cases_week06_routing.candidates_are_valid(
+# 공통 시간 결정 케이스(2026-08-10, 60분, 09:00~18:00)의 계약입니다.
+COMMON_SLOT_CANDIDATE_CONTRACT = cases_week06_routing.candidates_are_valid(
     date_from="2026-08-10",
     date_to="2026-08-10",
     duration_minutes=60,
@@ -1176,11 +1266,11 @@ CASE11_CANDIDATE_CONTRACT = cases_week06_routing.candidates_are_valid(
 
 GROUP_SLOT_EXPECT = {
     "arg_equals_result": cases_week06_routing.GROUP_SLOT_DATA_LINKS,
-    "candidates_are_valid": CASE11_CANDIDATE_CONTRACT,
+    "candidates_are_valid": COMMON_SLOT_CANDIDATE_CONTRACT,
 }
 
 AVOID_BUSY_ROWS_EXPECT = {
-    "candidates_are_valid": CASE11_CANDIDATE_CONTRACT,
+    "candidates_are_valid": COMMON_SLOT_CANDIDATE_CONTRACT,
 }
 
 
@@ -1215,6 +1305,26 @@ class TestGroupSlotDataLinkage:
         reasons = predicates.check_case(GROUP_SLOT_EXPECT, events, "")
 
         assert any("decide_final_slot.candidate_slots" in reason for reason in reasons), reasons
+
+    def test_dropped_busy_rows_link_to_decide_is_red(self):
+        events = group_slot_events(
+            busy_rows=cases_week06_routing.BUSY_ROWS,
+            decide_busy_rows=[],
+        )
+
+        reasons = predicates.check_case(GROUP_SLOT_EXPECT, events, "")
+
+        assert any("decide_final_slot.busy_rows" in reason for reason in reasons), reasons
+
+    def test_dropped_member_names_link_to_decide_is_red(self):
+        events = group_slot_events(
+            busy_rows=cases_week06_routing.BUSY_ROWS,
+            decide_member_names=["철수", "영희"],
+        )
+
+        reasons = predicates.check_case(GROUP_SLOT_EXPECT, events, "")
+
+        assert any("decide_final_slot.member_names" in reason for reason in reasons), reasons
 
     def test_reason_text_may_differ_between_find_and_decide(self):
         """식별 필드가 같으면 reason 문구가 달라도 연결로 인정합니다."""
