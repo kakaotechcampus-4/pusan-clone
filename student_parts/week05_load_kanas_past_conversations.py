@@ -182,8 +182,6 @@ call_mcp_tool_sync = call_local_mcp_tool_sync
 load_langchain_mcp_tools = load_local_mcp_tools
 load_langchain_mcp_tools_sync = load_local_mcp_tools_sync
 
-SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
-
 
 def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
@@ -192,7 +190,7 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
-    saved_schedules = SQLITE_STORE.list_schedules(limit=200)
+    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
     saved_ids = {row.get("schedule_id") for row in saved_schedules}
 
     temporary_schedules = [
@@ -316,11 +314,14 @@ def _collect_member_schedules(
             }
         )
 
-    if normalized_members:
+    external_members = [
+        name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME
+    ]
+    if external_members:
         external_payload = call_external_tool_payload(
             "extract_schedules_from_history",
             {
-                "member_names": normalized_members,
+                "member_names": external_members,
                 "date_from": normalized_date_from,
                 "date_to": normalized_date_to,
             },
