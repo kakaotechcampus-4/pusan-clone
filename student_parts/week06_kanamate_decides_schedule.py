@@ -248,27 +248,43 @@ def _tool_call_names(events: list[dict[str, Any]]) -> list[str]:
     return [event["tool_name"] for event in events if event.get("event") == "tool_call" and event.get("tool_name")]
 
 
-def extract_langchain_trace(result: dict[str, Any]) -> dict[str, Any]:
-    """Week 6 supervisor 실행 결과를 UI trace payload로 변환합니다."""
+def _extract_final_payloads(events : list[dict[str, Any]]) -> dict[str, Any]:
 
-    events = extract_agent_events(result)
-    inner_tool_names: list[str] = []
     final_slot_payload: dict[str, Any] | None = None
     final_decision_payload: dict[str, Any] | None = None
-    selected_agent: str | None = None
 
     for event in events:
-        if event.get("event") == "tool_call" and event.get("tool_name") in {"nana_agent", "kana_agent"}:
-            selected_agent = event["tool_name"]
         content = event.get("content")
         if isinstance(content, dict):
-            inner_tool_names.extend(content.get("inner_tool_names") or [])
             if content.get("final_slot_payload"):
                 final_slot_payload = content["final_slot_payload"]
             elif "final_slot" in content:
                 final_slot_payload = content
             if content.get("final_decision_payload"):
                 final_decision_payload = content["final_decision_payload"]
+
+    return {
+        "final_slot_payload": final_slot_payload,
+        "final_decision_payload": final_decision_payload,
+    }
+
+def extract_langchain_trace(result: dict[str, Any]) -> dict[str, Any]:
+    """Week 6 supervisor 실행 결과를 UI trace payload로 변환합니다."""
+
+    events = extract_agent_events(result)
+    final_payloads = _extract_final_payloads(events)
+    final_slot_payload: dict[str, Any] | None = final_payloads.get("final_slot_payload")
+    final_decision_payload: dict[str, Any] | None = final_payloads.get("final_decision_payload")
+
+    inner_tool_names: list[str] = []
+    selected_agent: str | None = None
+    for event in events:
+        if event.get("event") == "tool_call" and event.get("tool_name") in {"nana_agent", "kana_agent"}:
+            selected_agent = event["tool_name"]
+
+        content = event.get("content")
+        if isinstance(content, dict):
+            inner_tool_names.extend(content.get("inner_tool_names") or [])
 
     return {
         "events": events,
@@ -425,7 +441,7 @@ def find_common_available_slots(
 
     # TODO: find_common_available_slots_dict(...) 결과를 JSON 문자열로 반환하세요.
     return json_payload(
-        find_common_available_slots_payload(
+        find_common_available_slots_dict(
             member_names=member_names,
             date_from=date_from,
             date_to=date_to,
@@ -459,7 +475,8 @@ def decide_final_slot(
     # TODO: Kana agent가 고른 최종 시간 정보를 course repo JSON 계약에 맞춰 기록하세요.
     #   - 직접 최종 시간을 고르지 말고 받은 인자를 그대로 decide_final_slot_payload(...)에 넘깁니다.
     #   - 결과를 JSON 문자열로 반환합니다.
-    date_from, date_to = normalize_date_bound(date_from), normalize_date_bound(date_to)
+    date_from = date_from and normalize_date_bound(date_from)
+    date_to = date_to and normalize_date_bound(date_to)
     return json_payload(
         decide_final_slot_payload(
             candidate_slots=candidate_slots,
@@ -545,14 +562,14 @@ def nana_agent(query: str) -> str:
             system_prompt=nana_system_prompt()
         )
     result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
-    trace = extract_agent_events(result)
+    events = extract_agent_events(result)
     answer = extract_final_text(result)
-    tool = _tool_call_names(trace)
+    tool = _tool_call_names(events)
 
     return json_payload({
         "selected_agent" : "nana_agent",
         "answer" : answer,
-        "trace" : trace,
+        "trace" : events,
         "inner_tool_names" : tool
     })
 
@@ -573,15 +590,21 @@ def kana_agent(query: str) -> str:
             system_prompt=kana_system_prompt()
         )
     result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
-    trace = extract_agent_events(result)
+    events = extract_agent_events(result)
     answer = extract_final_text(result)
-    tool = _tool_call_names(trace)
+    tool = _tool_call_names(events)
+
+    final_payloads = _extract_final_payloads(events)
+    final_slot_payload = final_payloads.get("final_slot_payload")
+    final_decision_payload = final_payloads.get("final_decision_payload")
 
     return json_payload({
         "selected_agent" : "kana_agent",
         "answer" : answer,
-        "trace" : trace,
-        "inner_tool_names" : tool
+        "trace" : events,
+        "inner_tool_names" : tool,
+        "final_slot_payload" : final_slot_payload,
+        "final_decision_payload" : final_decision_payload
     })
 
 
