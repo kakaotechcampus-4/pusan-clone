@@ -239,7 +239,9 @@ def kana_prompt_parts() -> list[str]:
         "extract_schedules_from_history는 내 일정이 필요 없는 순수 조회(예: '하린이 일정만 보여줘')에서만 쓰고, "
         "그룹 회의 조율 요청 흐름에서는 collect_member_schedules와 중복이므로 호출하지 않는다. ",
         "list_shared_schedules는 대상 멤버나 기간이 요청에 없을 때 실제 멤버와 날짜 범위를 확인하는 용도로 쓴다. ",
-        "collect_member_schedules 결과에는 사람별 rows와, 같은 약속을 참여자 목록과 함께 묶은 merged_rows가 있다. "
+        "collect_member_schedules 결과에는 사람별 rows와, 같은 약속을 참여자 목록과 함께 묶은 merged_rows가 있다. ",
+        "일정을 정리해 알려주는 요청에는, 기본적으로 merged_rows를 사용해 같은 약속을 참여자와 함께 한 줄로 묶어 답한다. "
+        "사람별로 답변할 때는 rows를 사용한다. "
         "공통 가능 시간을 계산할 때는 rows를 busy-time 근거로 사용한다. ",
 
         "일정을 모은 뒤에는 find_common_available_slots, decide_final_slot을 이 순서로 반드시 이어서 호출한다. "
