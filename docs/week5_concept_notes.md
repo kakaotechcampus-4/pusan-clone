@@ -392,3 +392,38 @@ pytest는 tool 로직/선택만 보므로, 실제 Gradio 앱에서 여러 턴 �
 2. **"나" 일정 3건 중복 표시**: `collect_member_schedules` 결과에 "나 | 팀 회의 | 2026-08-04"가 3번 중복 노출됨. 이는 `collect_member_schedules` 로직 버그가 아니라, **오늘 반복 테스트(시나리오 6 디버깅 등) 과정에서 실제 앱 DB(`data/kanana_app.sqlite3`)에 같은 내용이 여러 번 저장된 환경적 부작용**. tool은 DB에 있는 그대로를 정직하게 보여준 것뿐.
 
 **결론**: 시나리오 7~10에서 코드를 고쳐야 할 문제는 발견되지 않음. Week 5 프롬프트 재수정으로 인한 광범위한 회귀는 없는 것으로 확인.
+## 12. 멘토 공지("Week 5 버그 수정 2건") 대응 — 이미 반영돼 있었음을 검증
+
+멘토가 공지한 두 버그(①그룹 일정이 "빈 시간"으로 추천됨, ②`member_names`에 `"나"`가 들어오면 일정이 중복 표시됨)와 그걸 고치는 적용 가이드(`공지_코드업데이트.md`의 (A)~(E))가 올라왔다. 가이드 코드를 그대로 옮기기 전에, 지금 구현이 실제로 그 버그를 갖고 있는지부터 확인했다.
+
+### 12-1. 가이드 코드와 현재 구현의 구조 차이
+
+가이드(그리고 정답 참고 코드 `student_parts_baseline/`)는 다음 순서로 버그를 고친다:
+
+1. `_personal_schedules_for_current_scope()`의 `kind="personal_schedule"` 필터 제거
+2. `_structured_request_from_schedule_row()`가 `row["request_kind"]`로 개인/그룹을 구분
+3. `_my_schedule_notes()` helper로 그룹 일정 notes에 참석자 표시
+4. `_dedupe_schedule_rows()` helper로 `(member_name, date, start_time, 다듬은 제목)` 기준 중복 제거 — `member_names`에 `"나"`를 **포함시켜 조회한 뒤** dedupe로 걸러내는 전략
+5. `_collect_member_schedules()` 마지막에 `_dedupe_schedule_rows` 적용 + `members`에서 `"나"` 중복 제거
+
+이 파일(내 구현)을 다시 읽어보니 **①은 이미 없고, ②는 애초에 다른 전략으로 회피**하고 있었다.
+
+| 버그 | 가이드의 원인/해법 | 내 구현 상태 |
+|---|---|---|
+| ① 그룹 일정이 빈 시간으로 추천 | `list_schedules(..., kind="personal_schedule")` 필터가 그룹 일정을 제외함 → 필터 제거 | [`_personal_schedules_for_current_scope`](../student_parts/week05_load_kanas_past_conversations.py) 코드가 이미 `list_schedules(limit=200)`로 `kind` 없이 호출 (필터 자체가 없었음) |
+| ② "나" 포함 시 중복 | `"나"`를 외부 조회에 포함시켜 앱DB row와 공유저장소 row가 둘 다 들어옴 → 값을 다듬어 비교하는 dedupe helper로 사후 제거 | `_collect_member_schedules`가 `external_members = [name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME]`로 **애초에 "나"를 외부 조회 대상에서 제외** (908fc16에서 고침) → 중복이 생길 경로 자체가 없어 dedupe helper가 불필요 |
+
+`_structured_request_from_schedule_row`는 정의돼 있지만 `_collect_member_schedules` 안에서 **호출되지 않는** 죽은 함수라, 가이드 (B)가 가정하는 흐름과 아예 다르다. `notes`는 `schedule.get("notes")`로 그냥 넘기는데, 앱 DB row에는 `notes` 컬럼이 없어([fixed/store_base.py](../fixed/store_base.py)의 `SCHEDULE_COLUMNS` 참고) 항상 `None`이 됨 — 이건 가이드가 고치려는 버그와 무관한 별개의 사소한 이슈로, 별도 처리 여부는 보류 중.
+
+### 12-2. 검증 방법
+
+1. **기존 테스트 회귀 확인**: `tests/test_week05_mcp_tools.py` 16개 전부 통과 (변경 전 상태 그대로 확인).
+2. **정답 코드와 diff**: `student_parts_baseline/week05_load_kanas_past_conversations.py`와 직접 비교해, 구현 전략은 다르지만(정답: 포함 후 dedupe / 내 것: 처음부터 제외) 최종 동작은 동일함을 확인.
+3. **버그①을 실제로 잡는 테스트가 없었음을 확인** → `test_collect_member_schedules_includes_group_schedule_with_absent_member` 추가 (하린과의 그룹 일정을 만들고, 하린이 빠진 민준과의 조율 조회에서도 그 일정이 "나" row로 남는지 검증).
+4. **mutation 검증**: `kind="personal_schedule"` 필터를 일부러 되돌려 새 테스트가 실패하는지 확인(→ 실패함, 테스트가 버그를 제대로 잡아냄) → 필터 제거 상태로 원복 → 재검증 통과.
+
+### 12-3. 6주차 영향 여부
+
+6주차 `find_common_available_slots`(TODO)는 `collect_member_schedules`의 `rows`(날짜/시작/종료 시간)만 겹침 판정에 쓰고, `members`는 [week06_kanamate_decides_schedule.py](../student_parts/week06_kanamate_decides_schedule.py)에서 `normalize_external_member_names(member_names)`로 **자체 생성**한다. 즉 `collect_member_schedules` 응답에 `members` 키가 없거나 `notes`가 `None`이어도 6주차 로직에는 영향이 없다.
+
+**결론**: 가이드의 (A)~(E) 코드를 문자 그대로 옮기지 않았지만, 가이드가 없애려는 두 버그는 이미 (다른 방식으로) 없는 상태였고 이를 회귀 테스트로 검증까지 마쳤다. 6주차 진행에도 문제 없음.

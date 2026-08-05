@@ -184,6 +184,33 @@ def test_collect_member_schedules_merges_my_saved_schedule_with_external_member(
     assert "팀 회고" in titles
 
 
+def test_collect_member_schedules_includes_group_schedule_with_absent_member(external_db, app_db):
+    """하린과 잡아둔 그룹 일정은, 하린이 조율 대상이 아니어도 내 바쁜 시간에 남아 있어야 한다.
+
+    kind="personal_schedule"로만 걸러 읽으면 그룹 일정이 통째로 빠져 "빈 시간"으로 추천된다.
+    """
+
+    AppSQLiteStore(app_db).save_structured_request(
+        {
+            "kind": "group_schedule",
+            "title": "하린과 사전 미팅",
+            "date": "2026-07-14",
+            "start_time": "15:00",
+            "end_time": "16:00",
+            "members": ["하린"],
+        }
+    )
+
+    result = json.loads(
+        collect_member_schedules.invoke(
+            {"member_names": ["민준"], "date_from": "2026-07-01", "date_to": "2026-07-31"}
+        )
+    )
+
+    my_titles = {row["title"] for row in result["rows"] if row["member_name"] == "나"}
+    assert "하린과 사전 미팅" in my_titles
+
+
 def test_collect_member_schedules_with_na_in_member_names_does_not_duplicate(external_db, app_db):
     """member_names에 "나"가 들어오면 외부 저장소에도 자동 동기화된 "나" row가 있어
 
