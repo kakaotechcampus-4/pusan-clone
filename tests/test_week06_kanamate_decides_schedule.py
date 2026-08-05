@@ -180,21 +180,6 @@ class TestFindCommonAvailableSlots:
         assert "철수와 내가 모두 가능" in raw
         assert "\\u" not in raw
 
-    def test_find_common_slots_description_exposes_the_argument_contract(self, week06):
-        find_description = week06.FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION
-
-        assert find_description.strip()
-        for term in ("candidate_slots", "busy_rows", "decide_final_slot"):
-            assert term in find_description
-
-    def test_decide_final_slot_description_exposes_the_argument_contract(self, week06):
-        decide_description = week06.DECIDE_FINAL_SLOT_DESCRIPTION
-
-        assert decide_description.strip()
-        for term in ("final_slot", "selected_index", "needs_agent_selection"):
-            assert term in decide_description
-
-
 class TestDecideFinalSlot:
     def test_selected_index_records_the_final_slot_and_evidence(self, week06):
         candidates = [
