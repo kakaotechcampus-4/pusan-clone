@@ -395,7 +395,31 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     #     duration_minutes, reason을 포함해야 한다는 형식을 적습니다.
     #   - 후보는 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다.
     #   - 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다.
-    ""
+    # LLM은 이 설명을 보고 해당 tool이 시간을 찾아주는 건지 혹은 자기가 시간을 골라서 tool에 줘야 하는지 판단할 수 있음
+    """ 
+여러 멤버의 busy_rows와 Kana가 직접 선정한 공통 가능 시간 후보를 검증하는 tool입니다.
+
+중요:
+이 tool은 공통 가능 시간을 자동으로 계산하거나 최적 후보를 선택하지 않습니다.
+Kana agent가 앞선 tool에서 얻은 busy_rows를 직접 읽고,
+겹치지 않는 candidate_slots를 직접 선택한 뒤 이 tool에 전달해야 합니다.
+
+candidate_slots의 각 항목은 반드시 다음 필드를 포함해야 합니다.
+
+- date: 'YYYY-MM-DD'
+- start_time: 'HH:MM'
+- end_time: 'HH:MM'
+- duration_minutes: 회의 시간(분)
+- reason: 해당 후보를 선택한 이유
+
+candidate_slots는 busy_rows의 어떤 일정과도 겹치면 안 됩니다.
+
+앞선 collect_member_schedules 등의 결과에서 받은 busy_rows를
+가능하면 그대로 busy_rows argument에 전달하세요.
+
+이 tool의 결과는 후보 검증 결과일 뿐 최종 일정 결정이 아닙니다.
+검증이 끝나면 후보 중 하나를 직접 선택하고 decide_final_slot을 호출하세요.
+"""
 )
 
 
@@ -509,7 +533,50 @@ def find_common_available_slots_dict(
     #   - busy_rows가 None이면 collect_member_schedules.invoke({...})를 호출해 rows를 채웁니다.
     #   - 검증 payload 생성은 find_common_available_slots_payload(...)에 넘깁니다. 이때 내 일정도 근거이므로
     #     member_names에는 "나"를 함께 포함합니다.
-    ...
+
+    normalized_members = normalize_external_member_names(member_names)
+    normalized_date_from = normalize_date_bound(date_from)
+    normalized_date_to = normalize_date_bound(date_to)
+
+    resolved_busy_rows = busy_rows
+
+    if resolved_busy_rows is None:
+        collected = collect_member_schedules.invoke(  # busy_rows가 전달되지 않았다면 해당 함수를 통해 직접 수집
+            {
+                "member_names": normalized_members,
+                "date_from": normalized_date_from,
+                "date_to": normalized_date_to,
+            }
+        )
+
+        if isinstance(collected, str):
+            collected = json.loads(collected)
+
+        if isinstance(collected, dict):
+            resolved_busy_rows = collected.get("busy_rows") or []
+        else:
+            resolved_busy_rows = []
+
+    normalized_candidates = [
+        slot.model_dump() if hasattr(slot, "model_dump") else slot
+        for slot in candidate_slots or []
+    ]
+
+    return find_common_available_slots_payload(
+        member_names=[
+            "나",
+            *normalized_members,
+        ],  # 공통 시간은 외부 사람들끼리가 아닌 "나"도 포함한 모두 가능한 시간이여야 함
+        date_from=normalized_date_from,
+        date_to=normalized_date_to,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+        limit=limit,
+        busy_rows=resolved_busy_rows,
+        candidate_slots=normalized_candidates,
+        llm_reason=llm_reason,
+    )
 
 
 @tool(
@@ -531,7 +598,20 @@ def find_common_available_slots(
     """수집된 멤버 일정에서 LLM이 직접 고른 공통 가능 후보 시간을 검증합니다."""
 
     # TODO: find_common_available_slots_dict(...) 결과를 JSON 문자열로 반환하세요.
-    ...
+    payload = find_common_available_slots_dict(
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+        limit=limit,
+        busy_rows=busy_rows,
+        candidate_slots=candidate_slots,
+        llm_reason=llm_reason,
+    )
+
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @tool(description=DECIDE_FINAL_SLOT_DESCRIPTION, args_schema=DecideFinalSlotInput)
