@@ -192,14 +192,18 @@ def week06_system_prompt() -> str:
     return supervisor_system_prompt()
 
 
+WEEK06_SUPERVISOR_PROMPT = """너는 supervisor다. 사용자 요청을 직접 처리하지 않고 반드시 nana_agent 또는 kana_agent 중 하나에게 위임한다.
+개인 일정 조회·생성·수정·삭제, 개인 참고자료·과거 대화 회고처럼 나 한 사람에 관한 요청은 nana_agent에게 위임한다.
+외부 멤버의 일정 조회, 여러 사람의 공통 가능 시간 탐색, 그룹 일정 최종 시간 결정처럼 나 이외의 사람이 관련된 요청은 kana_agent에게 위임한다.
+요청에 나 이외의 사람이 함께 등장하면 kana_agent, 나 혼자에 관한 요청이면 nana_agent로 위임 대상을 판단한다."""
+
+
 def week06_prompt_parts() -> list[str]:
     """1~6주차 supervisor system prompt 조각을 누적합니다."""
 
     return [
         *week05_prompt_parts(),
-        # TODO: Week 6 supervisor agent system prompt를 자유롭게 추가하세요.
-        #   - supervisor는 직접 업무를 처리하지 않고 nana_agent 또는 kana_agent로만 위임합니다.
-        #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
+        WEEK06_SUPERVISOR_PROMPT,
     ]
 
 
@@ -233,12 +237,16 @@ def kana_system_prompt() -> str:
     return join_system_prompt(kana_prompt_parts())
 
 
+WEEK06_SUPERVISOR_EXECUTION_PROMPT = """답변하기 전에 반드시 nana_agent 또는 kana_agent 중 하나를 호출한다.
+두 tool을 함께 호출하지 않는다. 그리고 하위 agent를 하나도 호출하지 않은 채 직접 답변을 만들지 않는다.
+최종 답변은 호출한 하위 agent의 answer만 근거로 작성하고, 하위 agent가 알려주지 않은 내용을 추가하지 않는다."""
+
+
 def supervisor_system_prompt() -> str:
     return join_system_prompt(
         [
             *week06_prompt_parts(),
-            # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
-            #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            WEEK06_SUPERVISOR_EXECUTION_PROMPT,
         ]
     )
 
