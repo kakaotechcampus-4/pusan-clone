@@ -243,7 +243,14 @@ def kana_prompt_parts() -> list[str]:
         외부 대화에서 일정 단서를 찾을 때는 search_previous_conversations로 대화를 찾고,
         원문 확인이 필요하면 그 결과의 conversation_id로 load_conversation_messages를 호출한다.
         대화에서 구조화된 일정이 필요하면 extract_schedules_from_history를 사용한다.
-        list_shared_schedules는 이미 공유된 외부 일정 row만 조회할 때 사용한다.
+
+        search_previous_conversations의 두 인자는 거르는 대상이 다르다. 대화를 나눈 상대는
+        member_names로 넘기고, 대화 본문에서 찾을 낱말만 query에 넣는다. 사람 이름을 query에 넣으면
+        본문 글자만 훑기 때문에 결과가 비어 나온다. 상대와 주제어를 한 문자열로 붙이지 않는다.
+
+        여러 사람이 언제 바쁜지 묻는 요청은 최종 시간을 정하지 않아도 collect_member_schedules로
+        처리한다. list_shared_schedules는 공유 저장소에 어떤 일정 row가 등록됐는지 자체를 확인할
+        때만 사용한다.
 
         나와 외부 멤버의 공통 시간을 정할 때는 다음 순서를 지킨다.
         1. 요청에서 외부 멤버, 날짜 범위, 회의 길이와 허용 시간대를 파악한다.
@@ -254,6 +261,14 @@ def kana_prompt_parts() -> list[str]:
            확정할 수 있으면 final_slot과 selected_index, needs_agent_selection=false를 전달한다.
            후보가 없거나 선택할 수 없으면 final_slot=null, needs_agent_selection=true로 기록한다.
         5. decide_final_slot의 결과와 모순되지 않게 최종 답변한다.
+
+        find_common_available_slots에는 후보가 있든 없든 collect_member_schedules에서 받은 busy_rows를
+        그대로 전달한다. busy_rows를 넘기지 않으면 도구가 일정을 다시 조회하므로 방금 수집한 근거와
+        어긋난다.
+
+        candidate_slots에는 busy_rows의 어느 row와도 겹치지 않고 요청한 날짜 범위와 허용 시간대
+        안에 있는 시간만 넣는다. 겹치는 시간은 후보가 아니다. 겹친다는 사실을 reason에 적어서
+        후보로 올리지 말고, 넣을 수 있는 시간이 하나도 없으면 candidate_slots를 빈 목록으로 둔다.
 
         공통 시간 요청에서는 후보가 없더라도 위 세 도구를 모두 호출해야 한다. collect_member_schedules
         결과만 보고 답변을 끝내지 말고, 빈 candidate_slots도 find_common_available_slots로 검증한 뒤
@@ -348,7 +363,10 @@ Kana가 직접 고른 공통 가능 시간 후보를 검증하고 기록합니�
 이 도구는 후보를 대신 계산하지 않습니다. 먼저 수집한 busy_rows를 읽고, 어떤 busy row와도
 겹치지 않는 candidate_slots를 Kana가 직접 만들어 busy_rows와 함께 전달하세요.
 각 후보는 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), duration_minutes, reason을
-포함해야 합니다. 검증 결과를 받은 뒤 답변을 끝내지 말고 decide_final_slot을 호출하세요.
+포함해야 합니다.
+busy_rows는 근거를 남기기 위한 인자이므로 후보 개수와 무관하게 항상 전달하세요.
+겹치지 않는 시간이 없어 candidate_slots가 빈 목록일 때도 busy_rows는 그대로 넘깁니다.
+검증 결과를 받은 뒤 답변을 끝내지 말고 decide_final_slot을 호출하세요.
 """)
 
 
@@ -371,7 +389,11 @@ class FindCommonAvailableSlotsInput(BaseModel):
     limit: int = Field(default=5, ge=1, le=20, description="최대 후보 수")
     busy_rows: list[dict[str, Any]] | None = Field(
         default=None,
-        description="앞선 일정 조회 tool output에서 복사한 busy_rows. 후보는 이 row들과 overlap/겹치면 안 됩니다.",
+        description=(
+            "앞선 일정 조회 tool output에서 복사한 busy_rows. 후보는 이 row들과 overlap/겹치면 "
+            "안 됩니다. 결정 근거로 남기는 인자이므로 후보가 없을 때도 항상 전달하세요. "
+            "생략하면 이 도구가 일정을 다시 조회해 방금 수집한 근거와 어긋납니다."
+        ),
     )
     candidate_slots: list[CommonSlotCandidate] = Field(
         default_factory=list,
@@ -438,7 +460,9 @@ def find_common_available_slots_dict(
     #   - busy_rows가 None이면 collect_member_schedules.invoke({...})를 호출해 rows를 채웁니다.
     #   - 검증 payload 생성은 find_common_available_slots_payload(...)에 넘깁니다. 이때 내 일정도 근거이므로
     #     member_names에는 "나"를 함께 포함합니다.
-    member_names = normalize_external_member_names(["나", *member_names])
+    # set은 순서를 보존하지 않고 문자열 해시가 프로세스마다 랜덤화되므로 실행마다 순서가 바뀝니다.
+    # dict.fromkeys는 삽입 순서를 유지하면서 중복만 제거해 "나"가 항상 앞에 옵니다.
+    member_names = normalize_external_member_names(list(dict.fromkeys(["나", *member_names])))
     date_from, date_to = normalize_date_bound(date_from), normalize_date_bound(date_to)
     busy_rows = (busy_rows 
         if busy_rows is not None 
