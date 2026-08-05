@@ -231,6 +231,7 @@ def kana_prompt_parts() -> list[str]:
 - 멤버 일정이나 바쁜시간 볼땐 extract_schedules_from_history 씁니다.
 - 공유 저장소 확인할땐 list_shared_schedules 씁니다.
 - 나랑 멤버 일정 같이 봐야하면 collect_member_schedules로 모읍니다.
+- collect_member_schedules로 모은 busy_rows 보고 후보시간 골라서 find_common_available_slots로 넘기고, 거기서 고른 후보중에 하나 정해서 decide_final_slot까지 이어서 부릅니다.
 일정 저장하는건 내 담당 아니니까 Nana한테 하라고 안내합니다.
 """.strip(),
     ]
