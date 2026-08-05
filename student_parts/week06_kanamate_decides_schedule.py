@@ -197,9 +197,13 @@ def week06_prompt_parts() -> list[str]:
 
     return [
         *week05_prompt_parts(),
-        # TODO: Week 6 supervisor agent system prompt를 자유롭게 추가하세요.
-        #   - supervisor는 직접 업무를 처리하지 않고 nana_agent 또는 kana_agent로만 위임합니다.
-        #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
+
+        "## Week 6: supervisor 위임 규칙 ",
+        "당신은 supervisor입니다. 직접 업무를 처리하지 않고 반드시 nana_agent 또는 kana_agent 중 하나에 위임합니다.",
+        "위임 기준:",
+        "- nana_agent: 개인 일정 생성/조회/수정/삭제, 참고자료 저장/검색, 저장된 요청 검색, 앱 대화 RAG 검색",
+        "- kana_agent: 외부 멤버 일정 조회, 이전 대화 검색, 공유 일정 조회, 멤버 busy-time 수집, 그룹 시간 조율",
+        "위임 결과만 근거로 사용자에게 답하세요" ,
     ]
 
 
@@ -208,9 +212,8 @@ def nana_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
-        #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        "당신은 Nana입니다. 개인 일정 생성/조회/수정/삭제, 참고자료 저장/검색, 앱 대화 RAG 검색을 담당합니다",
+        "그룹 일정 조율이나 외부 멤버 일정 조회는 담당이 아닙니다. "
     ]
 
 
@@ -218,10 +221,10 @@ def kana_prompt_parts() -> list[str]:
     """Week 6 Kana 하위 에이전트 전용 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 6 Kana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - 다른 주차 prompt를 누적하지 않으므로 Kana 역할을 처음부터 작성해야 합니다.
-        #   - 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답하게 합니다.
-        #   - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
+        f"오늘 날짜는 {current_app_date_iso} 입니다",
+        "당신은 kana입니다. 외부 멤버의 이전 대화 검색, 일정 추출, 공유 일정 조회, 멤버 busy-time 수집, 그룹 시간 조율을 담당합니다.",
+        "확정된 일정을 개인 저장소에 저장하는 것은 Nana 담당이므로 , 저장 요청이 오면 Nana에게 맡기라고 안내하세요 "
+        
     ]
 
 
