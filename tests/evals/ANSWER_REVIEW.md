@@ -1,8 +1,15 @@
 # 에이전트 최종 답변 검토 기준
 
-검토 대상은 `.eval-artifacts/routing-answers.json`이다.
+검토 대상은 다음 artifact다.
+
+- `.eval-artifacts/routing-answers.json` (Week 4~6 통합)
+- `.eval-artifacts/week06-routing-answers.json` (Week 6 전용, `judge` 판정 계약 포함)
+
 추가 eval이나 외부 API를 호출하지 않고 artifact에 저장된 `user`, `history`,
 `tool_trace`, `answer`만 읽어 검토한다.
+
+이 문서는 사람이 읽는 기준이면서 동시에 LLM Judge에게 그대로 전달되는 기준이다
+(`tests/evals/llm_judge.py`). 기준을 바꾸면 양쪽이 함께 바뀐다.
 
 ## 검토 방법
 
@@ -35,6 +42,28 @@ Tool call의 이름이나 인자만으로는 사실이 확인됐다고 보지 �
 - 빈 검색 결과를 전체 기록의 부재로 과장한다.
 
 정보가 부족하거나 두 판정 모두 합리적이면 억지로 결정하지 않고 `REVIEW`로 남긴다.
+
+## 케이스가 판정 계약을 제공하는 경우
+
+Week 6 artifact의 각 케이스에는 `judge` 블록이 있다. 있으면 위 기준에 더해 다음을 적용한다.
+
+- `required_facts`: 답변이 이 사실들을 반영해야 한다. 누락하면 `FAIL`이다.
+  표현이 달라도 의미가 같으면 반영된 것으로 본다.
+- `forbidden_claims`: 답변이 이 주장 중 하나를 만들면 `FAIL`이다.
+- `role_expectation`: 이 surface의 역할 경계다. 위반하면 `FAIL`이다.
+  예를 들어 Nana가 그룹 공통 시간을 직접 결정하거나, Kana가 일정 저장 성공을 주장하거나,
+  Supervisor가 하위 에이전트 결과에 없는 사실을 덧붙이면 위반이다.
+- `reference_answer`: 모범답안이다. **문구 비교용이 아니라 사실 기준으로만** 쓴다.
+  답변이 이 문장과 다르게 쓰였다는 이유만으로 실패시키지 않는다.
+
+## 판정으로 세지 않는 것
+
+판정자(CLI)나 도구 자체의 문제는 `PASS`/`FAIL`/`REVIEW`가 아니라 `ERROR`다.
+
+- CLI 미설치, 인증 실패, 제한 시간 초과, 비정상 종료
+- 판정 출력이 JSON이 아니거나 요청한 실행 목록과 맞지 않음
+
+`ERROR`와 `REVIEW`는 통과 횟수에 포함하지 않는다.
 
 ## 허용하는 표현 차이
 

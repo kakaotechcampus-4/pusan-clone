@@ -7,7 +7,9 @@ from __future__ import annotations
 고정합니다. 합성 trace 이벤트만 쓰기 때문에 `--eval` 없이 기본 스위트에서 함께 돌아갑니다.
 """
 
+import importlib
 import json
+import sys
 from typing import Any
 
 import pytest
@@ -16,10 +18,18 @@ from pydantic import BaseModel
 
 import fixed.runtime_clock as runtime_clock
 from fixed.external_people_store import external_schedule_summary
-from tests.evals import cases_week04_routing, cases_week05_routing, predicates
+from tests.evals import (
+    cases_week04_routing,
+    cases_week05_routing,
+    cases_week06_routing,
+    predicates,
+)
 from tests.evals.conftest import (
     EVAL_TODAY,
+    EvalIsolationError,
     RunOutcome,
+    _assert_no_isolation_violation,
+    _block_real_mcp,
     _freeze_eval_clock,
     _tally,
     assert_case_passes,
@@ -68,9 +78,10 @@ def fixture_referenced_tools(expect: dict[str, Any]) -> set[str]:
         *expect.get("args", {}).keys(),
         *expect.get("args_if_called", {}).keys(),
     }
-    for spec in expect.get("arg_matches_result", []):
-        tool_names.add(spec["tool"])
-        tool_names.add(spec["source_tool"])
+    for key in ("arg_matches_result", "arg_equals_result", "candidates_are_valid"):
+        for spec in expect.get(key, []):
+            tool_names.add(spec["tool"])
+            tool_names.add(spec["source_tool"])
     for key in RESULT_EXPECTATION_KEYS:
         tool_names.update(spec["tool"] for spec in expect.get(key, []))
     return tool_names
@@ -193,6 +204,95 @@ class TestCalledPredicates:
         }
 
         assert predicates.check_case(expect, events, "") == []
+
+
+class TestContainsPredicates:
+    """list 인자에 무엇이 들어갔는지 / 들어가면 안 되는지 검사합니다.
+
+    `equals`는 순서와 여분 항목에 취약해서 멤버 목록에 쓸 수 없고, `not_contains`는
+    "이 인자에 저 값을 넣지 말라"는 도구 계약(예: 상대 이름을 query에 붙이지 말 것)을 인코딩합니다.
+    """
+
+    def test_contains_ignores_order_and_extra_items(self):
+        events = [tool_call("collect_member_schedules", member_names=["영희", "나", "철수"])]
+        expect = {
+            "args": {"collect_member_schedules": {"member_names": {"contains": ["철수", "영희"]}}}
+        }
+
+        assert predicates.check_case(expect, events, "") == []
+
+    def test_contains_reports_the_missing_items(self):
+        events = [tool_call("collect_member_schedules", member_names=["철수"])]
+        expect = {
+            "args": {"collect_member_schedules": {"member_names": {"contains": ["철수", "영희"]}}}
+        }
+
+        reasons = predicates.check_case(expect, events, "")
+
+        assert len(reasons) == 1
+        assert "영희" in reasons[0]
+
+    def test_contains_rejects_a_non_list_argument(self):
+        events = [tool_call("collect_member_schedules", member_names="철수")]
+        expect = {"args": {"collect_member_schedules": {"member_names": {"contains": ["철수"]}}}}
+
+        assert predicates.check_case(expect, events, "") != []
+
+    def test_not_contains_passes_when_absent(self):
+        events = [tool_call("search_previous_conversations", query="워크숍")]
+        expect = {
+            "args": {"search_previous_conversations": {"query": {"not_contains": ["영희"]}}}
+        }
+
+        assert predicates.check_case(expect, events, "") == []
+
+    def test_not_contains_catches_a_substring_in_a_string_argument(self):
+        """상대 이름과 주제어를 한 문자열로 붙인 경우입니다."""
+
+        events = [tool_call("search_previous_conversations", query="영희 워크숍")]
+        expect = {
+            "args": {"search_previous_conversations": {"query": {"not_contains": ["영희"]}}}
+        }
+
+        reasons = predicates.check_case(expect, events, "")
+
+        assert len(reasons) == 1
+        assert "영희" in reasons[0]
+
+    def test_not_contains_catches_an_item_in_a_list_argument(self):
+        events = [tool_call("collect_member_schedules", member_names=["나", "철수"])]
+        expect = {
+            "args": {"collect_member_schedules": {"member_names": {"not_contains": ["철수"]}}}
+        }
+
+        assert predicates.check_case(expect, events, "") != []
+
+    def test_not_contains_treats_a_missing_argument_as_absent(self):
+        events = [tool_call("search_previous_conversations", member_names=["영희"])]
+        expect = {
+            "args": {"search_previous_conversations": {"query": {"not_contains": ["영희"]}}}
+        }
+
+        assert predicates.check_case(expect, events, "") == []
+
+    def test_contains_and_not_contains_combine_on_one_call(self):
+        """held-out 케이스가 실제로 요구하는 조합입니다: 상대는 member_names, 낱말만 query."""
+
+        expect = {
+            "args": {
+                "search_previous_conversations": {
+                    "member_names": {"contains": ["영희"]},
+                    "query": {"not_contains": ["영희"], "max_words": 2},
+                }
+            }
+        }
+
+        good = [tool_call("search_previous_conversations", member_names=["영희"], query="워크숍")]
+        assert predicates.check_case(expect, good, "") == []
+
+        # 실제로 관측된 실패 모드: 상대를 query에 넣고 member_names를 비움
+        swapped = [tool_call("search_previous_conversations", query="영희")]
+        assert predicates.check_case(expect, swapped, "") != []
 
 
 class TestOrderPredicate:
@@ -754,6 +854,7 @@ def test_only_representative_routing_cases_repeat_by_default():
         for case in [
             *cases_week04_routing.WEEK04_ROUTING_CASES,
             *cases_week05_routing.WEEK05_ROUTING_CASES,
+            *cases_week06_routing.WEEK06_ROUTING_CASES,
         ]
         if case.get("repeats") == 3
     }
@@ -765,6 +866,12 @@ def test_only_representative_routing_cases_repeat_by_default():
         "week05.collect.multi_member_busy_times",
         "week05.history.search_then_load",
         "week05.shared.member_roster",
+        "week06.supervisor.personal_schedule",
+        "week06.supervisor.group_coordination",
+        "week06.nana.group_request_boundary",
+        "week06.kana.collect_only",
+        "week06.kana.decide_common_slot",
+        "week06.kana.no_common_slot",
     }
 
 
@@ -929,3 +1036,560 @@ def test_answer_artifact_keeps_the_exact_answer_and_trace():
 
     assert record["runs"][0]["answer"] == outcome.answer
     assert record["runs"][0]["tool_trace"] == outcome.events
+
+
+class TestWeek06RoutingCaseDataset:
+    """Week 6 케이스 데이터셋의 자기 정합성을 검사합니다."""
+
+    def test_dataset_has_unique_cases_across_three_surfaces(self):
+        cases = cases_week06_routing.WEEK06_ROUTING_CASES
+        ids = [case["id"] for case in cases]
+
+        assert len(cases) == 13
+        assert len(ids) == len(set(ids)), "케이스 id가 중복됐다"
+        assert {case["surface"] for case in cases} == {"supervisor", "kana", "nana"}
+
+    def test_total_runs_match_the_planned_budget(self):
+        """대표 6개는 3회, 나머지 7개는 1회 = 25회입니다."""
+
+        cases = cases_week06_routing.WEEK06_ROUTING_CASES
+
+        assert sum(case.get("repeats", 1) for case in cases) == 25
+
+    @pytest.mark.parametrize(
+        "case",
+        cases_week06_routing.WEEK06_ROUTING_CASES,
+        ids=lambda case: case["id"],
+    )
+    def test_every_case_declares_a_judge_contract(self, case: dict[str, Any]):
+        judge = case.get("judge")
+
+        assert judge, f"{case['id']}: judge 블록이 없다"
+        for key in ("reference_answer", "required_facts", "forbidden_claims", "role_expectation"):
+            assert judge.get(key), f"{case['id']}: judge.{key}가 비어 있다"
+        assert isinstance(judge["required_facts"], list)
+        assert isinstance(judge["forbidden_claims"], list)
+
+    @pytest.mark.parametrize(
+        "case",
+        cases_week06_routing.WEEK06_ROUTING_CASES,
+        ids=lambda case: case["id"],
+    )
+    def test_data_link_specs_point_at_declared_fixtures(self, case: dict[str, Any]):
+        """arg_equals_result / candidates_are_valid의 source_tool에 fixture가 있어야 합니다."""
+
+        declared = set(case.get("tool_results", {}))
+        for key in ("arg_equals_result", "candidates_are_valid"):
+            for spec in case["expect"].get(key, []):
+                assert spec["source_tool"] in declared, (
+                    f"{case['id']}: {key}의 source_tool {spec['source_tool']}에 fixture가 없다"
+                )
+
+    @pytest.mark.parametrize(
+        "case",
+        cases_week06_routing.WEEK06_ROUTING_CASES,
+        ids=lambda case: case["id"],
+    )
+    def test_fixtures_are_internally_consistent(self, case: dict[str, Any]):
+        """find_common_available_slots fixture의 busy_rows가 collect 결과와 같아야 합니다.
+
+        검사 자체는 인자를 보므로 동작하지만, 어긋나 있으면 artifact를 읽는 사람이 값의 출처를
+        오해합니다.
+        """
+
+        results = case.get("tool_results", {})
+        collect = results.get("collect_member_schedules")
+        find = results.get("find_common_available_slots")
+        if not collect or not find or "busy_rows" not in find:
+            pytest.skip("공통 시간 결정 fixture가 없는 케이스다")
+
+        assert find["busy_rows"] == collect["rows"], f"{case['id']}: busy_rows fixture 불일치"
+
+    @pytest.mark.parametrize(
+        "case",
+        cases_week06_routing.WEEK06_ROUTING_CASES,
+        ids=lambda case: case["id"],
+    )
+    def test_declared_fixture_candidates_satisfy_the_case_contract(self, case: dict[str, Any]):
+        """fixture가 제시하는 후보가 그 케이스의 계약을 스스로 만족하는지 확인합니다.
+
+        케이스마다 허용 날짜·시간대·회의 길이가 다르므로 케이스 자신의 spec으로 검사합니다.
+        fixture가 계약을 위반하는 후보를 정답처럼 담고 있으면 케이스가 애초에 모순입니다.
+        """
+
+        specs = case["expect"].get("candidates_are_valid")
+        results = case.get("tool_results", {})
+        collect = results.get("collect_member_schedules")
+        find = results.get("find_common_available_slots")
+        if not specs or not collect or not find:
+            pytest.skip("후보 유효성 계약이 없는 케이스다")
+
+        events = [
+            tool_result("collect_member_schedules", collect),
+            tool_call("find_common_available_slots", candidate_slots=find["candidate_slots"]),
+        ]
+        reasons = predicates.check_case({"candidates_are_valid": specs}, events, "")
+
+        assert reasons == [], f"{case['id']}: fixture 후보가 케이스 계약을 위반한다: {reasons}"
+
+
+def group_slot_events(
+    *,
+    busy_rows: list[dict[str, Any]],
+    find_busy_rows: list[dict[str, Any]] | None = None,
+    proposed: list[dict[str, Any]] | None = None,
+    validated: list[dict[str, Any]] | None = None,
+    decided: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """collect -> find -> decide 합성 trace를 만듭니다."""
+
+    slots = [cases_week06_routing.COMMON_SLOT] if proposed is None else proposed
+    validated = slots if validated is None else validated
+    decided = validated if decided is None else decided
+    return [
+        tool_call("collect_member_schedules", member_names=["나", "철수", "영희"]),
+        tool_result("collect_member_schedules", {"ok": True, "rows": busy_rows}),
+        tool_call(
+            "find_common_available_slots",
+            busy_rows=busy_rows if find_busy_rows is None else find_busy_rows,
+            candidate_slots=slots,
+        ),
+        tool_result(
+            "find_common_available_slots",
+            {"ok": True, "busy_rows": busy_rows, "candidate_slots": validated},
+        ),
+        tool_call(
+            "decide_final_slot",
+            candidate_slots=decided,
+            final_slot="2026-08-10 11:00-12:00",
+        ),
+        tool_result("decide_final_slot", {"final_slot": "2026-08-10 11:00-12:00"}),
+    ]
+
+
+# 케이스 11(2026-08-10, 60분, 09:00~18:00)의 계약입니다. 합성 trace 테스트가 공유합니다.
+CASE11_CANDIDATE_CONTRACT = cases_week06_routing.candidates_are_valid(
+    date_from="2026-08-10",
+    date_to="2026-08-10",
+    duration_minutes=60,
+)
+
+GROUP_SLOT_EXPECT = {
+    "arg_equals_result": cases_week06_routing.GROUP_SLOT_DATA_LINKS,
+    "candidates_are_valid": CASE11_CANDIDATE_CONTRACT,
+}
+
+AVOID_BUSY_ROWS_EXPECT = {
+    "candidates_are_valid": CASE11_CANDIDATE_CONTRACT,
+}
+
+
+class TestGroupSlotDataLinkage:
+    """도구 사이 데이터 연결이 끊기면 반드시 Red가 돼야 합니다.
+
+    실제 순수 도구를 실행하지 않고 trace만으로 연결을 검사하므로, 이 회귀가 그 검사를 고정합니다.
+    """
+
+    def test_fully_linked_trace_passes(self):
+        events = group_slot_events(busy_rows=cases_week06_routing.BUSY_ROWS)
+
+        assert predicates.check_case(GROUP_SLOT_EXPECT, events, "") == []
+
+    def test_fabricated_busy_rows_are_red(self):
+        """collect 결과를 무시하고 busy_rows를 지어내면 실패합니다."""
+
+        events = group_slot_events(
+            busy_rows=cases_week06_routing.BUSY_ROWS,
+            find_busy_rows=[],
+        )
+
+        reasons = predicates.check_case(GROUP_SLOT_EXPECT, events, "")
+
+        assert any("busy_rows" in reason for reason in reasons), reasons
+
+    def test_dropped_candidate_link_to_decide_is_red(self):
+        """검증된 후보를 decide로 이어받지 않으면 실패합니다."""
+
+        events = group_slot_events(busy_rows=cases_week06_routing.BUSY_ROWS, decided=[])
+
+        reasons = predicates.check_case(GROUP_SLOT_EXPECT, events, "")
+
+        assert any("decide_final_slot.candidate_slots" in reason for reason in reasons), reasons
+
+    def test_reason_text_may_differ_between_find_and_decide(self):
+        """식별 필드가 같으면 reason 문구가 달라도 연결로 인정합니다."""
+
+        rephrased = {**cases_week06_routing.COMMON_SLOT, "reason": "세 사람 모두 비어 있습니다."}
+        events = group_slot_events(
+            busy_rows=cases_week06_routing.BUSY_ROWS,
+            decided=[rephrased],
+        )
+
+        assert predicates.check_case(GROUP_SLOT_EXPECT, events, "") == []
+
+    def test_uncalled_tool_cannot_hide_a_broken_link(self):
+        events = [
+            tool_call("collect_member_schedules"),
+            tool_result(
+                "collect_member_schedules",
+                {"ok": True, "rows": cases_week06_routing.BUSY_ROWS},
+            ),
+        ]
+
+        reasons = predicates.check_case(GROUP_SLOT_EXPECT, events, "")
+
+        # 아직 호출되지 않은 두 도구를 실패 이유가 지목해야 합니다.
+        assert any("find_common_available_slots" in reason for reason in reasons), reasons
+        assert any("decide_final_slot" in reason for reason in reasons), reasons
+
+    def test_source_result_arriving_after_the_call_is_not_evidence(self):
+        """인자를 먼저 지어내고 나중에 같은 결과가 온 trace는 통과하면 안 됩니다.
+
+        모델이 여러 tool call을 한 배치로 내보내면 호출 순서 검사는 통과하면서
+        결과가 소비 시점보다 늦게 도착합니다.
+        """
+
+        expect = {"arg_equals_result": [cases_week06_routing.GROUP_SLOT_DATA_LINKS[0]]}
+        events = [
+            tool_call(
+                "find_common_available_slots",
+                busy_rows=cases_week06_routing.BUSY_ROWS,
+                candidate_slots=[],
+            ),
+            tool_call("collect_member_schedules"),
+            tool_result(
+                "collect_member_schedules",
+                {"ok": True, "rows": cases_week06_routing.BUSY_ROWS},
+            ),
+        ]
+
+        reasons = predicates.check_case(expect, events, "")
+
+        assert any("collect_member_schedules" in reason for reason in reasons), reasons
+
+    def test_every_call_is_checked_not_just_the_first(self):
+        """올바른 첫 호출 뒤에 잘못된 호출을 덧붙여 통과할 수 없습니다."""
+
+        events = [
+            *group_slot_events(busy_rows=cases_week06_routing.BUSY_ROWS),
+            tool_call("find_common_available_slots", busy_rows=[], candidate_slots=[]),
+        ]
+
+        reasons = predicates.check_case(GROUP_SLOT_EXPECT, events, "")
+
+        assert any("busy_rows" in reason for reason in reasons), reasons
+
+    def test_omitted_busy_rows_is_not_treated_as_empty(self):
+        """busy_rows 생략은 빈 list와 다릅니다.
+
+        생략하면 학생 구현의 fallback이 모듈 전역 collect_member_schedules를 부르는
+        다른 동작이 되므로 통과시키지 않습니다.
+        """
+
+        expect = {"arg_equals_result": [cases_week06_routing.GROUP_SLOT_DATA_LINKS[0]]}
+        events = [
+            tool_call("collect_member_schedules"),
+            tool_result("collect_member_schedules", {"ok": True, "rows": []}),
+            tool_call("find_common_available_slots", candidate_slots=[]),
+        ]
+
+        reasons = predicates.check_case(expect, events, "")
+
+        assert any("find_common_available_slots.busy_rows" in reason for reason in reasons), reasons
+
+    def test_omitted_candidate_slots_on_decide_equals_an_empty_list(self):
+        """후보가 없을 때 decide의 candidate_slots 생략은 []와 동작상 같습니다.
+
+        스키마 기본값이 빈 list이고 trace에는 기본값 적용 전 원본 인자가 담기므로,
+        프롬프트가 요구하지 않은 명시적 []를 강제하면 정상 실행이 실패합니다.
+        """
+
+        expect = {"arg_equals_result": [cases_week06_routing.GROUP_SLOT_DATA_LINKS[1]]}
+        events = [
+            tool_call("find_common_available_slots", busy_rows=[], candidate_slots=[]),
+            tool_result("find_common_available_slots", {"ok": True, "candidate_slots": []}),
+            tool_call("decide_final_slot", final_slot=None, needs_agent_selection=True),
+        ]
+
+        assert predicates.check_case(expect, events, "") == []
+
+    def test_omitted_candidate_slots_still_fails_when_candidates_existed(self):
+        """후보가 있었는데 생략하면 연결이 끊긴 것이므로 실패합니다."""
+
+        expect = {"arg_equals_result": [cases_week06_routing.GROUP_SLOT_DATA_LINKS[1]]}
+        events = [
+            tool_call(
+                "find_common_available_slots",
+                busy_rows=[],
+                candidate_slots=[cases_week06_routing.COMMON_SLOT],
+            ),
+            tool_result(
+                "find_common_available_slots",
+                {"ok": True, "candidate_slots": [cases_week06_routing.COMMON_SLOT]},
+            ),
+            tool_call("decide_final_slot", final_slot="2026-08-10 11:00-12:00"),
+        ]
+
+        assert predicates.check_case(expect, events, "") != []
+
+
+def candidate(
+    *,
+    date: str = "2026-08-10",
+    start_time: str = "11:00",
+    end_time: str = "12:00",
+) -> dict[str, Any]:
+    return {
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "duration_minutes": 60,
+        "reason": "",
+    }
+
+
+class TestCandidatesAreValid:
+    """제안한 후보가 요청 계약을 만족하는지 실제 순수 검증기로 확인합니다.
+
+    겹침만 보면 요청 범위 밖의 후보가 통과합니다. 계약(날짜 범위, 근무 시간대, 회의 길이)까지
+    함께 봐야 정적 fixture가 잘못된 제안에 도장을 찍어 주는 일을 막습니다.
+    """
+
+    def test_contract_satisfying_candidate_passes(self):
+        events = group_slot_events(busy_rows=cases_week06_routing.BUSY_ROWS)
+
+        assert predicates.check_case(AVOID_BUSY_ROWS_EXPECT, events, "") == []
+
+    def test_overlapping_candidate_is_red_and_names_the_blocker(self):
+        events = group_slot_events(
+            busy_rows=cases_week06_routing.BUSY_ROWS,
+            proposed=[candidate(start_time="10:00", end_time="11:00")],
+        )
+
+        reasons = predicates.check_case(AVOID_BUSY_ROWS_EXPECT, events, "")
+
+        assert len(reasons) == 1
+        # 어느 row와 겹쳤는지 실패 이유에 담겨야 원인을 바로 알 수 있습니다.
+        assert "철수" in reasons[0] and "고객 미팅" in reasons[0]
+
+    def test_partially_overlapping_candidate_is_red(self):
+        events = group_slot_events(
+            busy_rows=cases_week06_routing.BUSY_ROWS,
+            proposed=[candidate(start_time="10:30", end_time="11:30")],
+        )
+
+        assert len(predicates.check_case(AVOID_BUSY_ROWS_EXPECT, events, "")) == 1
+
+    def test_empty_candidate_list_passes(self):
+        """공통 시간 없음 케이스는 빈 후보가 정답입니다."""
+
+        events = group_slot_events(
+            busy_rows=cases_week06_routing.BLOCKED_ROWS,
+            proposed=[],
+        )
+
+        assert predicates.check_case(AVOID_BUSY_ROWS_EXPECT, events, "") == []
+
+    @pytest.mark.parametrize(
+        "bogus,label",
+        [
+            (candidate(date="2026-08-11"), "요청 날짜 범위 밖"),
+            (candidate(start_time="08:00", end_time="09:00"), "근무 시간대 시작 전"),
+            (candidate(start_time="18:00", end_time="19:00"), "근무 시간대 종료 후"),
+            (candidate(start_time="11:00", end_time="11:01"), "요청한 회의 길이 미달"),
+            (candidate(start_time="25:00", end_time="26:00"), "존재하지 않는 시각"),
+            (candidate(date=""), "날짜 없음"),
+            (candidate(start_time="12:00", end_time="11:00"), "종료가 시작보다 앞"),
+        ],
+    )
+    def test_out_of_contract_candidates_are_red(self, bogus: dict[str, Any], label: str):
+        """겹치지 않아도 계약을 벗어난 후보는 통과하면 안 됩니다."""
+
+        events = group_slot_events(
+            busy_rows=cases_week06_routing.BUSY_ROWS,
+            proposed=[bogus],
+        )
+
+        assert predicates.check_case(AVOID_BUSY_ROWS_EXPECT, events, "") != [], label
+
+    def test_missing_source_result_cannot_wave_candidates_through(self):
+        """근거가 없으면 통과가 아니라 실패입니다.
+
+        source 결과가 없을 때 busy_rows를 빈 목록으로 보면 아무 후보나 통과합니다.
+        """
+
+        events = [tool_call("find_common_available_slots", candidate_slots=[candidate()])]
+
+        reasons = predicates.check_case(AVOID_BUSY_ROWS_EXPECT, events, "")
+
+        assert any("collect_member_schedules" in reason for reason in reasons), reasons
+
+    def test_source_result_after_the_call_is_not_evidence(self):
+        """소비 호출 뒤에 도착한 결과는 근거로 인정하지 않습니다."""
+
+        events = [
+            tool_call("find_common_available_slots", candidate_slots=[candidate()]),
+            tool_result(
+                "collect_member_schedules",
+                {"ok": True, "rows": cases_week06_routing.BUSY_ROWS},
+            ),
+        ]
+
+        reasons = predicates.check_case(AVOID_BUSY_ROWS_EXPECT, events, "")
+
+        assert any("collect_member_schedules" in reason for reason in reasons), reasons
+
+    def test_a_second_broken_call_cannot_hide_behind_a_good_first_call(self):
+        events = [
+            *group_slot_events(busy_rows=cases_week06_routing.BUSY_ROWS),
+            tool_call(
+                "find_common_available_slots",
+                candidate_slots=[candidate(start_time="13:00", end_time="14:00")],
+            ),
+        ]
+
+        reasons = predicates.check_case(AVOID_BUSY_ROWS_EXPECT, events, "")
+
+        assert any("영희" in reason for reason in reasons), reasons
+
+
+@pytest.fixture(scope="module")
+def week05_module():
+    """실제 ChromaDB·SQLite를 열지 않고 week05 모듈을 import합니다.
+
+    week05를 그냥 import하면 모듈 로드 시점에 실제 store가 만들어져 `data/`의 Chroma 파일을
+    건드립니다. `tests/test_week05_load_kanas_past_conversations.py`의 `week05` fixture와
+    `tests/evals/conftest.py`의 `eval_env`가 쓰는 것과 같은 격리 절차입니다.
+    """
+
+    import fixed.app_store as app_store_module
+    import fixed.conversation_rag_store as conversation_rag_store_module
+    import fixed.reference_store as reference_store_module
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(app_store_module, "AppSQLiteStore", lambda _path: object())
+    monkeypatch.setattr(
+        reference_store_module, "PersonalReferenceStore", lambda _path: object()
+    )
+    monkeypatch.setattr(
+        conversation_rag_store_module, "ConversationRAGStore", lambda _path: object()
+    )
+
+    module_names = [
+        "student_parts.week05_load_kanas_past_conversations",
+        "student_parts.week04_retrieve_nanas_memory",
+    ]
+    previous_modules = {name: sys.modules.pop(name, None) for name in module_names}
+    try:
+        yield importlib.import_module(module_names[0])
+    finally:
+        for name in module_names:
+            sys.modules.pop(name, None)
+        for name, previous in previous_modules.items():
+            if previous is not None:
+                sys.modules[name] = previous
+        monkeypatch.undo()
+
+
+class TestEvalIsolation:
+    """평가가 mock을 우회해 실제 MCP로 나가면 즉시 드러나야 합니다."""
+
+    def test_kill_switch_blocks_the_week05_module_alias(self, week05_module):
+        """week05가 노출한 **실제 별칭 객체**를 호출해 막히는지 확인합니다.
+
+        week05는 모듈 로드 시점에 `call_mcp_tool_sync = call_local_mcp_tool_sync`로 별칭을
+        굳혀 두지만, `call_local_mcp_tool_sync`가 내부에서 `call_local_mcp_tool`을 호출
+        시점에 전역 조회하므로 함께 막힙니다. `fixed.mcp_client`를 직접 부르면 별칭이 다른
+        함수로 재바인딩돼도 테스트가 통과해 버리므로, week05 모듈 속성을 가져와 씁니다.
+        """
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            _block_real_mcp(monkeypatch)
+
+            with pytest.raises(EvalIsolationError, match="실제 MCP tool"):
+                week05_module.call_mcp_tool_sync("list_shared_schedules", {})
+
+    def test_kill_switch_blocks_the_week05_loader_alias(self, week05_module):
+        """loader를 직접 쓰는 경로도 막습니다.
+
+        `load_local_mcp_tools`는 MCP 서브프로세스를 직접 띄우므로, 이걸 놓치면 호출 경로
+        차단을 우회할 수 있습니다. week05는 `load_langchain_mcp_tools_sync`로 노출합니다.
+        """
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            _block_real_mcp(monkeypatch)
+
+            with pytest.raises(EvalIsolationError, match="실제 MCP loader"):
+                week05_module.load_langchain_mcp_tools_sync()
+
+    def test_kill_switch_is_undone_after_the_session(self):
+        import fixed.mcp_client as mcp_client
+
+        original = mcp_client.call_local_mcp_tool
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            _block_real_mcp(monkeypatch)
+            assert mcp_client.call_local_mcp_tool is not original
+
+        assert mcp_client.call_local_mcp_tool is original
+
+    def test_violation_is_recorded_so_a_swallowed_exception_still_surfaces(self):
+        """LangChain의 tool 실행부가 예외를 삼켜도 기록으로 드러납니다."""
+
+        import fixed.mcp_client as mcp_client
+        from fixed.session_scope import conversation_session_scope
+
+        conversation_id = "eval-week06.kana.decide_common_slot-0"
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            _block_real_mcp(monkeypatch)
+            with conversation_session_scope(conversation_id):
+                with pytest.raises(EvalIsolationError):
+                    mcp_client.call_local_mcp_tool_sync("collect_member_schedules", {})
+
+            # 예외가 삼켜진 상황을 재현합니다. 기록이 남아 있으므로 여전히 드러납니다.
+            with pytest.raises(EvalIsolationError, match="collect_member_schedules"):
+                _assert_no_isolation_violation(conversation_id)
+
+    @pytest.mark.parametrize(
+        "violating_run,checked_run",
+        [
+            ("eval-case-a-0", "eval-case-b-0"),
+            # 접두어가 겹치는 쌍입니다. 부분 문자열로 찾으면 case-1이 case-10의 위반으로
+            # 실패합니다 (--eval-repeats 11 이상에서 실제로 발생).
+            ("eval-week06.kana.decide_common_slot-10", "eval-week06.kana.decide_common_slot-1"),
+            ("eval-case-1", "eval-case-10"),
+        ],
+    )
+    def test_other_runs_are_not_blamed_for_someone_elses_violation(
+        self,
+        violating_run: str,
+        checked_run: str,
+    ):
+        import fixed.mcp_client as mcp_client
+        from fixed.session_scope import conversation_session_scope
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            _block_real_mcp(monkeypatch)
+            with conversation_session_scope(violating_run):
+                with pytest.raises(EvalIsolationError):
+                    mcp_client.call_local_mcp_tool_sync("list_shared_schedules", {})
+
+            _assert_no_isolation_violation(checked_run)
+
+    def test_the_violating_run_itself_still_fails(self):
+        import fixed.mcp_client as mcp_client
+        from fixed.session_scope import conversation_session_scope
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            _block_real_mcp(monkeypatch)
+            with conversation_session_scope("eval-case-1"):
+                with pytest.raises(EvalIsolationError):
+                    mcp_client.call_local_mcp_tool_sync("list_shared_schedules", {})
+
+            with pytest.raises(EvalIsolationError):
+                _assert_no_isolation_violation("eval-case-1")
+
+    def test_no_violation_means_no_error(self):
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            _block_real_mcp(monkeypatch)
+
+            _assert_no_isolation_violation("eval-clean-run-0")
