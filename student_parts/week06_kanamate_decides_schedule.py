@@ -219,7 +219,11 @@ def nana_prompt_parts() -> list[str]:
         너는 Nana다. 개인 일정 조회/생성/수정/삭제, todo/reminder 저장, 개인 참고자료 및 앱 대화 RAG를
         Week 1~4에서 익힌 tool로 직접 처리한다.
 
-        그룹 조율, 외부 멤버 일정 확인, 여러 사람의 공통 시간 찾기 요청이 들어오면, 그건 네 담당이 아니므로
+        여러 사람이 참석하는 일정이라도, 날짜/시간이 이미 정해져 있어서 조회/저장/수정/삭제만 하면 되는 요청이면
+        extract_schedule_request의 kind가 group_schedule로 나오더라도 네가 직접 tool로 처리한다. kind 분류는
+        참석자가 여럿이라는 뜻일 뿐, 조율이 필요하다는 뜻이 아니다.
+
+        아직 시간이 정해지지 않아 여러 사람의 가능한 시간을 새로 찾거나 맞춰야 하는 조율 요청만 네 담당이 아니므로,
         tool을 억지로 사용하지 말고 "이 요청은 그룹 조율 담당(Kana)의 몫입니다"라고 짧게 답한다.
 """,
     ]
@@ -229,6 +233,8 @@ def kana_prompt_parts() -> list[str]:
     """Week 6 Kana 하위 에이전트 전용 system prompt 조각입니다."""
 
     return [
+        f"오늘 날짜는 {current_app_date_iso()}이다. '이번 주', '다음 주', '화요일'처럼 상대적인 날짜 표현은 "
+        "반드시 이 오늘 날짜를 기준으로 계산한다.",
         """
         너는 Kana다. 외부 멤버 일정 조회, 공유 일정 확인, 여러 사람의 공통 가능 시간 조율, 그룹 일정 확정을 담당한다.
 
@@ -238,8 +244,12 @@ def kana_prompt_parts() -> list[str]:
         - 이미 공유 저장소에 등록된 일정을 확인하는 요청이면 list_shared_schedules를 사용한다.
         - 공통 가능 시간 후보를 검증할 때는 find_common_available_slots를 쓴다. 이 tool은 계산을 대신 해주지 않으므로,
           busy_rows를 직접 확인해서 겹치지 않는 candidate_slots를 네가 골라 넘겨야 한다.
+        - 사용자가 "찾아줘", "후보 좀 보여줘"처럼 후보 조회만 요청했다면, find_common_available_slots까지만
+          수행하고 후보 목록을 답변으로 제시한 뒤 사용자의 선택을 기다린다. 사용자가 아직 특정 후보를 고르거나
+          확정 의도를 밝히지 않았다면 decide_final_slot을 호출하지 않는다.
         - 최종 시간을 확정할 때는 decide_final_slot을 쓴다. 이 tool도 최종 시간을 자동으로 골라주지 않으므로,
-          candidate_slots 중 네가 직접 selected_index와 final_slot을 정해 넘겨야 한다.
+          candidate_slots 중 네가 직접 selected_index와 final_slot을 정해 넘겨야 한다. 사용자가 특정 후보를
+          직접 고르거나 "확정해줘"처럼 확정 의도를 명확히 밝혔을 때만 이 tool을 호출한다.
         - 확정된 시간을 실제로 저장하는 것은 네 담당이 아니다. 저장 tool을 사용하지 말고,
           "이 시간으로 확정했습니다. 저장은 Nana가 해야 합니다"처럼 답에 명시해서 저장이 필요하다는 것을 알린다.
         - 개인 일정 조회/저장처럼 순수하게 한 사람의 일정만 다루는 요청이 오면, 그건 네 담당이 아니므로
@@ -314,7 +324,8 @@ def tool_name(tool_object: Any) -> str:
 FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "이 tool은 공통 가능 시간 후보를 스스로 계산하지 않는다. "
     "네가 앞선 tool 결과(busy_rows)를 직접 읽고, 어떤 busy row와도 겹치지 않는 candidate_slots를 골라 "
-    "인자로 넘겨야 한다. candidate_slots의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), "
+    "인자로 넘겨야 한다. candidate_slots를 비워서 호출하면 이 tool은 계산을 대신 해주지 않고 에러를 반환한다. "
+    "candidate_slots의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), "
     "end_time(HH:MM), duration_minutes, reason을 포함해야 한다. busy_rows도 앞선 tool output에서 그대로 "
     "복사해서 함께 넘긴다. 이 tool 결과만으로 답변을 끝내지 말고, 이어서 decide_final_slot을 호출해 "
     "최종 시간을 확정해야 한다."
@@ -420,6 +431,19 @@ def find_common_available_slots_dict(
             )
         )
         busy_rows = collected.get("rows", [])
+
+    if not candidate_slots:
+        return {
+            "ok": False,
+            "tool_name": "find_common_available_slots",
+            "error": (
+                "candidate_slots가 비어 있습니다. 이 tool은 후보를 대신 계산해주지 않습니다. "
+                "busy_rows를 직접 확인해 겹치지 않는 시간을 최소 1개 이상 candidate_slots에 채워 "
+                "다시 호출하세요."
+            ),
+            "members": normalized_members,
+            "busy_rows": busy_rows,
+        }
 
     return find_common_available_slots_payload(
         member_names=normalized_members,

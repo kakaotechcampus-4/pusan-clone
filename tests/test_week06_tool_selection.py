@@ -103,13 +103,19 @@ def test_group_meeting_coordination_question_uses_kana_agent():
 
 
 def test_group_schedule_confirm_and_save_chains_kana_then_nana():
+    """날짜 범위/소요 시간을 명시해야 한다.
+
+    Kana는 이제 회의 기간·소요 시간이 없으면 추측해서 밀어붙이지 않고 사용자에게 되묻고 멈추므로,
+    질문에 명시하지 않으면 한 턴 안에 kana_agent -> nana_agent 체인이 끝나지 않는다.
+    """
+
     agent = build_langchain_supervisor_agent()
     result = agent.invoke(
         {
             "messages": [
                 {
                     "role": "user",
-                    "content": "민준이랑 지훈이랑 회의 시간 맞춰서 확정하고 내 일정에 저장까지 해줘",
+                    "content": "민준이랑 지훈이랑 이번 주 안에 1시간 회의 시간 맞춰서 확정하고 내 일정에 저장까지 해줘",
                 }
             ]
         }

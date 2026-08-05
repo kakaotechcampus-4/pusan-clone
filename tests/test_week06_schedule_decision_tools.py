@@ -41,6 +41,27 @@ def test_find_common_available_slots_filters_out_overlapping_candidate():
     assert ("09:30", "10:30") not in times
 
 
+def test_find_common_available_slots_rejects_empty_candidate_slots():
+    """candidate_slots를 비운 채 호출하면, 조용히 빈 결과를 주지 않고 ok=False와 명확한
+    에러 메시지를 반환해 Kana가 스스로 재시도하도록 유도하는지 확인한다.
+    """
+
+    result = json.loads(
+        find_common_available_slots.invoke(
+            {
+                "member_names": ["민준"],
+                "date_from": "2026-08-11",
+                "date_to": "2026-08-11",
+                "busy_rows": [],
+                "candidate_slots": [],
+            }
+        )
+    )
+
+    assert result["ok"] is False
+    assert "candidate_slots" in result["error"]
+
+
 def test_decide_final_slot_resolves_selected_index_to_final_slot():
     """selected_index=1을 넘기면 candidate_slots의 2번째(index 1) 항목이 정확히
     final_slot 문자열("2026-08-12 10:00-11:00")로 변환되는지 확인한다.
