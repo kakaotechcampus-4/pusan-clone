@@ -200,6 +200,11 @@ def week06_prompt_parts() -> list[str]:
         # TODO: Week 6 supervisor agent system prompt를 자유롭게 추가하세요.
         #   - supervisor는 직접 업무를 처리하지 않고 nana_agent 또는 kana_agent로만 위임합니다.
         #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
+        """- 당신은 supervisor다. 직접 일정을 조회/생성/삭제하거나 RAG 검색을 수행하지 않고, 반드시 nana_agent 또는 kana_agent 중 하나에 요청을 위임한 뒤 그 결과만 근거로 답한다.
+        - "내 일정 보여줘", "회의 하나 만들어줘/수정/삭제해줘", "할 일/리마인더 저장해줘", "내가 예전에 저장한 참고자료/대화에서 찾아줘"처럼 "나"에 대한 개인 일정·저장·RAG 요청은 nana_agent에게 위임한다.
+        - "OO는 언제 바빠?", "OO랑 나눈 대화 찾아줘", "공유 일정 저장소 보여줘", "여러 명 일정 모아서 시간 맞춰줘", "회의 시간 확정해줘"처럼 외부 멤버가 등장하거나 그룹 일정 조율이 필요한 요청은 kana_agent에게 위임한다.
+        - 요청이 두 영역에 걸치면(예: 그룹 회의를 확정한 뒤 내 일정에 저장) kana_agent로 조율을 먼저 마치고, 저장이 필요한 부분은 별도로 nana_agent에게 위임한다. 한 번의 위임으로 다른 agent의 역할까지 대신 시키지 않는다.
+        - 어느 쪽에 위임했는지 애매하면 사용자의 요청 원문을 그대로 query로 넘기고, 위임 결과(answer)를 다듬지 않고 사용자에게 전달할 수 있는 형태로만 정리한다."""
     ]
 
 
@@ -211,6 +216,10 @@ def nana_prompt_parts() -> list[str]:
         # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
         #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
         #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        """- 당신은 Nana다. 사용자("나") 개인의 일정 조회/생성/수정/삭제, 할 일/리마인더 저장, 개인 참고자료·저장된 일정 기록·과거 채팅 발화 RAG 검색을 전담한다.
+        - 이 요청은 supervisor를 거쳐 위임된 것이므로, 다른 하위 agent나 supervisor의 존재를 사용자에게 언급하지 않고 마치 직접 대화하듯 답한다.
+        - 외부 멤버(철수/영희 등)의 일정·발화 조회나 여러 사람의 공통 시간 조율, 그룹 회의 시간 확정 요청이 오면 그 부분은 당신의 담당이 아니라고 짧게 알리고, 당신이 처리할 수 있는 개인 관련 부분만 처리한다.
+        - 그룹 일정이라도 이미 확정된 내용을 "내 일정으로 저장"하는 것은 당신의 담당이다."""
     ]
 
 
@@ -423,7 +432,20 @@ def decide_final_slot(
     # TODO: Kana agent가 고른 최종 시간 정보를 course repo JSON 계약에 맞춰 기록하세요.
     #   - 직접 최종 시간을 고르지 말고 받은 인자를 그대로 decide_final_slot_payload(...)에 넘깁니다.
     #   - 결과를 JSON 문자열로 반환합니다.
-    ...
+    payload = decide_final_slot_payload(
+        candidate_slots=candidate_slots,
+        selected_slot=selected_slot,
+        selected_index=selected_index,
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        duration_minutes=duration_minutes,
+        final_slot=final_slot,
+        needs_agent_selection=needs_agent_selection,
+        reason=reason,
+        busy_rows=busy_rows,
+    )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def kana_tools() -> list[Any]:
