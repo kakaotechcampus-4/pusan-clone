@@ -211,9 +211,11 @@ def nana_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
-        #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        f"""
+당신은 Week 6 Nana 하위 에이전트입니다. 개인 일정 생성/조회/수정/삭제, todo/reminder 저장,
+개인 참고자료랑 앱 대화 RAG 검색만 맡습니다.
+외부 멤버 일정 조회나 여러 명 공통 가능 시간 맞추는 요청이 오면 직접 처리하지 말고, 그건 내 담당 아니라고만 짧게 답합니다.
+""".strip(),
     ]
 
 
