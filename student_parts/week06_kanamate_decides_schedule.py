@@ -315,12 +315,16 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
 
 DECIDE_FINAL_SLOT_DESCRIPTION = (
     # TODO: decide_final_slot tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 최종 시간을 자동 선택하지 않는다는 점을 분명히 알려야 합니다.
-    #     agent가 selected_index 또는 selected_slot과 final_slot을 직접 골라 넘기게 만듭니다.
-    #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
-    #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
-    #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
+    "회의 시간을 최종 확정해 기록한다. find_common_available_slots를 호출한 뒤 이어서 호출한다. "
+    "이 도구는 최종 시간을 골라 주지 않는다. 남은 후보 중 어느 것이 가장 적절한지 네가 판단해서 넘겨야 한다. "
+    "고른 후보는 selected_index(candidate_slots의 0부터 시작하는 번호) 또는 selected_slot(후보 객체)으로 지정하고, "
+    "final_slot에는 확정 시간을 'YYYY-MM-DD HH:MM-HH:MM' 형식 문자열로 넣는다(예: '2026-07-09 10:00-11:00'). "
+    "확정했으면 needs_agent_selection은 false로 둔다. "
+    "후보가 하나도 없거나 사용자에게 더 물어봐야 해서 아직 고르지 못했다면 final_slot은 null, "
+    "needs_agent_selection은 true로 두고 reason에 그 이유를 적는다. 임의로 시간을 지어내 확정하지 않는다. "
+    "reason에는 이 시간을 고른 이유나 확정하지 못한 이유를 사용자에게 그대로 보여줄 수 있게 적는다. "
+    "근거를 남길 수 있도록 candidate_slots, busy_rows, member_names, date_from, date_to, duration_minutes도 "
+    "앞선 도구 결과에서 복사해 함께 넘긴다."
 )
 
 
@@ -496,9 +500,34 @@ def decide_final_slot(
     """LLM이 직접 고른 후보/최종 시간을 course repo payload로 기록합니다."""
 
     # TODO: Kana agent가 고른 최종 시간 정보를 course repo JSON 계약에 맞춰 기록하세요.
-    #   - 직접 최종 시간을 고르지 말고 받은 인자를 그대로 decide_final_slot_payload(...)에 넘깁니다.
-    #   - 결과를 JSON 문자열로 반환합니다.
-    ...
+    # 최종 선택은 agent 몫이므로 여기서 후보를 고르거나 보정하지 않고 그대로 넘긴다.
+    try:
+        payload = decide_final_slot_payload(
+            candidate_slots=candidate_slots,
+            selected_slot=selected_slot,
+            selected_index=selected_index,
+            member_names=member_names,
+            date_from=date_from,
+            date_to=date_to,
+            duration_minutes=duration_minutes,
+            final_slot=final_slot,
+            needs_agent_selection=needs_agent_selection,
+            reason=reason,
+            busy_rows=busy_rows,
+        )
+    except Exception as error:
+        # 확정에 실패했는데 needs_agent_selection을 false로 두면 확정된 것처럼 읽힌다.
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "decide_final_slot",
+                "final_slot": None,
+                "reason": f"최종 시간 기록에 실패했습니다: {error}",
+                "candidates": [],
+                "needs_agent_selection": True,
+            }
+        )
+    return json_payload({"ok": True, "tool_name": "decide_final_slot", **payload})
 
 
 def kana_tools() -> list[Any]:
