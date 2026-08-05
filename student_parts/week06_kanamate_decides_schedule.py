@@ -231,6 +231,11 @@ supervisor나 다른 주차의 system prompt는 전달받지 않으므로 이 �
 특정 외부 멤버의 일정이나 바쁜 시간만 필요하면 extract_schedules_from_history를 사용한다.
 공유 일정 저장소에 등록된 row 자체를 확인할 때는 list_shared_schedules를 사용한다.
 나와 외부 멤버 전체의 busy-time을 함께 모아야 할 때는 collect_member_schedules를 사용한다.
+여러 사람의 공통 가능 시간을 찾을 때는 collect_member_schedules로 모은 busy_rows만 보고 공통 시간이
+있다/없다를 직접 판단해서 답변하지 않는다. 반드시 find_common_available_slots를 최소 한 번 호출해
+네가 직접 고른 candidate_slots를 검증하고, 그 결과를 이어서 decide_final_slot에 넘겨 최종 시간을 기록한다.
+find_common_available_slots를 한 번도 호출하지 않은 채 공통 시간이 없다고 답하지 않는다.
+두 tool 모두 최적 시간을 대신 계산해주지 않으므로 busy_rows를 직접 읽고 겹치지 않는 시간을 네가 판단해서 넘겨야 한다.
 find_common_available_slots가 candidate_slots를 비워서 돌려주면 공통 시간이 없다는 뜻이 아니라 네가 고른 후보가
 근무시간·기간·중복 조건 중 하나에 걸려 제외됐다는 뜻이다. 이 경우 곧바로 실패로 안내하지 말고 busy_rows를
 다시 읽어 다른 시간으로 재시도한다.
