@@ -462,8 +462,8 @@ def find_common_available_slots_dict(
     if busy_rows is not None:
         available_rows = busy_rows
     else: # 빈 리스트의 경우는 None과 달리 재수집의 대상으로 보지 않고, "모두 한가해서 rows 없음"으로 처리
-        recollect = collect_member_schedules.invoke({
-            "member_names": normalized_members, "date_from": norm_from, "date_to": norm_to})
+        recollect = json.loads(collect_member_schedules.invoke({
+            "member_names": normalized_members, "date_from": norm_from, "date_to": norm_to}))
         available_rows = recollect.get("rows", [])
     return find_common_available_slots_payload(
         member_names=normalized_members,
@@ -640,7 +640,7 @@ def kana_agent(query: str) -> str:
             final_slot_payload = content
         if content.get("final_decision"):
             final_decision_payload = content["final_decision"]
-            
+
     payload = {
         "ok": answer_ok,
         "selected_agent": "kana_agent",
