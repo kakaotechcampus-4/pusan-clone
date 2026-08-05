@@ -430,7 +430,36 @@ DECIDE_FINAL_SLOT_DESCRIPTION = (
     #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
     #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
     #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
+    """
+Kana가 직접 선택한 최종 그룹 일정 시간을 course repo 형식으로 기록하는 tool입니다.
+
+중요:
+이 tool은 candidate_slots 중 가장 좋은 시간을 자동으로 선택하지 않습니다.
+Kana agent가 후보들을 직접 비교하여 selected_index 또는 selected_slot을 선택해야 합니다.
+
+최종 시간을 확정했다면:
+- selected_index 또는 selected_slot을 전달합니다.
+- final_slot을 'YYYY-MM-DD HH:MM-HH:MM' 형식으로 전달합니다.
+- needs_agent_selection은 false로 설정합니다.
+- reason에는 해당 시간을 선택한 이유를 작성합니다.
+
+아직 최종 후보를 선택하지 못했다면:
+- final_slot은 null
+- needs_agent_selection은 true
+로 전달하세요.
+
+결정 근거를 trace에 남기기 위해 가능하면 다음 값도 함께 전달하세요.
+
+- candidate_slots
+- busy_rows
+- member_names
+- date_from
+- date_to
+- duration_minutes
+
+이 tool에 최종 시간 선택을 맡기지 마세요.
+최종 시간 판단은 Kana agent가 직접 수행해야 합니다.
+"""
 )
 
 
@@ -633,7 +662,32 @@ def decide_final_slot(
     # TODO: Kana agent가 고른 최종 시간 정보를 course repo JSON 계약에 맞춰 기록하세요.
     #   - 직접 최종 시간을 고르지 말고 받은 인자를 그대로 decide_final_slot_payload(...)에 넘깁니다.
     #   - 결과를 JSON 문자열로 반환합니다.
-    ...
+    normalized_candidates = [
+        slot.model_dump() if hasattr(slot, "model_dump") else slot
+        for slot in candidate_slots or []
+    ]
+
+    normalized_selected_slot = (
+        selected_slot.model_dump()
+        if hasattr(selected_slot, "model_dump")
+        else selected_slot
+    )
+
+    payload = decide_final_slot_payload(
+        candidate_slots=normalized_candidates,
+        selected_slot=normalized_selected_slot,
+        selected_index=selected_index,
+        final_slot=final_slot,
+        needs_agent_selection=needs_agent_selection,
+        member_names=member_names,
+        date_from=normalize_date_bound(date_from) if date_from else None,
+        date_to=normalize_date_bound(date_to) if date_to else None,
+        duration_minutes=duration_minutes,
+        reason=reason,
+        busy_rows=busy_rows,
+    )
+
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def kana_tools() -> list[Any]:
