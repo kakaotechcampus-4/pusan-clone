@@ -209,8 +209,14 @@ def nana_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
-        #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        """
+[Week 6 Nana 하위 에이전트 역할]
+- 너는 supervisor가 개인 업무를 위임할 때 실행되는 Nana 하위 에이전트다. 사용자가 직접 말을 건 것이 아니라 supervisor가 넘긴 요청을 처리한다.
+- 담당 범위는 내 개인 일정 생성·조회·수정·삭제, 할 일과 알림 저장, 개인 참고자료 등록·검색, 앱에 저장된 대화 검색이다. Week 1~4 도구를 그대로 사용한다.
+- 확정된 회의 시간을 내 일정으로 저장해 달라는 요청도 담당이다. Week 3 저장 경로(extract_schedule_request → save_structured_request)를 사용한다.
+- 외부 팀원의 일정 조회, 여러 사람의 공통 가능 시간 조율, 공유 일정 저장소 확인은 담당이 아니다. 그런 요청이 오면 도구를 호출하지 말고 "그룹 일정 조율과 팀원 일정 조회는 Kana 담당입니다"라고 한 문장으로 알린다.
+- supervisor가 답변을 그대로 사용자에게 전달하므로, 도구 결과에서 확인한 사실과 근거만 간결하게 정리해 답한다. 도구 결과에 없는 일정이나 시간은 만들지 않는다.
+""".strip(),
     ]
 
 
@@ -241,6 +247,12 @@ def supervisor_system_prompt() -> str:
             #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
         ]
     )
+
+
+def json_payload(payload: dict[str, Any]) -> str:
+    """도구 반환용 dict를 한글이 깨지지 않는 JSON 문자열로 변환합니다."""
+
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _tool_call_names(events: list[dict[str, Any]]) -> list[str]:
@@ -481,12 +493,40 @@ def nana_agent(query: str) -> str:
     """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다."""
 
     # TODO: Week 4 도구를 가진 Nana 하위 agent를 실행하고 answer/trace/inner_tool_names를 반환하세요.
-    #   - _NANA_SUBAGENT가 None일 때만 create_agent(model=chat_model(), tools=week04_tools(),
-    #     system_prompt=nana_system_prompt())로 만들고 이후에는 재사용합니다.
-    #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
-    #     trace와 answer를 뽑습니다.
-    #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    # 하위 agent는 tool 목록과 system prompt가 고정이라 한 번만 만들고 재사용한다.
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=week04_tools(),
+            system_prompt=nana_system_prompt(),
+        )
+
+    try:
+        result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    except Exception as error:
+        # 하위 agent가 죽어도 supervisor 턴은 살려서, 위임이 실패했다는 사실을 전달한다.
+        return json_payload(
+            {
+                "ok": False,
+                "selected_agent": "nana_agent",
+                "answer": "Nana 하위 에이전트 실행에 실패해 개인 일정 작업을 완료하지 못했습니다.",
+                "trace": [],
+                "inner_tool_names": [],
+                "error": f"Nana 하위 에이전트 실행에 실패했습니다: {error}",
+            }
+        )
+
+    events = extract_agent_events(result)
+    return json_payload(
+        {
+            "ok": True,
+            "selected_agent": "nana_agent",
+            "answer": extract_final_text(result),
+            "trace": events,
+            "inner_tool_names": _tool_call_names(events),
+        }
+    )
 
 
 @tool(args_schema=AgentQueryInput)
