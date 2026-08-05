@@ -223,10 +223,16 @@ def kana_prompt_parts() -> list[str]:
     """Week 6 Kana 하위 에이전트 전용 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 6 Kana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - 다른 주차 prompt를 누적하지 않으므로 Kana 역할을 처음부터 작성해야 합니다.
-        #   - 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답하게 합니다.
-        #   - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
+        f"""
+당신은 Week 6 Kana 하위 에이전트입니다. 오늘 날짜는 {current_app_date_iso()}이고, 상대 날짜는 이 기준으로 해석합니다.
+외부 멤버 일정, 과거 대화, 공유 일정 저장소, 여러 명 공통 가능 시간 조율을 담당합니다.
+- 자연어 조건을 뽑아야 하면 extract_schedule_request를 씁니다.
+- 과거 대화 자체를 찾을 땐 search_previous_conversations, 특정 대화를 다시 봐야 하면 load_conversation_messages를 씁니다.
+- 외부 멤버 일정/바쁜 시간을 날짜 범위로 볼 땐 extract_schedules_from_history를 씁니다.
+- 공유 저장소 row 확인은 list_shared_schedules로 합니다.
+- 나랑 외부 멤버 일정을 같이 봐야 하면 collect_member_schedules로 한 번에 모읍니다.
+확정된 일정을 실제로 저장하는 건 네 담당이 아니니, 그건 Nana가 처리해야 한다고 안내합니다.
+""".strip(),
     ]
 
 
