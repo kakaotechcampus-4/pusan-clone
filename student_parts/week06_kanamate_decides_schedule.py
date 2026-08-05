@@ -593,29 +593,64 @@ def propose_group_schedule(
     }
     return json.dumps({"ok": True, "tool_name": "propose_group_schedule", "final_decision": payload}, ensure_ascii=False)
 
+_FAIL_CREATE_ANSWER = "응답을 생성하지 못했습니다."
+_DECISION_KEYS = {"final_slot", "candidates", "needs_agent_selection"}
 
 @tool(args_schema=AgentQueryInput)
 def nana_agent(query: str) -> str:
     """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다."""
 
-    # TODO: Week 4 도구를 가진 Nana 하위 agent를 실행하고 answer/trace/inner_tool_names를 반환하세요.
-    #   - _NANA_SUBAGENT가 None일 때만 create_agent(model=chat_model(), tools=week04_tools(),
-    #     system_prompt=nana_system_prompt())로 만들고 이후에는 재사용합니다.
-    #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
-    #     trace와 answer를 뽑습니다.
-    #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(model=chat_model(), tools=week04_tools(), system_prompt=nana_system_prompt())
+    result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    events = extract_agent_events(result) # dict가 아닌 예외는 extract_agent_events tool이 내부적으로 처리하므로 호출만 하기
+    answer = extract_final_text(result)
+    answer_ok = answer != _FAIL_CREATE_ANSWER
+
+    payload = {
+        "ok": answer_ok,
+        "selected_agent": "nana_agent",
+        "answer": answer,
+        "trace": events,
+        "inner_tool_names": _tool_call_names(events),
+    }
+    return json_payload(payload)
 
 
 @tool(args_schema=AgentQueryInput)
 def kana_agent(query: str) -> str:
     """그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다."""
 
-    # TODO: Kana 하위 agent를 실행하고 trace에서 final_slot_payload/final_decision_payload를 끌어올려 반환하세요.
-    #   - _KANA_SUBAGENT를 kana_tools()와 kana_system_prompt()로 한 번만 만들고 재사용합니다.
-    #   - trace event의 content를 훑어 final_slot이 들어 있는 dict와 final_decision 값을 찾습니다.
-    #   - answer, trace, inner_tool_names, final_slot_payload, final_decision_payload를 JSON으로 반환합니다.
-    ...
+    global _KANA_SUBAGENT
+    if _KANA_SUBAGENT is None:
+        _KANA_SUBAGENT = create_agent(model=chat_model(), tools=kana_tools(), system_prompt=kana_system_prompt())
+    result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    events = extract_agent_events(result)
+    answer = extract_final_text(result)
+    answer_ok = answer != _FAIL_CREATE_ANSWER
+
+    final_slot_payload = None
+    final_decision_payload = None
+    for event in events:
+        content = event.get("content")
+        if not isinstance(content, dict):   # None/문자열(파싱 실패) => 다음 이벤트로
+            continue
+        if event.get("tool_name") == "decide_final_slot" or _DECISION_KEYS <= content.keys():
+            final_slot_payload = content
+        if content.get("final_decision"):
+            final_decision_payload = content["final_decision"]
+            
+    payload = {
+        "ok": answer_ok,
+        "selected_agent": "kana_agent",
+        "answer": answer,
+        "trace": events,
+        "inner_tool_names": _tool_call_names(events),
+        "final_slot_payload": final_slot_payload,
+        "final_decision_payload": final_decision_payload,
+    }
+    return json_payload(payload)
 
 
 def build_langchain_supervisor_agent() -> object:
