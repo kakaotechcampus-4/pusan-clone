@@ -322,7 +322,7 @@ class TestSubagents:
             "inner_tool_names": ["personal_list_saved_schedules"],
         }
 
-    def test_kana_agent_is_cached_and_promotes_final_payloads(self, week06, monkeypatch):
+    def test_kana_agent_is_cached_and_promotes_final_slot_payload(self, week06, monkeypatch):
         result = {"result": "kana-result"}
         agent = RecordingAgent(result)
         create_calls: list[dict[str, Any]] = []
@@ -332,10 +332,6 @@ class TestSubagents:
             "reason": "모두 선호하는 시간",
             "candidates": ["2026-08-11 15:00-16:00"],
             "needs_agent_selection": False,
-        }
-        final_decision_payload = {
-            "status": "confirmed",
-            "selected_slot": "2026-08-11 15:00-16:00",
         }
         events = [
             {
@@ -352,11 +348,6 @@ class TestSubagents:
                 "event": "tool_result",
                 "tool_name": "decide_final_slot",
                 "content": final_slot_payload,
-            },
-            {
-                "event": "tool_result",
-                "tool_name": "group_schedule_result",
-                "content": {"final_decision": final_decision_payload},
             },
         ]
 
@@ -391,7 +382,7 @@ class TestSubagents:
             "trace": events,
             "inner_tool_names": ["find_common_available_slots", "decide_final_slot"],
             "final_slot_payload": final_slot_payload,
-            "final_decision_payload": final_decision_payload,
+            "final_decision_payload": None,
         }
 
 
