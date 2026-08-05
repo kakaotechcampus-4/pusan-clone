@@ -618,6 +618,7 @@ def find_common_available_slots_dict(
             )
         )
         busy_rows = [*mine.get("rows", []), *busy_rows]
+    rows: list[dict[str, Any]] = busy_rows or []
 
     result = find_common_available_slots_payload(
         # payload 의 members 는 "누구를 고려한 결과인가"를 남기는 기록이다. 내 일정도 근거이므로
@@ -628,7 +629,7 @@ def find_common_available_slots_dict(
         ],
         date_from=start,
         date_to=end,
-        busy_rows=busy_rows,
+        busy_rows=rows,
         duration_minutes=duration_minutes,
         workday_start=workday_start,
         workday_end=workday_end,
