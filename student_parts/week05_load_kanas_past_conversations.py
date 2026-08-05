@@ -15,6 +15,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_parenthetical_text,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -197,7 +198,6 @@ def _personal_schedules_for_current_scope(
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
     saved = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
         limit=limit,
-        kind="personal_schedule",
         date_from=date_from or None,
         date_to=date_to or None,
     )
@@ -275,10 +275,14 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. Week 1 임시 일정 row에는
+    이 값이 없으므로 개인 일정으로 봅니다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -286,6 +290,36 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
         members=row.get("attendees") or row.get("members") or [],
         original_text=str(row.get("title") or ""),
     )
+
+
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
+
+    if request.kind != "group_schedule":
+        return "Nana 개인 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+
+
+def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
+
+    앱 DB에 저장된 내 일정은 공유 저장소에도 자동 동기화되므로, member_names에 "나"가
+    들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 두 경로가 같은 일정을 서로 다르게
+    다듬기 때문에 값을 그대로 비교하면 중복이 안 걸러집니다. end_time은 앱 DB 경로에서
+    "미정"이 치환되므로 키에서 빼고, 앞에 오는 앱 DB row를 남깁니다.
+    """
+
+    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("member_name") or "").strip(),
+            str(row.get("date") or "").strip(),
+            str(row.get("start_time") or "").strip() or "미정",
+            strip_parenthetical_text(str(row.get("title") or "")),
+        )
+        deduped.setdefault(key, row)
+    return list(deduped.values())
 
 
 def _collect_member_schedules(
@@ -298,9 +332,7 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    # 내 일정은 앱 DB에서 직접 읽으므로, 공유 저장소에 동기화된 "나" 복사본까지 가져오면 같은 일정이 두 번 들어옵니다.
-    normalized_members = [name for name in normalize_external_member_names(member_names)
-                          if name != PERSONAL_SHARED_MEMBER_NAME]
+    normalized_members = normalize_external_member_names(member_names)
     norm_from, norm_to = normalize_external_schedule_date_bounds(normalized_members, date_from, date_to)
     my_rows: list[dict[str, Any]] = []
     for schedule in personal_schedules:
@@ -313,20 +345,21 @@ def _collect_member_schedules(
         if norm_to and schedule_date > norm_to:
             continue
         my_rows.append({
-            "member_name": "나",
+            "member_name": PERSONAL_SHARED_MEMBER_NAME,
             "title": request.title,
             "date": request.date,
             "start_time": request.start_time,
             "end_time": request.end_time,
-            "notes": None,
+            "notes": _my_schedule_notes(request),
         })
     external_rows: list[dict[str, Any]] = []
     if normalized_members:
         payload = call_mcp_tool_sync("extract_schedules_from_history", {"member_names": normalized_members, "date_from": norm_from, "date_to": norm_to})
         external_rows = json.loads(payload).get("rows", [])
-    rows = [*my_rows, *external_rows]
+    rows = _dedupe_schedule_rows([*my_rows, *external_rows])
     return {
-        "members": ["나", *normalized_members],
+        "members": [PERSONAL_SHARED_MEMBER_NAME,
+                    *[name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME]],
         "date_from": norm_from,
         "date_to": norm_to,
         "rows": rows,
