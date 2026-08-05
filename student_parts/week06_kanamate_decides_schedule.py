@@ -19,6 +19,7 @@ from fixed.schedule_decision import (
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
+from student_parts.week03_build_nanas_logbook import json_payload, _tool_name, tool_result
 from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
 from student_parts.week05_load_kanas_past_conversations import (
     collect_member_schedules,
@@ -486,7 +487,24 @@ def nana_agent(query: str) -> str:
     #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
     #     trace와 answer를 뽑습니다.
     #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=week04_tools(),
+            system_prompt=nana_system_prompt()
+        )
+    result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    trace = extract_agent_events(result)
+    answer = extract_final_text(result)
+    tool = _tool_call_names(trace)
+
+    return json_payload({
+        "selected_agent" : "nana_agent",
+        "answer" : answer,
+        "trace" : trace,
+        "inner_tool_names" : tool
+    })
 
 
 @tool(args_schema=AgentQueryInput)
