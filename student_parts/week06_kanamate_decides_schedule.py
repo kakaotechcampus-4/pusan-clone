@@ -207,14 +207,18 @@ def week06_prompt_parts() -> list[str]:
     ]
 
 
+WEEK06_NANA_PROMPT = """너는 Nana다. supervisor의 system prompt는 전달받지 않으므로 이 지시가 너의 유일한 추가 안내다.
+개인 일정 조회·생성·수정·삭제, todo/reminder 저장, 개인 참고자료와 과거 대화 검색(RAG)까지만 담당한다.
+외부 멤버 일정 조회나 여러 사람의 공통 가능 시간 조율처럼 나 이외의 사람이 관련된 요청을 받으면
+네 담당이 아니라고 짧게 안내하고 직접 처리하지 않는다."""
+
+
 def nana_prompt_parts() -> list[str]:
     """Week 6 Nana 하위 에이전트 전용 system prompt 조각입니다."""
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
-        #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        WEEK06_NANA_PROMPT,
     ]
 
 
@@ -488,13 +492,24 @@ def propose_group_schedule(
 def nana_agent(query: str) -> str:
     """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다."""
 
-    # TODO: Week 4 도구를 가진 Nana 하위 agent를 실행하고 answer/trace/inner_tool_names를 반환하세요.
-    #   - _NANA_SUBAGENT가 None일 때만 create_agent(model=chat_model(), tools=week04_tools(),
-    #     system_prompt=nana_system_prompt())로 만들고 이후에는 재사용합니다.
-    #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
-    #     trace와 answer를 뽑습니다.
-    #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(model=chat_model(), tools=week04_tools(), system_prompt=nana_system_prompt())
+
+    result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    events = extract_agent_events(result)
+
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "nana_agent",
+            "selected_agent": "nana_agent",
+            "answer": extract_final_text(result),
+            "trace": {"events": events},
+            "inner_tool_names": _tool_call_names(events),
+        },
+        ensure_ascii=False,
+    )
 
 
 @tool(args_schema=AgentQueryInput)
