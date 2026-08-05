@@ -302,13 +302,10 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
 
 
 DECIDE_FINAL_SLOT_DESCRIPTION = (
-    # TODO: decide_final_slot tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 최종 시간을 자동 선택하지 않는다는 점을 분명히 알려야 합니다.
-    #     agent가 selected_index 또는 selected_slot과 final_slot을 직접 골라 넘기게 만듭니다.
-    #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
-    #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
-    #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
+    "이 tool도 최종 시간을 알아서 골라주지 않습니다. find_common_available_slots가 검증해준 candidate_slots 중에서 "
+    "골라서 selected_index나 selected_slot, final_slot('YYYY-MM-DD HH:MM-HH:MM' 형식)을 직접 정해서 넘겨야 합니다. "
+    "아직 못 골랐으면 final_slot은 비워두고 needs_agent_selection을 true로 둡니다. 왜 그렇게 골랐는지는 reason에 "
+    "적고, candidate_slots/busy_rows/member_names/date_from/date_to도 같이 넘겨서 근거를 남깁니다."
 )
 
 
