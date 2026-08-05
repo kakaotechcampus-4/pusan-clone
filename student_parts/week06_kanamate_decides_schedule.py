@@ -206,11 +206,34 @@ def week06_prompt_parts() -> list[str]:
 def nana_prompt_parts() -> list[str]:
     """Week 6 Nana 하위 에이전트 전용 system prompt 조각입니다."""
 
+    # week04_prompt_parts() 가 이미 "너는 비서 Nana 다"와 tool 사용 규칙·RAG 분기를 갖고 있다.
+    # 여기서는 그걸 다시 쓰지 않고, 하위 에이전트가 되면서 새로 생긴 두 가지만 덧붙인다.
+    # join_system_prompt 가 "뒤에 있는 지시를 우선한다"고 선언하므로 맨 뒤에 붙이면 된다.
     return [
         *week04_prompt_parts(),
-        # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
-        #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        # 실행 맥락. 단일 agent 였을 때는 자기 tool 결과가 컨텍스트에 남아 있었지만, 이제
+        # supervisor 는 extract_final_text 로 뽑은 **최종 텍스트만** 본다. 조회 내용을 답변에
+        # 적지 않으면 supervisor 는 전달할 근거가 없어 내용을 지어내게 된다.
+        (
+            "[Week 6 하위 에이전트]\n"
+            "너는 supervisor 아래에서 개인 업무만 맡는 하위 에이전트다. 지금 받는 메시지는 "
+            "사용자가 직접 쓴 말이 아니라 supervisor 가 넘긴 위임 요청이다.\n"
+            "네 답변은 supervisor 에게 전달되고, supervisor 는 네 tool 결과를 볼 수 없다. "
+            "그러니 조회하거나 저장한 내용을 답변 본문에 그대로 적는다 — 일정을 물었으면 "
+            "날짜·시간·제목을 답변에 쓰고 '조회했다'로만 끝내지 않는다.\n"
+            "정보가 부족해 진행할 수 없으면 임의로 정하지 말고 무엇이 더 필요한지 답변에 적는다."
+        ),
+        # 담당 경계. 기준을 '사람 이름이 나오는가'로 잡으면 "민준이랑 정한 회의 저장해줘"까지
+        # 튕겨서 대화가 아무것도 못 하고 끝난다. 기준은 **누구의 일정을 읽는가**여야 한다.
+        (
+            "[담당 범위]\n"
+            "네 담당은 내 일정·할 일·알림의 생성/조회/수정/삭제, 앱 DB 저장, "
+            "개인 참고자료와 앱 대화 검색이다.\n"
+            "담당이 아닌 것은 하나다 — 남의 일정을 조회하거나 여러 사람의 공통 시간을 찾는 일. "
+            "그 요청이 오면 가진 tool 로 흉내내지 말고 Kana 담당이라고 한 줄로 알린다.\n"
+            "다른 사람 이름이 나온다고 전부 남의 일이 되는 것은 아니다. 이미 정해진 회의를 "
+            "내 일정으로 저장하거나 조회하는 것은 참석자가 있어도 네 담당이다."
+        ),
     ]
 
 
@@ -478,15 +501,41 @@ def propose_group_schedule(
 
 @tool(args_schema=AgentQueryInput)
 def nana_agent(query: str) -> str:
-    """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다."""
+    """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다.
 
-    # TODO: Week 4 도구를 가진 Nana 하위 agent를 실행하고 answer/trace/inner_tool_names를 반환하세요.
-    #   - _NANA_SUBAGENT가 None일 때만 create_agent(model=chat_model(), tools=week04_tools(),
-    #     system_prompt=nana_system_prompt())로 만들고 이후에는 재사용합니다.
-    #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
-    #     trace와 answer를 뽑습니다.
-    #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    query 는 그 자체로 완결돼 있어야 한다. 하위 agent 는 매 호출이 백지에서 시작하므로
+    (checkpointer 를 주지 않는다) supervisor 가 넘기지 않은 맥락은 존재하지 않는다.
+    "방금 그거"처럼 앞 대화를 가리키는 말은 supervisor 가 풀어서 넘겨야 한다.
+    """
+
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        # tools 를 week04_tools() 로 한정하는 것이 역할 분리의 확정 계층이다. prompt 는 어길 수
+        # 있지만 없는 tool 은 부를 수 없어서, Nana 가 남의 일정을 조회하는 경로 자체가 없다.
+        # system_prompt 는 생성 시점에 구워지므로, prompt 를 고치면 앱을 다시 켜야 반영된다.
+        _NANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=week04_tools(),
+            system_prompt=nana_system_prompt(),
+        )
+
+    result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    events = extract_agent_events(result)
+
+    # 예외를 잡지 않는다. 실패는 week_agent_registry 의 최상위 except 가 사용자에게 알린다.
+    # 여기서 {"ok": false} 로 삼키면 supervisor 가 그걸 자연어로 얼버무려 실패가 조용해진다.
+    return json.dumps(
+        {
+            "selected_agent": "nana_agent",
+            # supervisor 가 실질적으로 읽는 것은 answer 하나다. tool 결과는 못 보므로
+            # 조회 내용이 answer 본문에 들어가 있어야 한다(nana_prompt_parts 의 지시).
+            "answer": extract_final_text(result),
+            "trace": events,
+            # 키 이름이 계약이다. extract_langchain_trace() 가 이 이름으로 집계한다.
+            "inner_tool_names": _tool_call_names(events),
+        },
+        ensure_ascii=False,
+    )
 
 
 @tool(args_schema=AgentQueryInput)
