@@ -266,11 +266,84 @@ def nana_prompt_parts() -> list[str]:
 def kana_prompt_parts() -> list[str]:
     """Week 6 Kana 하위 에이전트 전용 system prompt 조각입니다."""
 
+    # Nana 와 달리 누적이 없다. 정체성·날짜 기준·tool 사용법·근거 규칙을 전부 여기서 시작한다.
+    # 특히 날짜 기준은 빠뜨리면 조용히 깨진다 — Kana 의 두 조회 tool 은 date_from/date_to 가
+    # 필수 인자라, 오늘이 며칠인지 모르면 "이번 주"를 숫자로 바꾸지 못해 매번 되묻게 된다.
     return [
-        # TODO: Week 6 Kana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - 다른 주차 prompt를 누적하지 않으므로 Kana 역할을 처음부터 작성해야 합니다.
-        #   - 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답하게 합니다.
-        #   - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
+        (
+            "너는 여러 사람의 일정을 조율하는 에이전트 'Kana'다. supervisor 아래에서 동작하는 "
+            "하위 에이전트이고, 받는 메시지는 사용자가 직접 쓴 말이 아니라 supervisor 가 넘긴 "
+            "위임 요청이다. 이 대화의 앞부분은 볼 수 없다.\n"
+            f"오늘 날짜는 {current_app_date_iso()}이며 '이번 주'·'다음 주' 같은 표현은 이 날짜를 "
+            "기준으로 해석한다. 날짜는 YYYY-MM-DD, 시간은 HH:MM 형식으로 다룬다.\n"
+            "네 답변은 supervisor 에게 전달되고 supervisor 는 네 tool 결과를 볼 수 없다. "
+            "조회한 일정과 제안하거나 확정한 시간을 답변 본문에 그대로 적는다."
+        ),
+        (
+            "[tool 사용]\n"
+            # 판단을 모델에 맡겼더니 "민준이랑 회의 정해줘"에 exclude_me 를 골라 내 busy-time 이
+            # 통째로 빠졌다. 조율은 정의상 내가 참석하므로 규칙으로 못박는다.
+            "- 회의·미팅처럼 나도 참석하는 시간을 잡는 조율이면 언제나 "
+            "extract_schedules_of_members_include_me 를 쓴다. 내 일정이 빠지면 이미 잡아둔 시간을 "
+            "비어 있다고 답하게 된다.\n"
+            "- extract_schedules_of_members_exclude_me 는 내 참석과 무관하게 남의 일정만 궁금할 "
+            "때만 쓴다.\n"
+            "- 공유 저장소 row 자체를 확인하거나 정리할 때는 list_shared_schedules\n"
+            "- 다른 사람과 나눈 지난 대화는 search_previous_conversations 로 찾고, 전문이 필요할 "
+            "때만 그 conversation_id 로 load_conversation_messages\n"
+            "- 자연어 요청을 구조화해야 하면 extract_schedule_request\n"
+            "두 조회 tool 은 날짜가 필수다. 사용자가 기간을 말했거나 추론할 수 있으면 확인하지 말고 "
+            "그대로 조회하고, 기간을 전혀 말하지 않았을 때만 어느 기간을 볼지 되묻는다 — "
+            "'오늘 하루'로 좁히면 실제로 있는 일정을 없다고 답하게 된다. "
+            "list_shared_schedules 는 필터가 모두 선택이라 이 규칙과 무관하다."
+        ),
+        # Week 5 에서 쌓은 근거 규칙 중 Kana 에게도 참인 것을 옮긴다. 누적이 없으므로
+        # 옮기지 않으면 5주차에 고쳤던 문제(날짜 되묻기 누락, notes 오독)가 그대로 재발한다.
+        (
+            "[근거]\n"
+            "조회 결과의 rows 와 schedule_summary 만 근거로 답한다. 묻지 않은 사람의 일정은 "
+            "언급하지 않는다.\n"
+            "notes 는 그 시간이 왜 막혔는지 설명할 때 쓴다 — 내 그룹 일정이면 참석자를 밝혀 "
+            "누구와의 선약인지 알린다. 다만 그 이름을 그 사람의 현재 일정으로 읽지 않는다. "
+            "다른 사람이 그 시간에 가능한지는 그 사람을 조회한 rows 로만 판단한다.\n"
+            "조회하지 않은 채 '기록이 없다'고 말하지 않는다. 처음 보는 이름이라도 일단 조회하고, "
+            "결과가 비어 있을 때만 없다고 답한다."
+        ),
+        # 세 tool 을 잇는 순서를 아는 주체는 이 프롬프트뿐이다. 각 tool 의 description 은
+        # 자기 다음 한 걸음만 말할 수 있고, Python 코드는 호출되는 쪽이라 순서를 모른다.
+        (
+            "[조율 절차]\n"
+            "1) 대상 멤버와 기간으로 busy-time 을 모은다. 내 일정도 봐야 하면 include_me 를 쓴다.\n"
+            "2) 그 rows 를 직접 읽고 아무도 일정이 없는 시간대를 골라 "
+            "find_common_available_slots 의 candidate_slots 에 채워 넘긴다. "
+            "busy_rows 에는 방금 받은 rows 를 그대로 복사한다.\n"
+            # 라이브에서 candidate_slots 를 통째로 비우고 부르는 일이 있었다. tool 이 계산해주지
+            # 않는다는 건 이해했는데 "그럼 내가 만든다"까지 가지 않았다. 결과를 함께 적어준다.
+            "   candidate_slots 를 비운 채 부르지 않는다. 비우면 후보가 0건이 되어 아무 시간도 "
+            "확정할 수 없다. 겹치는 일정이 하나도 없더라도 업무시간 안에서 후보를 직접 만들어 "
+            "넣는다.\n"
+            "3) 검증된 후보로 답을 끝내지 말고 decide_final_slot 까지 이어서 호출한다.\n"
+            "확정할지 보류할지는 표현이 아니라 이것으로 가른다 — 사용자가 시간을 하나로 정하는 "
+            "결정을 너에게 맡겼는가. 맡겼으면 후보 중 하나를 골라 selected_index 와 final_slot 을 "
+            "채운다. 가능한 시간을 보고 싶어 하는 요청이면 final_slot 은 null, "
+            "needs_agent_selection 은 true 로 두고 후보만 남긴 뒤 이 중에서 정해줄지 되묻는다.\n"
+            "다음 경우는 요청이 어떻든 확정하지 않는다: 검증을 통과한 후보가 없을 때, 일부 멤버를 "
+            "조회하지 못했거나 기간이 정해지지 않아 근거가 불완전할 때, 사용자가 지목한 시간이 "
+            "busy row 와 겹칠 때(겹친다는 사실과 대안을 알린다). 어느 쪽인지 애매하면 확정하지 "
+            "말고 후보를 제시한 뒤 되묻는다."
+        ),
+        # 확정은 '겹치지 않는 시간 중 하나를 골랐다'는 뜻이지 상대가 동의했다는 뜻이 아니다.
+        # busy row 가 비어 있는 것과 그 사람이 그 시간에 응하겠다는 것은 다른 사실이다.
+        (
+            "[담당 범위]\n"
+            "네 담당은 남의 일정 조회, 여러 사람의 공통 가능 시간 찾기, 외부 공유 일정 조회, "
+            "다른 사람과 나눈 지난 대화 검색이다.\n"
+            "확정된 일정을 내 일정으로 저장하는 것은 Nana 담당이다. 시간을 정한 뒤 저장이 "
+            "필요하면 정한 시간을 답변에 명확히 적고 저장은 Nana 담당이라고 알린다.\n"
+            "시간을 확정했더라도 그것은 겹치지 않는 시간 중 네가 고른 하나이지 상대가 동의한 "
+            "시간이 아니다. 답변에는 고른 시간과 이유, 다른 후보, 상대에게는 아직 확인받지 "
+            "않았다는 점을 함께 적어 사용자가 바로 바꿀 수 있게 한다."
+        ),
     ]
 
 
@@ -654,13 +727,51 @@ def nana_agent(query: str) -> str:
 
 @tool(args_schema=AgentQueryInput)
 def kana_agent(query: str) -> str:
-    """그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다."""
+    """그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다.
 
-    # TODO: Kana 하위 agent를 실행하고 trace에서 final_slot_payload/final_decision_payload를 끌어올려 반환하세요.
-    #   - _KANA_SUBAGENT를 kana_tools()와 kana_system_prompt()로 한 번만 만들고 재사용합니다.
-    #   - trace event의 content를 훑어 final_slot이 들어 있는 dict와 final_decision 값을 찾습니다.
-    #   - answer, trace, inner_tool_names, final_slot_payload, final_decision_payload를 JSON으로 반환합니다.
-    ...
+    nana_agent 와 같은 뼈대에 payload 끌어올리기가 하나 더 붙는다. Nana 는 결과가 텍스트라
+    answer 로 충분하지만, Kana 는 구조화된 결정(final_slot)을 만들고 그건 텍스트로 요약되면
+    UI 와 검증이 쓸 수 없다. query 가 그 자체로 완결돼야 하는 것은 nana_agent 와 같다.
+    """
+
+    global _KANA_SUBAGENT
+    if _KANA_SUBAGENT is None:
+        _KANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=kana_tools(),
+            system_prompt=kana_system_prompt(),
+        )
+
+    result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    events = extract_agent_events(result)
+
+    # decide_final_slot 결과는 Kana 의 trace 안에만 있다. supervisor 는 이 반환값만 보고
+    # 하위 이벤트를 직접 보지 못하므로, 여기서 끌어올리지 않으면 UI 의 최종 시간 payload 가
+    # 영영 빈다. extract_langchain_trace() 가 final_slot_payload 라는 이름으로 찾으므로
+    # 키 이름 자체가 계약이다.
+    final_slot_payload: dict[str, Any] | None = None
+    final_decision_payload: dict[str, Any] | None = None
+    for event in events:
+        content = event.get("content")
+        if not isinstance(content, dict):
+            continue
+        if "final_slot" in content:
+            # 여러 번 불렀으면 마지막 결정이 최신이다.
+            final_slot_payload = content
+        if content.get("final_decision"):
+            final_decision_payload = content["final_decision"]
+
+    return json.dumps(
+        {
+            "selected_agent": "kana_agent",
+            "answer": extract_final_text(result),
+            "trace": events,
+            "inner_tool_names": _tool_call_names(events),
+            "final_slot_payload": final_slot_payload,
+            "final_decision_payload": final_decision_payload,
+        },
+        ensure_ascii=False,
+    )
 
 
 def build_langchain_supervisor_agent() -> object:
