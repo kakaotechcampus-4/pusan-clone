@@ -14,6 +14,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_parenthetical_text,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -187,14 +188,12 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 
 
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
-    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다.
+    """SQLite 저장 일정과 현재 대화의 임시 일정을 group 조율 후보로 사용합니다.
 
-    schedules 테이블에는 personal_schedule 외의 kind row도 함께 쌓이므로,
-    조회 단계에서 kind를 지정해 내 개인 일정 row만 후보로 남깁니다.
+    schedules 테이블의 row는 개인이든 그룹이든 owner가 '나'인 내 일정이므로 kind로 거르지 않습니다.
     """
 
     saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
-        kind="personal_schedule",
         limit=200,
     )
     merged: list[dict[str, Any]] = list(saved_schedules)
@@ -283,7 +282,7 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -291,6 +290,30 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
         members=row.get("attendees") or row.get("members") or [],
         original_text=str(row.get("title") or ""),
     )
+
+
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
+
+    if request.kind != "group_schedule":
+        return "Nana 개인 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+
+
+def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """앱 DB와 공유 저장소 양쪽에서 들어온 같은 일정을 앞선 row 하나만 남깁니다."""
+
+    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("member_name") or "").strip(),
+            str(row.get("date") or "").strip(),
+            str(row.get("start_time") or "").strip() or "미정",
+            strip_parenthetical_text(str(row.get("title") or "")),
+        )
+        deduped.setdefault(key, row)
+    return list(deduped.values())
 
 
 def _collect_member_schedules(
@@ -309,7 +332,7 @@ def _collect_member_schedules(
         date_to,
     )
 
-    rows: list[dict[str, Any]] = []
+    my_rows: list[dict[str, Any]] = []
     for schedule in personal_schedules:
         request = _structured_request_from_schedule_row(schedule)
         if not request.date:
@@ -318,14 +341,14 @@ def _collect_member_schedules(
             continue
         if normalized_date_to and request.date > normalized_date_to:
             continue
-        rows.append(
+        my_rows.append(
             {
                 "member_name": "나",
                 "title": request.title or "제목 없음",
                 "date": request.date,
                 "start_time": request.start_time or "미정",
                 "end_time": request.end_time or "미정",
-                "notes": "내 일정",
+                "notes": _my_schedule_notes(request),
             }
         )
 
@@ -340,21 +363,24 @@ def _collect_member_schedules(
         )
     )
 
-    for row in external_payload.get("rows", []):
-        rows.append(
-            {
-                "member_name": row.get("member_name"),
-                "title": row.get("title"),
-                "date": row.get("date"),
-                "start_time": row.get("start_time"),
-                "end_time": row.get("end_time"),
-                "notes": row.get("notes"),
-            }
-        )
+    external_rows = [
+        {
+            "member_name": row.get("member_name"),
+            "title": row.get("title"),
+            "date": row.get("date"),
+            "start_time": row.get("start_time"),
+            "end_time": row.get("end_time"),
+            "notes": row.get("notes"),
+        }
+        for row in external_payload.get("rows", [])
+    ]
+
+    rows = _dedupe_schedule_rows([*my_rows, *external_rows])
 
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
+        "members": ["나", *[name for name in normalized_member_names if name != "나"]],
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
     }
