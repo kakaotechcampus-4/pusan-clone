@@ -12,7 +12,10 @@ find_common_available_slots_dict 가 저장소에 닿지 않으므로 순수 검
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from student_parts.week06_kanamate_decides_schedule import (
     DECIDE_FINAL_SLOT_DESCRIPTION,
@@ -34,6 +37,18 @@ def _candidate(**overrides):
     return slot
 
 
+# busy_rows 를 빈 목록으로 넘기면 구현이 '근거 없음'으로 보고 저장소에서 다시 모은다.
+# 그러면 단위 테스트가 MCP 를 타게 되므로, 조회 범위 밖 날짜의 row 하나를 기본값으로 둔다.
+# 목록이 비어 있지 않으면서 어떤 후보와도 겹치지 않아 '겹침 없음' 상황을 그대로 만든다.
+_OUT_OF_RANGE_BUSY_ROW = {
+    "member_name": "민준",
+    "date": "2026-01-01",
+    "start_time": "09:00",
+    "end_time": "10:00",
+    "title": "범위 밖 일정",
+}
+
+
 def _find(candidate, busy_rows=None, **overrides):
     """후보 하나를 기본 범위(2026-07-14~18, 업무시간 09:00~18:00)로 검증한다."""
 
@@ -41,7 +56,7 @@ def _find(candidate, busy_rows=None, **overrides):
         "member_names": ["민준"],
         "date_from": "2026-07-14",
         "date_to": "2026-07-18",
-        "busy_rows": busy_rows if busy_rows is not None else [],
+        "busy_rows": busy_rows if busy_rows is not None else [_OUT_OF_RANGE_BUSY_ROW],
         "candidate_slots": [candidate],
     }
     kwargs.update(overrides)
@@ -101,9 +116,26 @@ class FindCommonAvailableSlotsDictTest(unittest.TestCase):
     def test_후보를_안_넘기면_빈_목록이다(self):
         # tool 이 대신 계산해주지 않는다. 이 경우가 곧 description 실패 신호다.
         payload = find_common_available_slots_dict(
-            member_names=["민준"], date_from="2026-07-14", date_to="2026-07-18", busy_rows=[]
+            member_names=["민준"],
+            date_from="2026-07-14",
+            date_to="2026-07-18",
+            busy_rows=[_OUT_OF_RANGE_BUSY_ROW],
         )
         self.assertEqual(payload["candidate_slots"], [])
+
+    def test_후보가_없으면_왜_비었는지_알려준다(self):
+        # 후보 0건은 "정말 가능한 시간이 없다"와 "후보를 안 넘겼다"가 구분되지 않는다.
+        # 필터가 탈락 사유를 남기지 않으므로 tool 결과에 실어 agent 가 스스로 고치게 한다.
+        payload = find_common_available_slots_dict(
+            member_names=["민준"],
+            date_from="2026-07-14",
+            date_to="2026-07-18",
+            busy_rows=[_OUT_OF_RANGE_BUSY_ROW],
+        )
+        self.assertIn("candidate_slots", payload["hint"])
+
+    def test_후보가_있으면_hint를_남기지_않는다(self):
+        self.assertNotIn("hint", _find(_candidate()))
 
 
 class DecideFinalSlotTest(unittest.TestCase):
@@ -152,6 +184,34 @@ class DecideFinalSlotTest(unittest.TestCase):
         self.assertEqual(payload["members"], ["나", "민준"])
         self.assertEqual(payload["date_from"], "2026-07-14")
         self.assertEqual(payload["busy_rows"], busy)
+
+
+class BusyRowsRecollectTest(unittest.TestCase):
+    """busy_rows 를 빈 목록으로 넘겨도 근거를 다시 모으는지 본다.
+
+    여기만 저장소를 탄다(Week 5 collect_member_schedules 재사용 경로). 실제 공유 DB 를
+    건드리지 않도록 임시 경로로 격리한다.
+    """
+
+    def setUp(self):
+        self._backup = os.environ.get("KANANA_EXTERNAL_DB_PATH")
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["KANANA_EXTERNAL_DB_PATH"] = str(Path(self._tmp.name) / "external.sqlite3")
+
+    def tearDown(self):
+        if self._backup is None:
+            os.environ.pop("KANANA_EXTERNAL_DB_PATH", None)
+        else:
+            os.environ["KANANA_EXTERNAL_DB_PATH"] = self._backup
+        self._tmp.cleanup()
+
+    def test_빈_목록이면_근거를_다시_모은다(self):
+        # agent 가 앞선 조회 결과를 복사하지 않고 busy_rows=[] 로 부르는 일이 실제로 있었다.
+        # 그대로 두면 "아무도 안 바쁘다"가 되어 이미 잡힌 시간도 후보로 통과한다.
+        payload = find_common_available_slots_dict(
+            member_names=["민준"], date_from="2026-07-14", date_to="2026-07-18", busy_rows=[]
+        )
+        self.assertTrue(payload["busy_rows"], "빈 목록을 그대로 근거로 삼았습니다")
 
 
 class ToolDescriptionContractTest(unittest.TestCase):

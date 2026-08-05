@@ -430,7 +430,13 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "아무도 일정이 없는 시간대를 골라 candidate_slots 에 채워 넘겨야 한다. "
     "tool 은 네가 고른 후보가 정말 비어 있는지 검증하고 기록만 한다.\n"
     "candidate_slots 의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), "
-    "duration_minutes, reason 을 포함한다.\n"
+    "duration_minutes, reason 을 포함한다. "
+    '예: {"date": "2026-08-11", "start_time": "10:00", "end_time": "11:00", '
+    '"duration_minutes": 60, "reason": "두 사람 모두 일정 없음"}\n'
+    # "계산해주지 않는다"만으로는 부족했다. 안 채웠을 때 무슨 일이 생기는지까지 말해야
+    # agent 가 "그럼 내가 만들어야 한다"까지 간다.
+    "candidate_slots 를 비운 채 부르면 후보가 0건이 되어 아무 시간도 확정할 수 없다. "
+    "겹치는 일정이 하나도 없더라도 업무시간 안에서 후보를 직접 만들어 넣어라.\n"
     "busy_rows 에는 앞선 조회 tool 이 돌려준 rows 를 그대로 복사해 넘긴다. 넘기지 않으면 tool 이 "
     "다시 조회하는데, 그러면 네가 보고 고른 근거와 검증에 쓰인 근거가 서로 달라질 수 있다.\n"
     # 탈락 사유를 알려주지 않고 조용히 빼기 때문에, 조건을 미리 알려주지 않으면
@@ -538,7 +544,11 @@ def find_common_available_slots_dict(
     start = normalize_date_bound(date_from)
     end = normalize_date_bound(date_to)
 
-    if busy_rows is None:
+    # None 뿐 아니라 빈 목록도 '근거 없음'으로 보고 다시 모은다. agent 가 앞선 조회 결과를
+    # 복사하지 않고 busy_rows=[] 로 부르는 일이 실제로 있었는데, is None 만 보면 그대로
+    # "아무도 안 바쁘다"가 되어 어떤 후보든 통과한다. 정말 일정이 없으면 재조회 결과도
+    # 빈 목록이라 손해는 MCP 왕복 한 번뿐이고, 반대 방향 실패는 더블부킹이다.
+    if not busy_rows:
         # Week 5 tool 을 그대로 재사용한다. 반환이 JSON 문자열이라 payload 로 읽어 rows 를 꺼낸다.
         # 이 tool 은 내 일정을 항상 포함하므로 members 에 "나"를 넣지 않아도 내 busy-time 이 들어온다.
         payload = json.loads(
@@ -548,7 +558,7 @@ def find_common_available_slots_dict(
         )
         busy_rows = payload.get("rows", [])
 
-    return find_common_available_slots_payload(
+    result = find_common_available_slots_payload(
         # payload 의 members 는 "누구를 고려한 결과인가"를 남기는 기록이다. 내 일정도 근거이므로
         # "나"를 함께 남기되, 호출자가 이미 넣었으면 두 번 들어가지 않게 한다.
         member_names=[
@@ -565,6 +575,16 @@ def find_common_available_slots_dict(
         candidate_slots=candidate_slots,
         llm_reason=llm_reason,
     )
+
+    # 후보 0건은 "정말 가능한 시간이 없다"와 "후보를 안 넘겼거나 전부 탈락했다"가 구분되지
+    # 않는다. 탈락 사유를 알려주지 않는 필터라 agent 는 왜 비었는지 알 수 없다.
+    # 조용한 실패를 tool 결과에 실어 시끄럽게 만든다(가이드가 정한 키는 건드리지 않는다).
+    if not result.get("candidate_slots"):
+        result["hint"] = (
+            "후보가 0건이다. candidate_slots 를 채워 다시 호출하라. 후보를 넘기지 않았거나, "
+            "넘긴 후보가 조회 기간·업무시간·요청 길이·busy 겹침 조건에 걸려 전부 탈락했다."
+        )
+    return result
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
