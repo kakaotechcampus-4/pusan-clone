@@ -33,6 +33,7 @@ from student_parts.week05_load_kanas_past_conversations import (
 _NANA_SUBAGENT: Any | None = None
 _KANA_SUBAGENT: Any | None = None
 _SUPERVISOR_AGENT: Any | None = None
+MY_MEMBER_NAME = "나"
 
 
 # [6주차 수강생 구현 가이드]
@@ -296,13 +297,19 @@ def tool_name(tool_object: Any) -> str:
 
 FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     # TODO: find_common_available_slots tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 후보를 계산하지 않는다는 점을 Kana agent에게 분명히 알려야 합니다.
-    #     agent가 busy_rows를 읽고 candidate_slots를 직접 채워 넘기게 만드는 것이 핵심입니다.
-    #   - candidate_slots 각 항목이 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM),
-    #     duration_minutes, reason을 포함해야 한다는 형식을 적습니다.
-    #   - 후보는 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다.
-    #   - 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다.
-    ""
+    "여러 사람이 함께 비어 있는 회의 시간 후보를 검증하고 기록한다. "
+    "이 도구는 후보 시간을 계산해 주지 않는다. 앞선 일정 조회 도구(collect_member_schedules 등)가 돌려준 "
+    "rows에서 아무도 바쁘지 않은 시간대를 네가 직접 찾아 candidate_slots에 채워 넣어야 한다. "
+    "candidate_slots를 비워 두고 호출하면 후보가 하나도 없는 결과만 돌아온다. "
+    "candidate_slots의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), "
+    "duration_minutes(정수 분), reason(이 시간을 고른 짧은 근거)을 모두 포함한다. "
+    "후보는 date_from~date_to 안의 날짜여야 하고, workday_start~workday_end 시간 안에 들어가야 하며, "
+    "duration_minutes 이상 길어야 하고, busy_rows의 어떤 일정과도 겹쳐서는 안 된다. "
+    "조건에 맞지 않는 후보는 결과에서 조용히 제외되므로, candidate_slots가 빈 목록으로 돌아오면 "
+    "busy_rows를 다시 읽고 겹치지 않는 다른 시간대로 후보를 골라 한 번 더 호출한다. "
+    "busy_rows에는 앞선 일정 조회 도구 결과의 rows를 그대로 복사해 넘긴다. 넘기지 않으면 이 도구가 "
+    "직접 다시 조회하지만, 이미 조회한 rows가 있으면 복사해 넘겨 같은 근거로 검증하게 한다. "
+    "이 도구 결과만으로 답변을 끝내지 말고, 남은 후보 중 하나를 골라 decide_final_slot을 이어서 호출한다."
 )
 
 
@@ -390,11 +397,43 @@ def find_common_available_slots_dict(
     """멤버별 busy-time rows와 LLM이 고른 후보 payload를 검증 결과로 바꿉니다."""
 
     # TODO: 멤버 이름/날짜 범위를 정규화하고, busy_rows를 수집한 뒤 후보 검증 payload를 만드세요.
-    #   - normalize_external_member_names(...)로 멤버 이름을, normalize_date_bound(...)로 날짜를 정규화합니다.
-    #   - busy_rows가 None이면 collect_member_schedules.invoke({...})를 호출해 rows를 채웁니다.
-    #   - 검증 payload 생성은 find_common_available_slots_payload(...)에 넘깁니다. 이때 내 일정도 근거이므로
-    #     member_names에는 "나"를 함께 포함합니다.
-    ...
+    normalized_members = normalize_external_member_names(member_names)
+    normalized_date_from = normalize_date_bound(date_from)
+    normalized_date_to = normalize_date_bound(date_to)
+
+    # 내 일정도 회의를 막는 근거이므로 "나"를 항상 대상에 포함한다. 중복 입력은 한 번만 남긴다.
+    target_members = [
+        MY_MEMBER_NAME,
+        *[name for name in normalized_members if name != MY_MEMBER_NAME],
+    ]
+
+    rows = busy_rows
+    if rows is None:
+        # agent가 rows를 복사해 넘기지 않았으면 Week 5 tool로 직접 모은다.
+        collected = json.loads(
+            collect_member_schedules.invoke(
+                {
+                    "member_names": target_members,
+                    "date_from": normalized_date_from,
+                    "date_to": normalized_date_to,
+                }
+            )
+        )
+        rows = collected.get("rows") or []
+
+    # 후보 검증과 겹침 판정은 fixed/schedule_decision.py가 맡는다.
+    return find_common_available_slots_payload(
+        member_names=target_members,
+        date_from=normalized_date_from,
+        date_to=normalized_date_to,
+        busy_rows=rows,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+        limit=limit,
+        candidate_slots=candidate_slots,
+        llm_reason=llm_reason,
+    )
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
@@ -413,7 +452,31 @@ def find_common_available_slots(
     """수집된 멤버 일정에서 LLM이 직접 고른 공통 가능 후보 시간을 검증합니다."""
 
     # TODO: find_common_available_slots_dict(...) 결과를 JSON 문자열로 반환하세요.
-    ...
+    try:
+        result = find_common_available_slots_dict(
+            member_names=member_names,
+            date_from=date_from,
+            date_to=date_to,
+            duration_minutes=duration_minutes,
+            workday_start=workday_start,
+            workday_end=workday_end,
+            limit=limit,
+            busy_rows=busy_rows,
+            candidate_slots=candidate_slots,
+            llm_reason=llm_reason,
+        )
+    except Exception as error:
+        # 후보를 못 만들었다는 사실과 이유를 남겨, agent가 후보 0건과 조회 실패를 구분하게 한다.
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "find_common_available_slots",
+                "candidate_slots": [],
+                "busy_rows": busy_rows or [],
+                "error": f"공통 가능 시간 후보 검증에 실패했습니다: {error}",
+            }
+        )
+    return json_payload(result)
 
 
 @tool(description=DECIDE_FINAL_SLOT_DESCRIPTION, args_schema=DecideFinalSlotInput)
