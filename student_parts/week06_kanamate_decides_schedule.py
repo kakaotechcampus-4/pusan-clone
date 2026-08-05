@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from typing import Any
@@ -243,7 +243,7 @@ def kana_prompt_parts() -> list[str]:
         "공유 일정 저장소 자체를 확인해야 하면 list_shared_schedules를 사용한다.",
         "내 일정과 외부 멤버의 바쁜 시간을 한 번에 모아야 하면 collect_member_schedules를 사용한다.",
         "여러 사람의 공통 가능 시간을 찾아야 하면 먼저 collect_member_schedules 등으로 busy_rows를 모은다.",
-        "그 다음 busy_rows를 직접 검토해 서로 겹치지 않는 후보 시간(candidate_slots)을 스스로 골라"
+        "그 다음 busy_rows를 직접 검토해 서로 겹치지 않는 후보 시간(candidate_slots)을 스스로 골라 "
         "find_common_available_slots를 호출한다. 이 tool은 후보를 대신 계산해주지 않으므로 "
         "candidate_slots와 busy_rows는 반드시 당신이 채워서 넘긴다.",
         "find_common_available_slots 결과를 확인한 뒤에는 그 결과로 답변을 끝내지 말고, "
@@ -433,34 +433,33 @@ def find_common_available_slots_dict(
     #   - 검증 payload 생성은 find_common_available_slots_payload(...)에 넘깁니다. 이때 내 일정도 근거이므로
     #     member_names에는 "나"를 함께 포함합니다.
     normalized_members = normalize_external_member_names(member_names)
-        norm_from = normalize_date_bound(date_from)
-        norm_to = normalize_date_bound(date_to)
+    norm_from = normalize_date_bound(date_from)
+    norm_to = normalize_date_bound(date_to)
     
-        if busy_rows is None:
-            collected = json.loads(
-                collect_member_schedules.invoke(
-                    {
-                        "member_names": normalized_members,
-                        "date_from": norm_from,
-                        "date_to": norm_to,
-                    }
+    if busy_rows is None:
+        collected = json.loads(
+            collect_member_schedules.invoke(
+                {
+                    "member_names": normalized_members,
+                    "date_from": norm_from,
+                    "date_to": norm_to,
+                }
             )
         )
-    
         busy_rows = collected.get("rows", [])
     
-        return find_common_available_slots_payload(
-            member_names = [*normalized_members, "나"],
-            date_from = norm_from,
-            date_to = norm_to,
-            busy_rows = busy_rows,
-            duration_minutes = duration_minutes,
-            workday_start = workday_start,
-            workday_end = workday_end,
-            limit = limit,
-            candidate_slots = candidate_slots,
-            llm_reason = llm_reason,
-        )
+    return find_common_available_slots_payload(
+        member_names = [*normalized_members, "나"],
+        date_from = norm_from,
+        date_to = norm_to,
+        busy_rows = busy_rows,
+        duration_minutes = duration_minutes,
+        workday_start = workday_start,
+        workday_end = workday_end,
+        limit = limit,
+        candidate_slots = candidate_slots,
+        llm_reason = llm_reason,
+    )
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
@@ -618,10 +617,7 @@ def nana_agent(query: str) -> str:
 def kana_agent(query: str) -> str:
     """그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다."""
 
-    # TODO: Kana 하위 agent를 실행하고 trace에서 final_slot_payload/final_decision_payload를 끌어올려 반환하세요.
-    #   - _KANA_SUBAGENT를 kana_tools()와 kana_system_prompt()로 한 번만 만들고 재사용합니다.
-    #   - trace event의 content를 훑어 final_slot이 들어 있는 dict와 final_decision 값을 찾습니다.
-    #   - answer, trace, inner_tool_names, final_slot_payload, final_decision_payload를 JSON으로 반환합니다.
+
     global _KANA_SUBAGENT
     if _KANA_SUBAGENT is None:
         _KANA_SUBAGENT = create_agent(
@@ -635,12 +631,17 @@ def kana_agent(query: str) -> str:
     answer = extract_final_text(result)
     inner_tool_names = _tool_call_names(trace)
 
-    final_slot_payload : dict[str, Any] | None = None
-    final_decision_payload : dict[str, Any] | None = None
+    final_slot_payload: dict[str, Any] | None = None
+    final_decision_payload: Any | None = None
     for event in trace:
-        if(event.get("event") != "tool_result"):
+        if event.get("event") != "tool_result":
             continue
         content = event.get("content")
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except json.JSONDecodeError:
+                continue
         if not isinstance(content, dict):
             continue
         if "final_slot" in content:
@@ -678,3 +679,4 @@ def build_week_agent() -> object:
     """active-week registry가 호출하는 표준 Week agent builder입니다."""
 
     return build_langchain_supervisor_agent()
+
