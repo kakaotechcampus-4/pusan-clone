@@ -467,6 +467,13 @@ def find_common_available_slots_dict(
         recollect = json.loads(collect_member_schedules.invoke({
             "member_names": normalized_members, "date_from": norm_from, "date_to": norm_to}))
         available_rows = recollect.get("rows", [])
+
+    available_rows = [
+        r for r in available_rows
+        if r.get("start_time") and r.get("start_time") != "미정"
+        and r.get("end_time") and r.get("end_time") != "미정"
+    ]
+    
     return find_common_available_slots_payload(
         member_names=normalized_members,
         date_from=norm_from,
