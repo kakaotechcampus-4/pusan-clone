@@ -515,7 +515,25 @@ def kana_agent(query: str) -> str:
     #   - _KANA_SUBAGENT를 kana_tools()와 kana_system_prompt()로 한 번만 만들고 재사용합니다.
     #   - trace event의 content를 훑어 final_slot이 들어 있는 dict와 final_decision 값을 찾습니다.
     #   - answer, trace, inner_tool_names, final_slot_payload, final_decision_payload를 JSON으로 반환합니다.
-    ...
+    global _KANA_SUBAGENT
+    if _KANA_SUBAGENT is None:
+        _KANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=kana_tools(),
+            system_prompt=kana_system_prompt()
+        )
+    result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    trace = extract_agent_events(result)
+    answer = extract_final_text(result)
+    tool = _tool_call_names(trace)
+
+    return json_payload({
+        "selected_agent" : "kana_agent",
+        "answer" : answer,
+        "trace" : trace,
+        "inner_tool_names" : tool
+    })
+
 
 
 def build_langchain_supervisor_agent() -> object:
