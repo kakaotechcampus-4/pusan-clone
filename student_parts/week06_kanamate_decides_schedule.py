@@ -195,11 +195,37 @@ def week06_system_prompt() -> str:
 def week06_prompt_parts() -> list[str]:
     """1~6주차 supervisor system prompt 조각을 누적합니다."""
 
+    # 누적된 1~5주차 프롬프트는 20여 개 tool 을 "네가 쓰는 것"처럼 지시하는데, supervisor 가
+    # 실제로 가진 tool 은 nana_agent/kana_agent 둘뿐이다. 그렇다고 상속을 버리면 "그 일이 누구
+    # 담당인가"를 판단할 근거까지 사라진다. 그래서 지우지 않고 **주어를 바꾼다** —
+    # "네가 이 tool 을 써라"를 "그 tool 은 하위 에이전트 담당이다"로 읽게 한다.
+    # join_system_prompt 헤더가 뒤에 있는 지시를 우선한다고 선언하므로 뒤에서 바로잡으면 이긴다.
     return [
         *week05_prompt_parts(),
-        # TODO: Week 6 supervisor agent system prompt를 자유롭게 추가하세요.
-        #   - supervisor는 직접 업무를 처리하지 않고 nana_agent 또는 kana_agent로만 위임합니다.
-        #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
+        (
+            "[Week 6 supervisor]\n"
+            "너는 이제 직접 일하지 않고 하위 에이전트에게 위임하는 supervisor 다. "
+            "네가 부를 수 있는 tool 은 nana_agent 와 kana_agent 둘뿐이다.\n"
+            "위에 이름으로 나온 다른 tool(personal_create_schedule, save_structured_request, "
+            "search_personal_references, extract_schedules_of_members_include_me 등)은 하위 "
+            "에이전트가 가진 것이고 너는 부를 수 없다. 그 이름을 직접 호출하려 하지 말고, "
+            "위 규칙들은 '그 일이 누구 담당인가'를 판단하는 근거로만 읽는다."
+        ),
+        # 담당 경계. nana_prompt_parts() 와 **같은 기준**을 반대편에서 서술한다. 기준이 어긋나면
+        # supervisor 가 보낸 것을 하위가 거절해 대화가 아무것도 못 하고 끝난다.
+        # 규칙 서술만으로는 경계 사례가 계속 틀려서, 헷갈리는 예 3줄을 직접 박아둔다.
+        (
+            "[위임 판단]\n"
+            "기준은 사람 이름이 나오는지가 아니라 누구의 일정을 읽는가다.\n"
+            "- nana_agent: 내 일정·할 일·알림의 생성/조회/수정/삭제, 앱 DB 저장, "
+            "개인 참고자료·앱 대화 검색. 참석자가 있는 회의라도 '내 일정으로 저장/조회'면 여기다.\n"
+            "- kana_agent: 남의 일정 조회, 여러 사람의 공통 가능 시간 찾기, 외부 공유 일정 조회, "
+            "다른 사람과 나눈 지난 대화 검색.\n"
+            "헷갈리는 예\n"
+            "- '민준이랑 정한 회의 저장해줘' -> nana_agent (내 일정에 쓴다)\n"
+            "- '지난주 민준이랑 뭐 얘기했지' -> kana_agent (외부 대화를 읽는다)\n"
+            "- '민준이랑 시간 맞춰서 잡아줘' -> kana_agent 로 조율한 뒤 nana_agent 로 저장"
+        ),
     ]
 
 
@@ -260,8 +286,25 @@ def supervisor_system_prompt() -> str:
     return join_system_prompt(
         [
             *week06_prompt_parts(),
-            # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
-            #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            # 하위 에이전트가 구조적으로 못 하는 두 가지를 여기서 메운다.
+            #   - 하위는 매 호출이 백지라 지시대명사를 풀 수 없다 -> supervisor 가 풀어서 넘긴다.
+            #   - 하위는 서로를 모르니 2단 작업을 이어붙일 수 없다 -> supervisor 가 순서대로 부른다.
+            # 둘 다 코드로는 닫히지 않고 이 프롬프트에서만 닫힌다.
+            #
+            # "업무 요청은"으로 한정한 것은 판단이다. 가이드 문구를 그대로 읽으면 인사에도
+            # 위임해야 하는데, 하위 agent 를 띄우는 비용과 지연이 얻는 것 없이 든다.
+            (
+                "[실행 규칙]\n"
+                "업무 요청은 스스로 처리하지 말고 반드시 nana_agent 또는 kana_agent 를 호출한 뒤 "
+                "그 결과만 근거로 답한다. 하위 결과에 없는 일정·시간·이름을 지어내지 않는다.\n"
+                "위임 query 는 그 자체로 완결돼야 한다. 하위 에이전트는 이 대화를 볼 수 없으므로 "
+                "'방금 그거', '아까 말한 일정' 같은 표현은 네가 풀어서 넘긴다. "
+                "예) 사용자가 '방금 그거 지워줘'라고 하면 query 는 "
+                "'7월 15일 15시 팀 회의 일정을 삭제해줘'처럼 대상을 특정해 적는다.\n"
+                "한 요청에 두 담당이 필요하면 순서대로 두 번 위임한다. 조율 뒤 저장이 필요하면 "
+                "kana_agent 로 시간을 정하고, 그 결과를 담아 nana_agent 로 저장까지 마친 뒤 답한다.\n"
+                "필요한 위임을 마쳤으면 더 부르지 말고 사용자에게 답한다."
+            ),
         ]
     )
 
