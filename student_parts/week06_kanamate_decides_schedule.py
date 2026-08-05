@@ -470,8 +470,11 @@ def find_common_available_slots_dict(
 
     available_rows = [
         r for r in available_rows
-        if r.get("start_time") and r.get("start_time") != "미정"
-        and r.get("end_time") and r.get("end_time") != "미정"
+        if not (
+            (not r.get("start_time") or r.get("start_time") == "미정")
+            and
+            (not r.get("end_time") or r.get("end_time") == "미정")
+        )
     ]
     
     return find_common_available_slots_payload(
