@@ -81,13 +81,13 @@ Week 5의 핵심 tool. 서로 다른 두 출처를 **같은 row 구조**로 합�
 | 출처 | 앱 SQLite + 현재 대화 임시 일정 | MCP `extract_schedules_from_history` |
 | 읽는 방법 | `_structured_request_from_schedule_row(row)`로 Week 2 `StructuredRequest` 기준 통일 | MCP 결과의 `rows` 그대로 |
 | `member_name` | `"나"` | 멤버 이름 |
-| `notes` | `앱 저장 내 일정` / `현재 대화 임시 내 일정` | 외부 store의 notes |
+| `notes` | `_my_schedule_notes(request)` (개인/그룹 구분) | 외부 store의 notes |
+| 저장/임시 구분 | `source` (`app_sqlite` / `session_temp`) | `source` 없음 |
 
 결정 사항:
 
-- **`"나"`는 외부 조회 대상에서 뺀다.** 앱 개인 일정은 저장 시 `sync_personal_schedule_to_shared`로
-  공유 저장소에도 복사되므로(`fixed/external_mcp.py`), 앱 SQLite와 외부 조회를 둘 다 넣으면
-  **내 일정이 rows에 두 번 들어간다.** 내 일정의 원본은 앱 SQLite로 정하고 외부 목록에서 제외했다.
+- **`"나"`도 외부 조회 대상에 넣고, 겹치는 row는 `_dedupe_schedule_rows`로 거른다.**
+  (아래 [공지 반영] 절에서 바뀐 결정이다. 원래는 외부 목록에서 `"나"`를 뺐다.)
 - **내 일정은 `member_names`에 `"나"`가 없어도 항상 포함**한다. 조율의 기준점이고,
   Week 6 공통 가능 시간 계산이 내 busy-time을 빼먹으면 결과가 틀리기 때문이다.
   대신 "남의 일정만 물었을 때는 `"나"` row를 근거로 쓰지 말라"를 프롬프트에 넣었다.
@@ -98,7 +98,7 @@ Week 5의 핵심 tool. 서로 다른 두 출처를 **같은 row 구조**로 합�
   Week 4 `search_nana_memory`와 같은 계약이다.
 - `schedule_summary`는 `external_schedule_summary(rows)`를 재사용한다(요약 포맷을 새로 만들지 않음).
 
-MCP 호출은 이 tool 안에서 **1회**만 한다. 외부 멤버가 없으면(`["나"]`만 넘어오면) 아예 호출하지 않는다.
+MCP 호출은 이 tool 안에서 **1회**만 한다. `member_names`가 비었을 때만 호출을 건너뛴다.
 
 ---
 
@@ -398,6 +398,65 @@ search_conversations(query, member_names=None, top_k=5) -> str
 
 ---
 
+## 공지_코드업데이트.md 반영 — `collect_member_schedules` 버그 2건 (2026-08-05)
+
+강사 공지(`공지_코드업데이트.md` 「4. 적용 가이드」 A~E)를 5주차 PR 브랜치에 반영했다.
+tool 시그니처·입력 스키마·반환 payload 키는 그대로다.
+
+### 증상
+
+1. 이미 잡아둔 **그룹 일정이 "빈 시간"으로 추천**된다.
+   하린과 회의를 잡아둔 뒤 민준과 조율하면 그 시간이 가능 시간 후보로 나온다.
+   이 rows를 busy_rows로 쓰는 Week 6 `find_common_available_slots`까지 틀린다.
+2. `member_names`에 `"나"`가 들어오면 같은 일정이 rows에 두 번 나온다.
+
+### 원인
+
+1. 정답 코드가 저장 일정을 `kind="personal_schedule"`로만 읽었다.
+   그룹 일정은 저장 시 `sync_group_schedule_to_shared`로 **참석자 이름 row만** 만들고 `"나"` row는 안 만든다.
+   그래서 앱 DB(kind 필터에 걸림)와 공유 저장소(조회 대상이 `["민준"]`뿐) **양쪽에서 다 빠졌다.**
+   → 내 구현은 처음부터 `list_schedules(limit=PERSONAL_SCHEDULE_LIMIT)`로 kind 필터 없이 읽고 있어 (A)는 이미 만족했다.
+   다만 `_structured_request_from_schedule_row`가 `kind="personal_schedule"`을 **하드코딩**하고 있어
+   `notes`에서 개인/그룹을 구분하지 못했다. (B)
+2. 같은 일정을 두 경로가 **서로 다르게 다듬는다** — 공유 저장소는 제목의 소괄호를 지우고 공백을 줄이며,
+   `start_time`이 비면 `"미정"`으로 저장한다. 그래서 값 비교로는 중복이 안 걸린다.
+
+### 대응 (A~E)
+
+| | 내용 |
+| --- | --- |
+| (A) `kind` 필터 제거 | 이미 반영돼 있어 변경 없음. 왜 필터를 걸지 않는지 주석으로 남김 |
+| (B) `_structured_request_from_schedule_row` | `kind`를 row의 `request_kind`에서 읽음. 이 값이 없는 Week 1 임시 row만 개인 일정 |
+| (C) `_my_schedule_notes(request)` 추가 | `Nana 개인 일정` / `Nana 그룹 일정 · 참석자: 하린` |
+| (D) `_dedupe_schedule_rows(rows)` 추가 | `(member_name, date, start_time, 소괄호 제거 제목)` 키로 `setdefault` |
+| (E) rows 합치기 | `_dedupe_schedule_rows([*my_rows, *external_rows])` — 앱 DB row가 **앞** |
+
+가이드에서 한 발 더 나간 것 하나: **외부 조회에서 `"나"`를 빼던 걸 되돌렸다.**
+공유 저장소에는 앱 DB 동기화 복사본뿐 아니라 `create_shared_schedule`로 직접 등록한 `"나"` row도 있을 수 있고,
+빼 버리면 그 일정이 busy-time에서 통째로 누락된다. 중복은 (D)가 막는다.
+실제로 반영 후 실행하니 앱 DB에 없는 공유 저장소 `"나"` row 2건(`앱 개인 일정 자동 동기화`)이 새로 잡혔다.
+
+`end_time`을 dedupe 키에서 뺀 이유: 두 경로의 `"미정"` 처리가 달라 되돌릴 수 없다.
+같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 본다.
+
+`my_rows`를 external rows보다 **앞**에 둬야 하는 이유: `setdefault`는 먼저 들어온 row를 남기는데,
+앱 DB row의 `notes`는 (C)가 만든 값이고 공유 저장소 row의 `notes`는 `"앱 개인 일정 자동 동기화"`다.
+순서를 뒤집으면 중복은 사라져도 `notes`가 엉뚱한 값으로 남는다.
+
+`notes`가 `앱 저장 내 일정` / `현재 대화 임시 내 일정`에서 개인/그룹 구분으로 바뀌었지만,
+저장/임시 구분은 원래부터 `source` 필드(`app_sqlite` / `session_temp`)가 들고 있어 잃은 정보는 없다.
+
+### 검증 (LLM 없이 함수 직접 호출)
+
+- (B) `request_kind`가 `group_schedule` → `group_schedule`, `personal_schedule` → 개인, 값 없음(Week 1 임시) → 개인
+- (C) 참석자 있음 → `Nana 그룹 일정 · 참석자: 하린`, 없음 → `Nana 그룹 일정`, 개인 → `Nana 개인 일정`
+- (D) `팀 회의 (온라인)`(앱 DB, `end_time` 18:00)와 `팀 회의`(공유, `end_time` 미정)가 1건으로 합쳐지고
+  남는 `notes`는 앱 DB 쪽. `member_name`이 다르면(민준) 합치지 않음
+- 통합: 그룹 일정 `하린과 사전 미팅`이 `member_name: "나"` row로 나오고 `notes`에 참석자가 붙음
+- 실제 MCP subprocess + 앱 SQLite로 `collect_member_schedules.invoke(...)` 호출 성공 (`ok=True`, rows 11건, 중복 없음)
+
+---
+
 ## 남은 한계 / 다음 주차 후보
 
 - **프롬프트 의존 라우팅** — 대화 검색은 위 통합으로 코드에 가뒀지만,
@@ -406,7 +465,9 @@ search_conversations(query, member_names=None, top_k=5) -> str
 - **MCP 호출마다 subprocess 재기동** — `call_local_mcp_tool_sync`가 호출할 때마다
   서버를 새로 띄우고 tool 목록을 다시 읽는다. 세션 재사용 캐시는 `fixed/mcp_client.py` 영역이라
   이번 주차 수정 대상이 아니다.
-- **`"나"` 중복 제거는 이름 기준** — 앱에서 동기화된 공유 복사본을 `member_name == "나"`로만 걸러낸다.
-  사용자가 `create_shared_schedule`로 자기 일정을 다른 이름으로 등록하면 중복이 생길 수 있다.
+- **중복 제거는 `(member_name, date, start_time, 제목)` 기준** — 사용자가 `create_shared_schedule`로
+  자기 일정을 `"나"`가 아닌 다른 이름으로 등록하거나, 같은 일정을 다른 시각으로 등록하면 여전히 중복이 남는다.
+- **공유 저장소 orphan row** — 앱 DB에서 지운 일정의 공유 복사본이 동기화 실패로 남아 있으면
+  `"나"`의 busy-time으로 계속 잡힌다. 정리는 `delete_shared_schedule` 수동 호출이 필요하다.
 - **최종 회의 시간 결정은 Week 6** — 공통 가능 시간 계산(`find_common_available_slots`)은
   이 파일의 rows를 busy_rows 근거로 쓰는 다음 주차 과제다.
