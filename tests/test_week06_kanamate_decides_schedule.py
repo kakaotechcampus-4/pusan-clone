@@ -19,6 +19,7 @@ from pathlib import Path
 
 from student_parts.week06_kanamate_decides_schedule import (
     DECIDE_FINAL_SLOT_DESCRIPTION,
+    _has_my_busy_rows,
     FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION,
     decide_final_slot,
     find_common_available_slots_dict,
@@ -37,11 +38,12 @@ def _candidate(**overrides):
     return slot
 
 
-# busy_rows 를 빈 목록으로 넘기면 구현이 '근거 없음'으로 보고 저장소에서 다시 모은다.
-# 그러면 단위 테스트가 MCP 를 타게 되므로, 조회 범위 밖 날짜의 row 하나를 기본값으로 둔다.
-# 목록이 비어 있지 않으면서 어떤 후보와도 겹치지 않아 '겹침 없음' 상황을 그대로 만든다.
+# 구현은 busy_rows 가 비었거나 "나" row 가 없으면 '근거 없음'으로 보고 저장소에서 다시 모은다.
+# 그러면 단위 테스트가 MCP 와 실제 앱 DB 를 타게 되므로, 조회 범위 밖 날짜의 "나" row 하나를
+# 기본값으로 둔다. 목록이 비어 있지 않고 내 일정도 들어 있으면서, 어떤 후보와도 겹치지 않아
+# '겹침 없음' 상황을 그대로 만든다.
 _OUT_OF_RANGE_BUSY_ROW = {
-    "member_name": "민준",
+    "member_name": "나",
     "date": "2026-01-01",
     "start_time": "09:00",
     "end_time": "10:00",
@@ -74,11 +76,17 @@ class FindCommonAvailableSlotsDictTest(unittest.TestCase):
 
     def test_busy_row와_겹치는_후보는_걸러진다(self):
         # 이미 잡힌 시간을 후보로 내면 더블부킹이 된다. LLM 이 틀려도 코드가 막는다.
-        busy = [{"member_name": "민준", "date": "2026-07-15", "start_time": "14:30", "end_time": "15:30"}]
+        busy = [
+            _OUT_OF_RANGE_BUSY_ROW,
+            {"member_name": "민준", "date": "2026-07-15", "start_time": "14:30", "end_time": "15:30"},
+        ]
         self.assertEqual(_find(_candidate(), busy_rows=busy)["candidate_slots"], [])
 
     def test_겹치지_않으면_같은_날도_통과한다(self):
-        busy = [{"member_name": "민준", "date": "2026-07-15", "start_time": "16:00", "end_time": "17:00"}]
+        busy = [
+            _OUT_OF_RANGE_BUSY_ROW,
+            {"member_name": "민준", "date": "2026-07-15", "start_time": "16:00", "end_time": "17:00"},
+        ]
         self.assertEqual(len(_find(_candidate(), busy_rows=busy)["candidate_slots"]), 1)
 
     def test_end_time이_미정인_busy_row는_그날_남은_시간을_막는다(self):
@@ -110,7 +118,10 @@ class FindCommonAvailableSlotsDictTest(unittest.TestCase):
         self.assertEqual(payload["members"], ["나", "민준"])
 
     def test_busy_rows를_근거로_함께_남긴다(self):
-        busy = [{"member_name": "민준", "date": "2026-07-16", "start_time": "10:00", "end_time": "11:00"}]
+        busy = [
+            _OUT_OF_RANGE_BUSY_ROW,
+            {"member_name": "민준", "date": "2026-07-16", "start_time": "10:00", "end_time": "11:00"},
+        ]
         self.assertEqual(_find(_candidate(), busy_rows=busy)["busy_rows"], busy)
 
     def test_후보를_안_넘기면_빈_목록이다(self):
@@ -205,6 +216,16 @@ class BusyRowsRecollectTest(unittest.TestCase):
             os.environ["KANANA_EXTERNAL_DB_PATH"] = self._backup
         self._tmp.cleanup()
 
+    def test_내_일정이_이미_있으면_다시_모으지_않는다(self):
+        rows = [
+            {"member_name": "나", "date": "2026-07-15", "start_time": "14:00", "end_time": "15:00"},
+            {"member_name": "민준", "date": "2026-07-15", "start_time": "10:00", "end_time": "11:00"},
+        ]
+        payload = find_common_available_slots_dict(
+            member_names=["민준"], date_from="2026-07-14", date_to="2026-07-18", busy_rows=rows
+        )
+        self.assertEqual(payload["busy_rows"], rows)
+
     def test_빈_목록이면_근거를_다시_모은다(self):
         # agent 가 앞선 조회 결과를 복사하지 않고 busy_rows=[] 로 부르는 일이 실제로 있었다.
         # 그대로 두면 "아무도 안 바쁘다"가 되어 이미 잡힌 시간도 후보로 통과한다.
@@ -212,6 +233,76 @@ class BusyRowsRecollectTest(unittest.TestCase):
             member_names=["민준"], date_from="2026-07-14", date_to="2026-07-18", busy_rows=[]
         )
         self.assertTrue(payload["busy_rows"], "빈 목록을 그대로 근거로 삼았습니다")
+
+
+class HasMyBusyRowsTest(unittest.TestCase):
+    """내 일정이 busy 근거에 들어 있는지 판정한다. (저장소 없이 보는 순수 판정)
+
+    agent 가 exclude_me 로 조회한 rows 를 넘기면 내 busy-time 이 빠지는데, 그 상태를
+    여기서 잡아내야 구현이 내 일정을 보탤 수 있다.
+    """
+
+    def test_남의_일정만_있으면_없다고_본다(self):
+        self.assertFalse(_has_my_busy_rows([{"member_name": "민준"}]))
+
+    def test_내_일정이_있으면_있다고_본다(self):
+        self.assertTrue(_has_my_busy_rows([{"member_name": "민준"}, {"member_name": "나"}]))
+
+    def test_앞뒤_공백은_무시한다(self):
+        self.assertTrue(_has_my_busy_rows([{"member_name": " 나 "}]))
+
+    def test_빈_목록과_None은_없다고_본다(self):
+        self.assertFalse(_has_my_busy_rows([]))
+        self.assertFalse(_has_my_busy_rows(None))
+
+
+class WideSlotGuardTest(unittest.TestCase):
+    """가능 구간을 회의 시각으로 굳히지 않는다.
+
+    '09:00-18:00 가능'은 비어 있다는 정보이지 9시간 회의를 하겠다는 뜻이 아니다. 검증기는
+    '요청 길이 이상'만 보므로 그대로 통과하고, 확정되면 9시간짜리 회의로 기록된다.
+    프롬프트로만 막았더니 3회 중 2회가 새서 코드로 내렸다.
+    """
+
+    def _decide(self, **kwargs):
+        return json.loads(decide_final_slot.invoke(kwargs))
+
+    def _block(self, start="09:00", end="18:00"):
+        return _candidate(start_time=start, end_time=end, duration_minutes=540)
+
+    def test_요청보다_넓은_구간은_확정하지_않는다(self):
+        payload = self._decide(candidate_slots=[self._block()], selected_index=0, duration_minutes=60)
+        self.assertIsNone(payload["final_slot"])
+        self.assertTrue(payload["needs_agent_selection"])
+        self.assertIn("시각", payload["reason"])
+
+    def test_요청_길이에_맞는_구간은_확정한다(self):
+        payload = self._decide(candidate_slots=[_candidate()], selected_index=0, duration_minutes=60)
+        self.assertEqual(payload["final_slot"], "2026-07-15 14:00-15:00")
+        self.assertFalse(payload["needs_agent_selection"])
+
+    def test_두_배까지는_허용한다(self):
+        # agent 가 duration_minutes 를 안 넘기면 기본값 60 이 쓰인다. 실제로 2시간 회의를
+        # 잡는 정상 호출까지 막지 않도록 여유를 둔다.
+        payload = self._decide(
+            candidate_slots=[self._block(end="11:00")], selected_index=0, duration_minutes=60
+        )
+        self.assertEqual(payload["final_slot"], "2026-07-15 09:00-11:00")
+
+    def test_final_slot을_직접_넘겨도_넓으면_막는다(self):
+        payload = self._decide(
+            candidate_slots=[self._block()],
+            selected_slot=self._block(),
+            final_slot="2026-07-15 09:00-18:00",
+            duration_minutes=60,
+        )
+        self.assertIsNone(payload["final_slot"])
+
+    def test_보류_중이면_아무것도_바꾸지_않는다(self):
+        payload = self._decide(candidate_slots=[self._block()], duration_minutes=60)
+        self.assertIsNone(payload["final_slot"])
+        self.assertTrue(payload["needs_agent_selection"])
+        self.assertNotIn("시각을 정해", payload["reason"])
 
 
 class ToolDescriptionContractTest(unittest.TestCase):

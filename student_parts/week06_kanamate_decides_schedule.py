@@ -16,6 +16,7 @@ from fixed.schedule_decision import (
     decide_final_slot_payload,
     find_common_available_slots_payload,
     normalize_date_bound,
+    parse_time_minutes,
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
@@ -322,11 +323,26 @@ def kana_prompt_parts() -> list[str]:
             "   candidate_slots 를 비운 채 부르지 않는다. 비우면 후보가 0건이 되어 아무 시간도 "
             "확정할 수 없다. 겹치는 일정이 하나도 없더라도 업무시간 안에서 후보를 직접 만들어 "
             "넣는다.\n"
-            "3) 검증된 후보로 답을 끝내지 말고 decide_final_slot 까지 이어서 호출한다.\n"
+            # "사용자에게 묻는다"를 3)단계 옆에 두었더니 모델이 곧바로 답해버려
+            # decide_final_slot 을 3/3 건너뛰었다. 기록이 먼저이고 되묻기는 그 다음이다.
+            "3) 확정하든 보류하든 반드시 decide_final_slot 을 호출한다. 이 호출을 건너뛰고 답을 "
+            "끝내지 않는다. 보류일 때도 후보와 함께 final_slot=null, needs_agent_selection=true 로 "
+            "기록한 뒤에 사용자에게 되묻는다.\n"
+            # 넓은 구간을 후보로 내는 것 자체는 낭비가 아니다. 10분 회의에 하루가 비면
+            # 10분짜리 후보를 54개 나열하는 쪽이 오히려 못 쓴다. 문제는 그 구간이 그대로
+            # final_slot 으로 확정될 때다("09:00-18:00 확정" = 9시간 회의).
+            "   가능한 시간을 보여줄 때는 '8월 12일 09:00-18:00' 처럼 구간으로 묶어도 된다. "
+            "다만 확정할 때는 요청한 회의 길이에 맞는 정확한 시각을 골라야 한다.\n"
             "확정할지 보류할지는 표현이 아니라 이것으로 가른다 — 사용자가 시간을 하나로 정하는 "
             "결정을 너에게 맡겼는가. 맡겼으면 후보 중 하나를 골라 selected_index 와 final_slot 을 "
             "채운다. 가능한 시간을 보고 싶어 하는 요청이면 final_slot 은 null, "
             "needs_agent_selection 은 true 로 두고 후보만 남긴 뒤 이 중에서 정해줄지 되묻는다.\n"
+            # 의미 기준만으로는 3회 중 2회가 "알려줘"에도 확정해버렸다. 5주차에서 효과를 본
+            # 방식대로 어휘 예시를 함께 박는다.
+            "   맡긴 요청: '정해줘', '잡아줘', '예약해줘', '하나로 정해줘'\n"
+            "   보고 싶어 하는 요청: '알려줘', '가능한 시간', '언제 되나', '비는 시간 보여줘'\n"
+            "   '알려줘'로 끝나는 요청에 임의로 final_slot 을 채우지 않는다. 후보를 보여주고 "
+            "정해줄지 물어보는 것이 그 요청에 대한 완결된 답이다.\n"
             "다음 경우는 요청이 어떻든 확정하지 않는다: 검증을 통과한 후보가 없을 때, 일부 멤버를 "
             "조회하지 못했거나 기간이 정해지지 않아 근거가 불완전할 때, 사용자가 지목한 시간이 "
             "busy row 와 겹칠 때(겹친다는 사실과 대안을 알린다). 어느 쪽인지 애매하면 확정하지 "
@@ -374,6 +390,14 @@ def supervisor_system_prompt() -> str:
                 "'방금 그거', '아까 말한 일정' 같은 표현은 네가 풀어서 넘긴다. "
                 "예) 사용자가 '방금 그거 지워줘'라고 하면 query 는 "
                 "'7월 15일 15시 팀 회의 일정을 삭제해줘'처럼 대상을 특정해 적는다.\n"
+                # query 를 요약하면서 맥락이 떨어져 하위가 다른 tool 을 고르는 일이 있었다.
+                # 하위에게 넘어가는 것은 문자열 하나뿐이라, 빠진 사실은 하위가 알 방법이 없다.
+                "요약하면서 사실을 빼지 않는다. 특히 다음 세 가지는 사용자가 말한 그대로 남긴다: "
+                "누구와의 일인지, 나도 참석하는 일인지, 어느 기간인지. "
+                "'철수랑 회의 시간 잡아줘'를 '철수의 일정을 알려줘'로 바꿔 넘기면 하위는 내 일정을 "
+                "빼고 조회해서, 이미 잡아둔 내 시간을 비어 있다고 답하게 된다.\n"
+                "사용자가 시간을 정해 달라고 했는지, 가능한 시간만 보고 싶어 하는지도 그대로 "
+                "전달한다. 하위가 확정할지 보류할지를 그 문장으로 판단한다.\n"
                 "한 요청에 두 담당이 필요하면 순서대로 두 번 위임한다. 조율 뒤 저장이 필요하면 "
                 "kana_agent 로 시간을 정하고, 그 결과를 담아 nana_agent 로 저장까지 마친 뒤 답한다.\n"
                 "필요한 위임을 마쳤으면 더 부르지 말고 사용자에게 답한다."
@@ -519,6 +543,21 @@ class AgentQueryInput(BaseModel):
     query: str
 
 
+def _has_my_busy_rows(rows: list[dict[str, Any]] | None) -> bool:
+    """busy 근거에 내 일정이 들어 있는지 본다. (순수 함수)
+
+    agent 가 exclude_me 로 조회한 rows 를 그대로 넘기면 내 busy-time 이 통째로 빠지고,
+    이미 잡아둔 시간이 "비어 있다"로 추천된다(Week 5 공지의 버그 ①과 같은 실패).
+    프롬프트로 tool 선택을 지시하는 것만으로는 3회 중 1회꼴로 새서, 근거 쪽에서 확인한다.
+    """
+
+    return any(
+        str(row.get("member_name") or "").strip() == PERSONAL_SHARED_MEMBER_NAME
+        for row in (rows or [])
+        if isinstance(row, dict)
+    )
+
+
 def find_common_available_slots_dict(
     member_names: list[str],
     date_from: str,
@@ -557,6 +596,16 @@ def find_common_available_slots_dict(
             )
         )
         busy_rows = payload.get("rows", [])
+    elif not _has_my_busy_rows(busy_rows):
+        # 내 일정이 근거에서 빠지는 것을 프롬프트에 맡기지 않는다. agent 가 exclude_me 로 조회한
+        # rows 를 그대로 넘기면 내 busy-time 이 통째로 빠지고, 이미 잡아둔 시간이 "비어 있다"로
+        # 추천된다(Week 5 공지의 버그 ①과 같은 실패). 조회 대상을 비워 부르면 내 일정만 온다.
+        mine = json.loads(
+            collect_member_schedules.invoke(
+                {"member_names": [], "date_from": start, "date_to": end}
+            )
+        )
+        busy_rows = [*mine.get("rows", []), *busy_rows]
 
     result = find_common_available_slots_payload(
         # payload 의 members 는 "누구를 고려한 결과인가"를 남기는 기록이다. 내 일정도 근거이므로
@@ -619,6 +668,49 @@ def find_common_available_slots(
     )
 
 
+def _slot_minutes(slot: Any) -> int | None:
+    """후보 slot 의 길이를 분으로 잰다. 잴 수 없으면 None. (순수 함수)"""
+
+    if not isinstance(slot, dict):
+        return None
+    start = parse_time_minutes(slot.get("start_time"), -1)
+    end = parse_time_minutes(slot.get("end_time"), -1)
+    if start < 0 or end <= start:
+        return None
+    return end - start
+
+
+def _is_slot_wider_than_requested(
+    final_slot: str | None,
+    selected_slot: Any | None,
+    selected_index: int | None,
+    candidate_slots: list[Any] | None,
+    duration_minutes: int,
+) -> bool:
+    """확정하려는 구간이 요청한 회의 길이보다 지나치게 넓은지 본다. (순수 함수)
+
+    '가능 구간'과 '회의 시각'은 다르다. 09:00-18:00 은 비어 있다는 정보이지 9시간 회의를
+    하겠다는 뜻이 아닌데, 검증기는 '요청 길이 이상'만 보므로 그대로 통과한다.
+
+    확정 의사가 있을 때만 본다. 이미 보류라면 막을 것이 없다.
+    """
+
+    if final_slot is None and selected_slot is None and selected_index is None:
+        return False
+
+    slot = selected_slot
+    if slot is None and selected_index is not None:
+        slots = list(candidate_slots or [])
+        if not isinstance(selected_index, int) or not 0 <= selected_index < len(slots):
+            return False  # 범위 밖 판정은 decide_final_slot_payload 가 이미 한다
+        slot = slots[selected_index]
+
+    minutes = _slot_minutes(slot if isinstance(slot, dict) else None)
+    if minutes is None:
+        return False
+    return minutes > max(30, int(duration_minutes or 60)) * 2
+
+
 @tool(description=DECIDE_FINAL_SLOT_DESCRIPTION, args_schema=DecideFinalSlotInput)
 def decide_final_slot(
     candidate_slots: list[Any] | None = None,
@@ -638,6 +730,24 @@ def decide_final_slot(
     # 여기서 최종 시간을 고르지 않는다. selected_index 범위 검증, final_slot 도출,
     # needs_agent_selection 기본값은 decide_final_slot_payload 가 이미 한다. 여기서 한 번 더
     # 판단하면 같은 결정이 두 곳에 생겨 어느 쪽이 맞는지 알 수 없게 된다.
+    #
+    # 다만 '요청 길이보다 훨씬 넓은 구간'을 확정으로 기록하는 것만 막는다. 09:00-18:00 은
+    # 가능 구간이지 회의 시각이 아닌데, 그대로 확정되면 9시간짜리 회의가 잡힌 것으로 남는다.
+    # 고르는 일은 여전히 agent 몫이고, 여기서는 덜 정해진 것을 확정으로 굳히지만 않는다.
+    # 2배까지 허용하는 이유: agent 가 duration_minutes 를 안 넘기면 기본값 60 이 쓰여서,
+    # 실제로 2시간 회의를 잡는 정상 호출까지 막을 수 있다.
+    if _is_slot_wider_than_requested(final_slot, selected_slot, selected_index, candidate_slots, duration_minutes):
+        # selected_index/selected_slot 도 함께 비운다. 남겨두면 decide_final_slot_payload 가
+        # 그 후보에서 final_slot 을 다시 도출해 막은 것이 되살아난다.
+        final_slot = None
+        selected_slot = None
+        selected_index = None
+        needs_agent_selection = True
+        reason = (
+            "가능한 구간은 찾았지만 요청한 회의 길이보다 넓어 회의 시각으로 확정하지 않았습니다. "
+            "구간 안에서 어느 시각으로 할지 정해 주세요."
+        )
+
     return json.dumps(
         decide_final_slot_payload(
             candidate_slots=candidate_slots,
