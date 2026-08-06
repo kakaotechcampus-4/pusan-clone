@@ -597,6 +597,8 @@ def find_common_available_slots_dict(
         )
     except Exception as error:  # noqa: BLE001 - 날짜 형식·범위 검증은 week05 입력 스키마가 이미 한다
         return _find_common_slots_error_payload(str(error), members=members_with_me)
+    if collected.get("ok") is False:
+        return collected
 
     collected_rows = collected.get("rows") or []
     agent_rows = list(busy_rows or [])
@@ -797,6 +799,8 @@ def _recorded_final_slot_payload(events: list[dict[str, Any]]) -> dict[str, Any]
     validated = _validated_slots_from_events(events)
     if validated is None:
         return None
+    if validated.get("ok") is False:
+        return validated
     # 시간은 고르지 않는다. 결정 근거가 아예 사라지는 것만 막는다.
     return {
         "ok": True,
