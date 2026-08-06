@@ -5,18 +5,15 @@ import pytest
 import student_parts.week05_load_kanas_past_conversations as week05
 
 
-def test_personal_schedules_queries_only_personal_kind(monkeypatch):
+def test_personal_schedules_query_omits_kind_filter(monkeypatch):
     calls = {}
 
     class FakeStore:
         def __init__(self, path):
             calls["path"] = path
 
-        def list_schedules(self, *, limit, kind):
-            calls["list_schedules"] = {
-                "limit": limit,
-                "kind": kind,
-            }
+        def list_schedules(self, *, limit):
+            calls["list_schedules"] = {"limit": limit}
             return [
                 {
                     "schedule_id": "sch_personal",
@@ -25,7 +22,17 @@ def test_personal_schedules_queries_only_personal_kind(monkeypatch):
                     "start_time": "10:00",
                     "end_time": "11:00",
                     "attendees": [],
-                }
+                    "request_kind": "personal_schedule",
+                },
+                {
+                    "schedule_id": "sch_group",
+                    "title": "하린과 사전 미팅",
+                    "date": "2026-07-14",
+                    "start_time": "15:00",
+                    "end_time": "16:00",
+                    "attendees": ["하린"],
+                    "request_kind": "group_schedule",
+                },
             ]
 
     monkeypatch.setattr(week05, "AppSQLiteStore", FakeStore)
@@ -33,11 +40,13 @@ def test_personal_schedules_queries_only_personal_kind(monkeypatch):
 
     schedules = week05._personal_schedules_for_current_scope()
 
-    assert calls["list_schedules"] == {
-        "limit": 200,
-        "kind": "personal_schedule",
-    }
-    assert [schedule["title"] for schedule in schedules] == ["개인 공부"]
+    # kind 필터를 걸지 않는다: 개인·그룹 일정 모두 내가 바쁜 시간이므로 둘 다 수집한다.
+    # (이미 잡아둔 그룹 회의가 "빈 시간"으로 추천되던 버그 ①의 회귀 방지)
+    assert calls["list_schedules"] == {"limit": 200}
+    assert [schedule["title"] for schedule in schedules] == [
+        "개인 공부",
+        "하린과 사전 미팅",
+    ]
 
 
 def test_extract_schedules_wrapper_forwards_arguments(monkeypatch):
