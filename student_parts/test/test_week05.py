@@ -553,8 +553,10 @@ def test_main_collect_member_schedules_merges_filters_and_sorts(
         "date": "2026-08-07",
         "start_time": "09:00",
         "end_time": "09:30",
-        "notes": "앱에 저장된 내 일정",
+        "notes": "Nana 개인 일정",
     }
+
+    assert result["members"] == ["나", "철수", "영희"]
 
     assert (
         result["schedule_summary"]
@@ -651,6 +653,102 @@ def test_main_collect_member_schedules_rejects_non_list_external_rows(
             date_to="2026-08-08",
             personal_schedules=[],
         )
+
+
+def test_main_structured_request_reads_group_kind() -> None:
+    request = week05._structured_request_from_schedule_row(
+        {
+            "request_kind": "group_schedule",
+            "title": "하린과 사전 미팅",
+            "date": "2026-07-14",
+            "start_time": "15:00",
+            "end_time": "16:00",
+            "attendees": ["하린"],
+        }
+    )
+
+    assert request.kind == "group_schedule"
+    assert request.members == ["하린"]
+
+
+def test_main_collect_member_schedules_labels_group_schedule_with_attendees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 버그 ① — 잡아둔 그룹 일정이 내 바쁜 시간으로 잡히고, 참석자까지 notes에 남습니다.
+    monkeypatch.setattr(
+        week05,
+        "normalize_external_member_names",
+        lambda names: ["나"],
+    )
+    monkeypatch.setattr(
+        week05,
+        "normalize_external_schedule_date_bounds",
+        lambda names, date_from, date_to: (date_from, date_to),
+    )
+    monkeypatch.setattr(
+        week05,
+        "call_mcp_tool_sync",
+        lambda tool_name, args: pytest.fail(
+            "'나'의 일정만 조회할 때 MCP를 호출하면 안 됩니다."
+        ),
+    )
+    monkeypatch.setattr(
+        week05,
+        "external_schedule_summary",
+        lambda rows: f"총 {len(rows)}개의 일정",
+    )
+
+    result = week05._collect_member_schedules(
+        member_names=["나"],
+        date_from="2026-07-14",
+        date_to="2026-07-14",
+        personal_schedules=[
+            {
+                "request_kind": "group_schedule",
+                "title": "하린과 사전 미팅",
+                "date": "2026-07-14",
+                "start_time": "15:00",
+                "end_time": "16:00",
+                "attendees": ["하린"],
+            }
+        ],
+    )
+
+    assert len(result["rows"]) == 1
+    assert result["rows"][0]["member_name"] == "나"
+    assert result["rows"][0]["title"] == "하린과 사전 미팅"
+    assert (
+        result["rows"][0]["notes"]
+        == "Nana 그룹 일정 · 참석자: 하린"
+    )
+
+
+def test_main_dedupe_schedule_rows_keeps_first_app_db_row() -> None:
+    # 버그 ② — 앱 DB row와 공유 저장소 row가 서로 다르게 다듬어져도 하나로 봅니다.
+    rows = [
+        {
+            "member_name": "나",
+            "title": "팀 회의 (온라인)",
+            "date": "2026-07-14",
+            "start_time": "15:00",
+            "end_time": "18:00",
+            "notes": "Nana 개인 일정",
+        },
+        {
+            "member_name": "나",
+            "title": "팀 회의",
+            "date": "2026-07-14",
+            "start_time": "15:00",
+            "end_time": "미정",
+            "notes": "앱 개인 일정 자동 동기화",
+        },
+    ]
+
+    deduped = week05._dedupe_schedule_rows(rows)
+
+    assert len(deduped) == 1
+    assert deduped[0]["title"] == "팀 회의 (온라인)"
+    assert deduped[0]["notes"] == "Nana 개인 일정"
 
 
 def test_main_collect_member_schedules_tool_returns_json(
