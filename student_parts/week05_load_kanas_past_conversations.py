@@ -193,7 +193,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
 
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
     store = AppSQLiteStore(CONFIG.app_db_path)
-    sql_result = store.list_schedules(limit=10)
+    sql_result = store.list_schedules(limit=200)
     temp_result = [s for s in PERSONAL_SCHEDULES if _schedule_scope(s) == current_session_scope()]
 
     sql_ids = {s.get("schedule_id") for s in sql_result}
