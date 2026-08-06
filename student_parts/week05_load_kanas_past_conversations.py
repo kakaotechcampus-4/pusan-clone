@@ -303,6 +303,8 @@ def _collect_member_schedules(
     personal_rows = []
     for schedule in personal_schedules:
         structured = _structured_request_from_schedule_row(schedule)
+        if not structured.date or not (date_from <= structured.date <= date_to):
+            continue
         personal_rows.append(
             {
                 "member_name": PERSONAL_SHARED_MEMBER_NAME,
