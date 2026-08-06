@@ -233,21 +233,30 @@ def kana_prompt_parts() -> list[str]:
         f"오늘 날짜는 {current_app_date_iso()}이며, '이번 주', '다음 주' 같은 표현은 이 날짜를 기준으로 해석한다. ",
 
         "요청에서 대상 멤버와 날짜 범위, 회의 길이가 분명하지 않으면 extract_schedule_request로 먼저 구조화한다. ",
-        "여러 사람의 회의 시간을 조율할 때는 collect_member_schedules로 바쁜 시간을 모은다. "
+        "여러 사람의 회의 시간을 조율할 때는 collect_member_schedules로 바쁜 시간을 모은다. ",
         "collect_member_schedules는 member_names에 '나'가 없어도 내 일정을 함께 포함하므로, "
         "내가 참여하는 회의는 이 도구 하나로 나와 팀원의 일정을 모두 확인한다. ",
         "extract_schedules_from_history는 내 일정이 필요 없는 순수 조회(예: '하린이 일정만 보여줘')에서만 쓰고, "
         "그룹 회의 조율 요청 흐름에서는 collect_member_schedules와 중복이므로 호출하지 않는다. ",
         "list_shared_schedules는 대상 멤버나 기간이 요청에 없을 때 실제 멤버와 날짜 범위를 확인하는 용도로 쓴다. ",
         "collect_member_schedules 결과에는 사람별 rows와, 같은 약속을 참여자 목록과 함께 묶은 merged_rows가 있다. ",
-        "일정을 정리해 알려주는 요청에는, 기본적으로 merged_rows를 사용해 같은 약속을 참여자와 함께 한 줄로 묶어 답한다. "
-        "사람별로 답변할 때는 rows를 사용한다. "
+        "일정을 정리해 알려주는 요청에는, 기본적으로 merged_rows를 사용해 같은 약속을 참여자와 함께 한 줄로 묶어 답한다. ",
+        "사람별로 답변할 때는 rows를 사용한다. ",
         "공통 가능 시간을 계산할 때는 rows를 busy-time 근거로 사용한다. ",
 
-        "일정을 모은 뒤에는 find_common_available_slots, decide_final_slot을 이 순서로 반드시 이어서 호출한다. "
+        "일정을 모은 뒤에는 find_common_available_slots, decide_final_slot을 이 순서로 반드시 이어서 호출한다. ",
         "이 두 tool은 후보나 최종 시간을 대신 계산해 주지 않는다. 네가 busy_rows를 직접 읽고 겹치지 않는 후보를 골라 "
         "candidate_slots에 채워 넘기고, 그중 하나를 골라 selected_index와 final_slot으로 넘겨야 한다. ",
-        "이미 조회한 일정 row는 busy_rows에 복사해 넘겨 같은 조회를 반복하지 않는다. ",
+        "이미 collect_member_schedules로 조회한 rows를 busy_rows에 복사해 넘겨 같은 조회를 반복하지 않는다. ",
+
+        "조회된 바쁜 시간이 없거나 적더라도 candidate_slots를 비워 넘기지 말고, "
+        "요청한 날짜 범위와 업무시간 안에서 겹치지 않는 시간대를 직접 만들어 채운다. ",
+        "근거가 없다는 사실은 답변에 함께 밝힌다. ",
+
+        "find_common_available_slots가 돌려준 busy_rows의 각 항목에 time_refined가 True이면 "
+        "start_time·end_time은 겹침 계산용으로 보정된 값이고, 실제 일정 시간은 original_start_time과 original_end_time이다. "
+        "사용자에게 후보 선택 근거를 설명할 때는 보정값이 아니라 이 원래 값을 쓴다. ",
+
         "공통 가능 시간이 없으면 임의로 시간을 만들지 말고, decide_final_slot에 final_slot=null, "
         "needs_agent_selection=True와 그 이유를 담아 호출한 뒤 그대로 답한다. ",
 
@@ -443,13 +452,15 @@ class AgentQueryInput(BaseModel):
     query: str
 
 MARGIN_MINUTES = 3 * 60   # 3시간
+START_WORKING_HOUR = "09:00"   # 9시 부터 업무 시작!
 
-def _refine_busy_row(row: dict[str, Any]) -> dict[str, Any]:
+def _refine_busy_row(row: dict[str, Any], margin_minutes: int = MARGIN_MINUTES, workday_start: str = START_WORKING_HOUR) -> dict[str, Any]:
     """시간이 미정인 일정을 겹침 계산용 시각으로 보정해서 반환합니다."""
     # case 1: start, end 둘 다 미정 => (00:00, 00:00)으로 변환
-    # case 2: start만 미정 => end 전 MARGIN_MINUTES 만큼만 busy(00:00 이하면 clip)
-    # case 3: end만 미정 => start부터 MARGIN_MINUTES 만큼만 busy(23:59가 넘으면 clip)
+    # case 2: start만 미정 => workday_start부터 end_time까지 busy
+    # case 3: end만 미정 => start부터 margin_minutes 만큼만 busy(23:59가 넘으면 clip)
     # 그 외: 원본 유지
+    # case 1, 2, 3에서도 보정 시 원래 값을 함께 남김
 
     start = row.get("start_time")
     end = row.get("end_time")
@@ -467,18 +478,31 @@ def _refine_busy_row(row: dict[str, Any]) -> dict[str, Any]:
             minutes = 0
         return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
+    def _refined(new_start: str, new_end: str) -> dict[str, Any]:
+        # 보정 시 원래 값과 보정 여부를 함께 남김 -> LLM이 보정값을 실제 시간으로 읽지 않게 함
+        return {
+            **row,
+            "start_time": new_start,
+            "end_time": new_end,
+            "original_start_time": start,
+            "original_end_time": end,
+            "time_refined": True,
+        }
+    
     # case 1: 둘 다 미정
     if start_missing and end_missing:
-        return {**row, "start_time": "00:00", "end_time": "00:00"}
+        return _refined("00:00", "00:00")
 
     # case 2: start만 미정
     if start_missing and not end_missing:
         try:
             e_min = _to_minutes(end)
+            work_s_min = _to_minutes(workday_start)
         except ValueError:
             return row
-        s_min = max(0, e_min-MARGIN_MINUTES)   # 00:00 이하면 clip
-        return {**row, "start_time": _to_hhmm(s_min)}
+        if e_min <= work_s_min:
+            return _refined("00:00", "00:00")
+        return _refined(workday_start, end)
 
     # case 3: end만 미정
     if end_missing and not start_missing:
@@ -486,8 +510,8 @@ def _refine_busy_row(row: dict[str, Any]) -> dict[str, Any]:
             s_min = _to_minutes(start)
         except ValueError:
             return row
-        e_min = min(24*60, s_min+MARGIN_MINUTES)   # 24:00 넘으면 clip
-        return {**row, "end_time": _to_hhmm(e_min)}
+        e_min = min(24*60, s_min+margin_minutes)   # 24:00 넘으면 clip
+        return _refined(start, _to_hhmm(e_min))
 
     # 그 외: 원본 유지
     return row
@@ -518,8 +542,7 @@ def find_common_available_slots_dict(
             "member_names": normalized_members, "date_from": norm_from, "date_to": norm_to}))
         available_rows = recollect.get("rows", [])
 
-    # raw_busy_rows = list(available_rows)
-    refined_rows = [_refine_busy_row(r) for r in available_rows]
+    refined_rows = [_refine_busy_row(r, MARGIN_MINUTES, workday_start=workday_start) for r in available_rows]
     
     payload = find_common_available_slots_payload(
         member_names=normalized_members,
@@ -532,7 +555,6 @@ def find_common_available_slots_dict(
         busy_rows= refined_rows,
         candidate_slots=candidate_slots,
         llm_reason=llm_reason)
-    # payload["raw_busy_rows"] = raw_busy_rows
     return payload
 
 
