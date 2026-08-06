@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from fixed.external_people_store import normalize_external_member_names
-from fixed.langchain_trace import extract_agent_events, extract_final_text, _FAIL_CREATE_ANSWER
+from fixed.langchain_trace import extract_agent_events, extract_final_text, FAIL_CREATE_ANSWER
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.schedule_decision import (
@@ -663,7 +663,7 @@ def nana_agent(query: str) -> str:
     result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
     events = extract_agent_events(result) # dict가 아닌 예외는 extract_agent_events tool이 내부적으로 처리하므로 호출만 하기
     answer = extract_final_text(result)
-    answer_ok = answer != _FAIL_CREATE_ANSWER
+    answer_ok = answer != FAIL_CREATE_ANSWER
 
     payload = {
         "ok": answer_ok,
@@ -685,7 +685,7 @@ def kana_agent(query: str) -> str:
     result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
     events = extract_agent_events(result)
     answer = extract_final_text(result)
-    answer_ok = answer != _FAIL_CREATE_ANSWER
+    answer_ok = answer != FAIL_CREATE_ANSWER
 
     final_slot_payload = None
     final_decision_payload = None
