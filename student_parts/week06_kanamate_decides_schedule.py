@@ -249,6 +249,19 @@ def kana_prompt_parts() -> list[str]:
         "candidate_slots에 채워 넘기고, 그중 하나를 골라 selected_index와 final_slot으로 넘겨야 한다. ",
         "이미 collect_member_schedules로 조회한 rows를 busy_rows에 복사해 넘겨 같은 조회를 반복하지 않는다. ",
 
+        "busy_rows에 없는 시간은 그 사람이 비어있다는 뜻이다. "
+        "어떤 멤버의 일정이 busy_rows에 없으면, 그 사람은 해당 시간에 자유로우므로 회의 가능하다. "
+        "'그 사람이 이 일정에 참여 안 함'을 '그 사람이 불가능함'으로 해석하지 않는다. ",
+        "각 날짜의 workday 범위에서 모든 멤버의 busy_rows와 겹치지 않는 구간을 찾아, "
+        "그 구간이 duration_minutes 이상이면 candidate_slots에 반드시 추가한다. ",
+
+        "workday_start와 workday_end는 기본 업무시간일 뿐이다. 식사/새벽/저녁 모임처럼 업무 시간 외 활동이거나 "
+        "사용자가 별도 시간대를 말하면 그 범위에서 후보를 만들도록 workday_start와 workday_end를 유연하게 조정한다."
+        "업무시간 밖이라는 이유로 가능한 시간을 배제하지 않는다. ",
+        "바쁜 시간과 겹치지 않는 구간이 있으면 candidate_slots를 반드시 채운다. 비워서 넘기지 않는다. ",
+        "가능한 구간이 회의 길이보다 넓으면, 그 안에서 시작 시각을 달리한 후보를 여러 개 만들어 넘긴다. "
+        "예: 16:00~21:00이 비고 4시간이 필요하면 16:00-20:00, 16:30-20:30, 17:00-21:00 같은 후보를 함께 제시한다. ",
+
         "조회된 바쁜 시간이 없거나 적더라도 candidate_slots를 비워 넘기지 말고, "
         "요청한 날짜 범위와 업무시간 안에서 겹치지 않는 시간대를 직접 만들어 채운다. ",
         "근거가 없다는 사실은 답변에 함께 밝힌다. ",
@@ -336,6 +349,9 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "여러 사람이 함께 모일 수 있는 공통 가능 시간 후보를 '검증'하는 도구. "
     "이 도구는 후보 시간을 대신 계산하거나 추천해 주지 않음. "
     "네가 직접 busy_rows(각 멤버의 이미 존재하는 일정)를 읽고 비어 있는 시간대를 골라 candidate_slots를 채워 넘겨야 함.\n"
+    "workday_start와 workday_end는 기본 업무시간일 뿐이며,"
+    "'회의'와 같은 업무 활동이 아닌 일반 모임 활동이거나 사용자가 별도 시간대를 말하면 그 범위에서 후보를 검색. "
+    "업무시간 밖이라는 이유로 가능한 시간을 배제하지 않아야 함.\n"
 
     "호출 인자:\n"
     "- member_names: 공동 일정 시간 대상 외부 멤버 이름 목록.\n"
@@ -452,13 +468,12 @@ class AgentQueryInput(BaseModel):
     query: str
 
 MARGIN_MINUTES = 3 * 60   # 3시간
-START_WORKING_HOUR = "09:00"   # 9시 부터 업무 시작!
 
-def _refine_busy_row(row: dict[str, Any], margin_minutes: int = MARGIN_MINUTES, workday_start: str = START_WORKING_HOUR) -> dict[str, Any]:
+def _refine_busy_row(row: dict[str, Any], margin_minutes: int = MARGIN_MINUTES, workday_start: str = "09:00", workday_end: str = "18:00") -> dict[str, Any]:
     """시간이 미정인 일정을 겹침 계산용 시각으로 보정해서 반환합니다."""
     # case 1: start, end 둘 다 미정 => (00:00, 00:00)으로 변환
     # case 2: start만 미정 => workday_start부터 end_time까지 busy
-    # case 3: end만 미정 => start부터 margin_minutes 만큼만 busy(23:59가 넘으면 clip)
+    # case 3: end만 미정 => start부터 margin_minutes 만큼만 busy(workday_end를 넘으면 clip)
     # 그 외: 원본 유지
     # case 1, 2, 3에서도 보정 시 원래 값을 함께 남김
 
@@ -497,10 +512,9 @@ def _refine_busy_row(row: dict[str, Any], margin_minutes: int = MARGIN_MINUTES, 
     if start_missing and not end_missing:
         try:
             e_min = _to_minutes(end)
-            work_s_min = _to_minutes(workday_start)
         except ValueError:
             return row
-        if e_min <= work_s_min:
+        if e_min <= _to_minutes(workday_start):
             return _refined("00:00", "00:00")
         return _refined(workday_start, end)
 
@@ -510,7 +524,7 @@ def _refine_busy_row(row: dict[str, Any], margin_minutes: int = MARGIN_MINUTES, 
             s_min = _to_minutes(start)
         except ValueError:
             return row
-        e_min = min(24*60, s_min+margin_minutes)   # 24:00 넘으면 clip
+        e_min = min(_to_minutes(workday_end), s_min+margin_minutes)   # workday_end 넘으면 clip
         return _refined(start, _to_hhmm(e_min))
 
     # 그 외: 원본 유지
@@ -542,7 +556,7 @@ def find_common_available_slots_dict(
             "member_names": normalized_members, "date_from": norm_from, "date_to": norm_to}))
         available_rows = recollect.get("rows", [])
 
-    refined_rows = [_refine_busy_row(r, MARGIN_MINUTES, workday_start=workday_start) for r in available_rows]
+    refined_rows = [_refine_busy_row(r, MARGIN_MINUTES, workday_start=workday_start, workday_end=workday_end) for r in available_rows]
     
     payload = find_common_available_slots_payload(
         member_names=normalized_members,
