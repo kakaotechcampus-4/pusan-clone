@@ -436,7 +436,7 @@ def find_common_available_slots_dict(
                     "date_to": normalized_date_to,
                 }
             )
-        )["busy_rows"]
+        )["rows"]
 
     members_with_self = ["나"] + normalized_member_names
     return find_common_available_slots_payload(
@@ -595,7 +595,7 @@ def nana_agent(query: str) -> str:
         "trace": events,
         "answer": extract_final_text(result),
         "inner_tool_names": _tool_call_names(events),
-    })
+    }, ensure_ascii=False) 
 
 
 @tool(args_schema=AgentQueryInput)
@@ -624,13 +624,14 @@ def kana_agent(query: str) -> str:
         if event.get("event") != "tool_result":
             continue
 
-        content = event.get("content")
-        if not isinstance(content, dict):
-            continue
-        if event.get("tool_name") == "find_common_available_slots":
-            final_slot = content
         if event.get("tool_name") == "decide_final_slot":
-            final_decision = content
+            content = event.get("content")
+            
+            if not isinstance(content, dict):
+                continue
+
+            final_slot = content
+            final_decision = content.get("final_slot")
 
     return json.dumps({
         "selected_agent": "kana_agent",
@@ -639,7 +640,7 @@ def kana_agent(query: str) -> str:
         "inner_tool_names": _tool_call_names(events),
         "final_slot_payload": final_slot,
         "final_decision_payload": final_decision,
-    })
+    }, ensure_ascii=False)
 
 
 def build_langchain_supervisor_agent() -> object:
