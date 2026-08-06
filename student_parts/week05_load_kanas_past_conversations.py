@@ -278,6 +278,15 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     )
 
 
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
+
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    if not members:
+        return "개인 일정"
+    return f"그룹 일정 - 참석자: {', '.join(members)}"
+
+
 def _collect_member_schedules(
     *,
     member_names: list[str],
@@ -299,7 +308,7 @@ def _collect_member_schedules(
         rows.append({
             "member_name": "나", "title": structured.title,
             "date": structured.date, "start_time": structured.start_time,
-            "end_time": structured.end_time, "notes": "내 일정", "source_conversation_id": None,
+            "end_time": structured.end_time, "notes": _my_schedule_notes(structured), "source_conversation_id": None,
         })
 
     # 외부 멤버 일정
