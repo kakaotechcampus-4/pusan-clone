@@ -552,11 +552,29 @@ def kana_agent(query: str) -> str:
     result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
     events = extract_agent_events(result)
     answer = extract_final_text(result)
+
+    final_slot_payload = None
+    final_decision_payload = None
+    for event in events:
+        if event.get("event") != "tool_result":
+            continue
+        content = event.get("content")
+        if not isinstance(content, dict):
+            continue
+        if event.get("tool_name") == "find_common_available_slots":
+            final_slot_payload = content
+        elif event.get("tool_name") == "decide_final_slot":
+            final_decision_payload = content
+            if content.get("final_slot"):
+                final_slot_payload = content
+
     return json.dumps({
         "selected_agent": "kana_agent",
         "answer": answer,
         "trace": events,
         "inner_tool_names": _tool_call_names(events),
+        "final_slot_payload": final_slot_payload,
+        "final_decision_payload": final_decision_payload,
     }, ensure_ascii=False)
 
 
