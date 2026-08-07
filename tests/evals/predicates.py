@@ -235,11 +235,17 @@ def _check_argument(tool_name: str, argument: str, value: Any, checks: dict[str,
             reasons.append(f"{label}에 {present!r}가 들어가면 안 된다 (넘긴 값: {value!r})")
 
     if "contains_text" in checks:
-        expected_text = str(checks["contains_text"])
-        if not isinstance(value, str) or expected_text not in value:
+        # 문자열 하나 또는 여러 개를 받습니다. 여러 개면 전부 들어 있어야 합니다.
+        expected = checks["contains_text"]
+        expected_texts = [expected] if isinstance(expected, str) else [str(item) for item in expected]
+        if not isinstance(value, str):
             reasons.append(
-                f"{label}은 {expected_text!r}를 포함한 문자열이어야 하는데 {value!r}이다"
+                f"{label}은 {expected_texts!r}를 포함한 문자열이어야 하는데 {value!r}이다"
             )
+        else:
+            missing = [text for text in expected_texts if text not in value]
+            if missing:
+                reasons.append(f"{label}에 {missing!r}가 빠졌다 (넘긴 값: {value!r})")
 
     if "min_items" in checks:
         minimum = int(checks["min_items"])

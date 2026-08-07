@@ -346,6 +346,22 @@ class TestArgumentPredicates:
 
         assert (predicates.check_case(expect, events, "") == []) is passes
 
+    @pytest.mark.parametrize(
+        ("query", "passes"),
+        [
+            ("철수와 8월 3일 미팅 저장", True),
+            ("8월 3일 미팅 저장", False),  # 사람 이름이 빠졌다
+            ("철수와 미팅 저장", False),  # 날짜가 빠졌다
+        ],
+    )
+    def test_contains_text_accepts_a_list_and_requires_all(self, query, passes):
+        """여러 값을 한 인자에 걸 수 있어야 위임 query의 사실 이월을 검사할 수 있습니다."""
+
+        events = [tool_call("nana_agent", query=query)]
+        expect = {"args": {"nana_agent": {"query": {"contains_text": ["철수", "8월 3일"]}}}}
+
+        assert (predicates.check_case(expect, events, "") == []) is passes
+
     @pytest.mark.parametrize("query", [None, 123, ["워크숍"]])
     def test_contains_text_requires_a_string(self, query):
         events = [tool_call("search_previous_conversations", query=query)]
@@ -924,7 +940,12 @@ def test_only_representative_routing_cases_repeat_by_default():
         "week05.history.search_then_load",
         "week05.shared.member_roster",
         "week06.supervisor.personal_schedule",
+        "week06.supervisor.external_history",
         "week06.supervisor.group_coordination",
+        "week06.supervisor.group_save_with_explicit_time",
+        "week06.supervisor.timeless_group_meeting_request",
+        "week06.supervisor.coordinate_then_save",
+        "week06.supervisor.followup_reference_resolution",
         "week06.nana.group_request_boundary",
         "week06.nana.personal_schedule_lookup",
         "week06.kana.collect_only",
@@ -1104,16 +1125,16 @@ class TestWeek06RoutingCaseDataset:
         cases = cases_week06_routing.WEEK06_ROUTING_CASES
         ids = [case["id"] for case in cases]
 
-        assert len(cases) == 16
+        assert len(cases) == 20
         assert len(ids) == len(set(ids)), "케이스 id가 중복됐다"
         assert {case["surface"] for case in cases} == {"supervisor", "kana", "nana"}
 
     def test_total_runs_match_the_planned_budget(self):
-        """대표 8개는 3회, 나머지 8개는 1회 = 32회입니다."""
+        """대표 13개는 3회, 나머지 7개는 1회 = 46회입니다."""
 
         cases = cases_week06_routing.WEEK06_ROUTING_CASES
 
-        assert sum(case.get("repeats", 1) for case in cases) == 32
+        assert sum(case.get("repeats", 1) for case in cases) == 46
 
     def test_requirement_cases_and_strong_expectations_are_declared(self):
         cases = {
