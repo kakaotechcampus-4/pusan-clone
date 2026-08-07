@@ -225,7 +225,42 @@ pytest는 tool 선택/로직만 보므로, Gradio 앱을 직접 띄워 여러 �
 
 - **supervisor의 표면적 키워드 오작동**: `week06_prompt_parts()`의 "그룹/멤버 언급되면 kana_agent로 위임한다" 규칙이, "이미 확정된 시간"을 언급하는 요청에서도 "회의"+"멤버 이름"이라는 표면적 신호에 확률적으로 낚여 kana_agent를 불필요하게 한 번 더 호출할 때가 있다 (10번, 11-7 참고). 실행마다 재현되기도 하고 안 되기도 하는 확률적 문제라, 프롬프트를 더 강하게 써도 완전히 막긴 어려울 것으로 보인다. 결과 자체(최종적으로 nana_agent가 저장을 완료하는 것)에는 영향이 없어서 우선순위를 낮게 두고 보류했다.
 
-## 13. 남은 일
+## 13. PR 1차 리뷰 대응 — `members`에서 "나"가 빠지는 버그
 
-- 수정된 `test_group_schedule_confirm_and_save_chains_kana_then_nana` 재검증 완료 (새 문장으로 통과 확인)
-- 알려진 이슈(12번)를 정말 손볼지, 아니면 "결과에 영향 없는 확률적 노이즈"로 계속 보류할지 판단
+### 13-1. 리뷰어가 지적한 내용
+
+`find_common_available_slots_dict`([student_parts/week06_kanamate_decides_schedule.py:404-459](../student_parts/week06_kanamate_decides_schedule.py#L404-L459))는 두 단계로 나뉜다.
+
+1. **수집 단계(L422-433)**: `busy_rows`가 없으면 `collect_member_schedules`를 호출해 직접 모아오는데, 이때 `[*normalized_members, PERSONAL_SHARED_MEMBER_NAME]`으로 **"나"를 명시적으로 포함**해서 수집한다. 내 일정도 겹침 판단의 근거이므로 맞는 처리다.
+2. **결과 생성 단계(L448-459, 수정 전)**: 그런데 `find_common_available_slots_payload(...)`를 호출할 때 `member_names=normalized_members`로, 1단계에서 쓴 "나 포함" 목록이 아니라 **"나"가 빠진 원래 목록**을 넘기고 있었다. 이 값은 [fixed/schedule_decision.py:183](../fixed/schedule_decision.py#L183)에서 그대로 `payload["members"]`가 된다.
+
+"베이스 TODO도 이 호출을 짚어서 '이때 내 일정도 근거이므로 member_names에는 나를 함께 포함합니다'라고 안내한다"는 점, 그리고 **기존 테스트 4개가 모두 `candidate_slots`만 확인하고 `members`는 한 번도 검증하지 않아서 이 버그가 안 잡혔다**는 점을 함께 지적했다.
+
+### 13-2. 이해 과정에서 오간 질문들
+
+- **"실제 계산 로직도 잘못된 거냐?"** → 아니다. 후보 시간을 거르는 로직(`normalize_llm_candidate_slots`)은 `busy_rows`(실제 시간 데이터)만 보고 겹침을 판단하고, `members`라는 라벨은 계산에 전혀 쓰이지 않는다. `busy_rows`에는 처음부터 "나"의 데이터가 정상적으로 들어있었으므로, **후보 필터링·최종 확정 결과는 버그와 무관하게 항상 정확했다.**
+- **"그럼 뭐가 문제냐?"** → `members` 필드는 "이 판단을 어떤 사람들의 일정을 근거로 내렸는지"를 trace에 남기기 위한 **설명/감사용 라벨**이다. 이 값이 사실과 다르면:
+  1. Kana(LLM)가 이 JSON을 읽고 사용자에게 답할 때 "민준, 지훈 일정만 보고 정했다"처럼 실제와 다르게 설명할 수 있고,
+  2. `decide_final_slot` tool description이 "candidate_slots/busy_rows/member_names를 그대로 복사해서 넘겨라"고 지시하기 때문에([student_parts/week06_kanamate_decides_schedule.py:341](../student_parts/week06_kanamate_decides_schedule.py#L341)), 이 잘못된 라벨이 최종 확정 payload(`decide_final_slot_payload`)에도 그대로 복사돼, supervisor가 최종적으로 종합하는 답변까지 이어질 수 있다.
+  - 즉 "판단이 틀릴 수 있다"가 아니라 **"판단은 맞게 했는데, 그 판단 근거를 설명하는 기록이 사실과 어긋나 있고, 그 어긋난 기록이 다음 단계로 그대로 복사돼 전파된다"**는 것이 핵심이었다.
+- **"수정한 코드가 payload랑 무관해 보이는데?"** → `student_parts` 쪽 수정은 `find_common_available_slots_payload(member_names=...)` 호출의 **인자**를 바꾼 것이고, 이 인자가 바로 `fixed/schedule_decision.py:183`에서 `payload["members"]`가 되는 재료이기 때문에 실질적으로는 payload를 고친 것과 같다. payload를 조립하는 코드 자체는 `fixed/schedule_decision.py`에 있고, `student_parts`는 거기에 뭘 넘길지만 결정하는 자리라 파일이 분리돼 있었을 뿐이다.
+
+### 13-3. 수정 내용
+
+`find_common_available_slots_payload` 호출 시 넘기는 `member_names`에 `PERSONAL_SHARED_MEMBER_NAME`("나")을 항상 포함시켰다(중복 방지용 필터 포함). 1단계 수집 코드(L423)에서 이미 쓰던 "무조건 나를 포함" 패턴을 결과 생성 단계에도 동일하게 적용한 것이다.
+
+```python
+return find_common_available_slots_payload(
+    member_names=[
+        PERSONAL_SHARED_MEMBER_NAME,
+        *[name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME],
+    ],
+    ...
+)
+```
+
+### 13-4. 테스트 보강
+
+제안해주신대로, `tests/test_week06_schedule_decision_tools.py`에 `busy_rows`를 생략해 자동 수집 경로(L422-433)를 타는 테스트를 추가했다. Week5 테스트에서 쓰던 monkeypatch 패턴을 가져와 `collect_member_schedules.func`(StructuredTool은 pydantic 모델이라 `.invoke`엔 직접 monkeypatch가 안 걸려서, 내부 구현 함수인 `.func`를 교체)를 가짜로 바꾸고, (1) 수집 시 넘어가는 이름 목록에 "나"가 포함되는지, (2) 최종 결과 `members`에도 "나"가 남는지를 함께 검증한다.
+
+**mutation 검증**: 수정 전 코드(`member_names=normalized_members`)로 되돌려 이 테스트가 실제로 실패하는 것을 확인한 뒤, 다시 수정 코드로 복원해 전체 스위트(`30 passed, 16 skipped`)가 그대로 통과함을 확인했다.

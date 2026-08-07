@@ -446,7 +446,14 @@ def find_common_available_slots_dict(
         }
 
     return find_common_available_slots_payload(
-        member_names=normalized_members,
+        member_names=[
+            PERSONAL_SHARED_MEMBER_NAME,
+            *[
+                name
+                for name in normalized_members
+                if name != PERSONAL_SHARED_MEMBER_NAME
+            ],
+        ],
         date_from=normalized_date_from,
         date_to=normalized_date_to,
         busy_rows=busy_rows,

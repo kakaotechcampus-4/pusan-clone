@@ -3,6 +3,47 @@ import json
 from student_parts.week06_kanamate_decides_schedule import decide_final_slot, find_common_available_slots
 
 
+def test_find_common_available_slots_collects_and_reports_my_schedule_too(monkeypatch):
+    """busy_rows를 생략하면 collect_member_schedules로 직접 모아오는데, 이때
+    (1) 수집 대상에 "나"가 들어가고 (2) 결과 members에도 "나"가 남아야 한다.
+
+    내 일정도 겹침 판단의 근거로 쓰였으면서 결과에는 빠지는 회귀를 막기 위한 테스트다.
+    """
+
+    seen_member_names = {}
+
+    def fake_collect(member_names, date_from, date_to):
+        seen_member_names["value"] = member_names
+        return json.dumps({"ok": True, "rows": []})
+
+    monkeypatch.setattr(
+        "student_parts.week06_kanamate_decides_schedule.collect_member_schedules.func",
+        fake_collect,
+    )
+
+    result = json.loads(
+        find_common_available_slots.invoke(
+            {
+                "member_names": ["민준"],
+                "date_from": "2026-08-11",
+                "date_to": "2026-08-11",
+                "candidate_slots": [
+                    {
+                        "date": "2026-08-11",
+                        "start_time": "14:00",
+                        "end_time": "15:00",
+                        "duration_minutes": 60,
+                        "reason": "겹치는 일정 없음",
+                    }
+                ],
+            }
+        )
+    )
+
+    assert "나" in seen_member_names["value"]
+    assert "나" in result["members"]
+
+
 def test_find_common_available_slots_filters_out_overlapping_candidate():
     """민준이 09:00-10:00에 바쁠 때, 겹치는 후보(09:30-10:30)는 걸러지고
     안 겹치는 후보(14:00-15:00)만 candidate_slots에 남는지 확인한다.
