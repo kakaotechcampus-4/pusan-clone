@@ -292,19 +292,19 @@ def kana_prompt_parts() -> list[str]:
         "실제 일정 시간은 original_start_time과 original_end_time이다. "
         "겹침 판단에는 보정값을 쓰되, 사용자에게 근거를 설명할 때는 원래 값을 쓴다. ",
 
-        "duration_minutes는 사용자가 명시하면 그대로 쓰고, 명시하지 않으면 일정 성격에 맞게 정한다. "
-        "관공서 방문이나 병원 진료처럼 이동과 대기가 필요한 일정은 넉넉히 잡고, 짧은 통화나 간단한 확인은 짧게 잡는다. ",
-        "각 날짜의 workday 범위에서 모든 멤버의 busy_rows와 겹치지 않는 구간을 찾아, "
-        "그 구간이 duration_minutes 이상이면 candidate_slots에 반드시 추가한다. 비워서 넘기지 않는다. ",
-        "조회된 바쁜 시간이 없거나 적더라도 마찬가지다. 요청한 날짜 범위와 시간대 안에서 후보를 직접 만들어 채운다. ",
-        "후보가 단 하나여도, 해당 시간대를 공동 일정 시간으로 '확정'하였다고 답하지 않고 후보 선택 근거만 안내한다. ",
-
         "workday_start와 workday_end는 요청 성격에 맞게 정한다. "
         "사용자가 '새벽', '밤늦게', '저녁', '가능한 모든 시간'처럼 시간대를 명시했거나 "
         "야간 모임이나 여가 활동처럼 업무시간 밖 활동이 분명하면 그 범위로 넓힌다. "
         "그런 언급이 없으면 기본 업무시간(09:00~18:00)을 그대로 쓰고 임의로 좁히지 않으며, "
         "00:00~09:00 같은 이른 새벽은 후보로 만들지 않는다. "
         "다만 duration_minutes가 기본 업무시간에 담기지 않을 만큼 길면, 그 길이를 담을 수 있는 범위까지만 넓힌다. ",
+
+        "duration_minutes는 사용자가 명시하면 그대로 쓰고, 명시하지 않으면 일정 성격에 맞게 정한다. "
+        "관공서 방문이나 병원 진료처럼 이동과 대기가 필요한 일정은 넉넉히 잡고, 짧은 통화나 간단한 확인은 짧게 잡는다. ",
+        "각 날짜의 workday 범위에서 모든 멤버의 busy_rows와 겹치지 않는 구간을 찾아, "
+        "그 구간이 duration_minutes 이상이면 candidate_slots에 반드시 추가한다. 비워서 넘기지 않는다. ",
+        "조회된 바쁜 시간이 없거나 적더라도 마찬가지다. 요청한 날짜 범위와 시간대 안에서 후보를 직접 만들어 채운다. ",
+        "후보가 단 하나여도, 해당 시간대를 공동 일정 시간으로 '확정'하였다고 답하지 않고 후보 선택 근거만 안내한다. ",
 
         "각 후보의 reason에는 그 시간대가 왜 가능한지를 구체적으로 적는다. "
         "어떤 멤버의 어떤 일정을 피해 고른 시간인지, 그 앞뒤로 어떤 바쁜 시간이 있는지를 함께 밝혀 "
@@ -388,7 +388,7 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "여러 사람이 함께 모일 수 있는 공통 가능 시간 후보를 '검증'하는 도구. "
     "이 도구는 후보 시간을 대신 계산하거나 추천해 주지 않음. "
     "네가 직접 busy_rows(각 멤버의 이미 존재하는 일정)를 읽고 비어 있는 시간대를 골라 candidate_slots를 채워 넘겨야 함.\n"
-    "workday_start와 workday_end는 기본 업무시간일 뿐이며,"
+    "workday_start와 workday_end는 일정 탐색 시간(HH:MM)으로,"
     "'회의'와 같은 업무 활동이 아닌 일반 모임 활동이거나 사용자가 별도 시간대를 말하면 그 범위에서 후보를 검색. "
     "업무시간 밖이라는 이유로 가능한 시간을 배제하지 않아야 함.\n"
 
@@ -396,7 +396,7 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "- member_names: 공동 일정 시간 대상 외부 멤버 이름 목록.\n"
     "- date_from / date_to: 조회할 날짜 범위(YYYY-MM-DD).\n"
     "- duration_minutes: 필요한 공동 일정 길이(분 단위)(default = 60).\n"
-    "- workday_start / workday_end: 허용 업무 시간(HH:MM)(default = 09:00~18:00).\n"
+    "- workday_start / workday_end: 확정 일정을 계산하기 위해 고려할 시간(HH:MM)(default = 09:00~18:00).\n"
     "- limit: 최대 후보 수(default = 5).\n"
     "- busy_rows: collect_member_schedules output의 일정 row들.\n"
     "- candidate_slots: 네가 직접 고른 후보 목록. 각 후보는 다음 형식의 dict로 구성됨 :\n"
@@ -454,8 +454,8 @@ class FindCommonAvailableSlotsInput(BaseModel):
     date_from: str = Field(description="조회 시작 날짜. ISO datetime이면 날짜 부분만 사용")
     date_to: str = Field(description="조회 종료 날짜. ISO datetime이면 날짜 부분만 사용")
     duration_minutes: int = Field(default=60, ge=30, le=480, description="공동 일정 길이(분)")
-    workday_start: str = Field(default="09:00", description="허용 업무 시간 시작 HH:MM")
-    workday_end: str = Field(default="18:00", description="허용 업무 시간 종료 HH:MM")
+    workday_start: str = Field(default="09:00", description="일정 탐색 시작 시간(HH:MM). 사용자 요청에 맞게 확장 필요")
+    workday_end: str = Field(default="18:00", description="일정 탐색 종료 시간(HH:MM). 사용자 요청에 맞게 확장 필요")
     limit: int = Field(default=5, ge=1, le=20, description="최대 후보 수")
     busy_rows: list[dict[str, Any]] | None = Field(
         default=None,
