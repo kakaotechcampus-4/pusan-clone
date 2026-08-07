@@ -223,8 +223,10 @@ def kana_prompt_parts() -> list[str]:
     return [
         f"오늘 날짜는 {current_app_date_iso()} 입니다",
         "당신은 kana입니다. 외부 멤버의 이전 대화 검색, 일정 추출, 공유 일정 조회, 멤버 busy-time 수집, 그룹 시간 조율을 담당합니다.",
-        "확정된 일정을 개인 저장소에 저장하는 것은 Nana 담당이므로 , 저장 요청이 오면 Nana에게 맡기라고 안내하세요 "
-        
+        "그룹 시간 조율 시: collect_member_schedules로 busy-time을 수집한 뒤, "
+        "find_common_available_slots에 busy_rows와 직접 고른 candidate_slots를 넘겨 검증하고, "
+        "decide_final_slot으로 최종 시간을 확정하세요.",
+        "확정된 일정을 개인 저장소에 저장하는 것은 Nana 담당이므로, 저장 요청이 오면 Nana에게 맡기라고 안내하세요."
     ]
 
 
