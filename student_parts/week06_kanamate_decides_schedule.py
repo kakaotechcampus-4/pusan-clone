@@ -238,7 +238,9 @@ def kana_prompt_parts() -> list[str]:
         "두 tool은 시간을 계산해주지 않으니 candidate_slots를 비운 채로 호출하지 마. "
         "busy_rows를 직접 읽고 겹치지 않는 후보를 3개 이상 candidate_slots에 채운 다음, "
         "그중 하나를 골라 selected_index와 final_slot('YYYY-MM-DD HH:MM-HH:MM')으로 확정해. "
-        "근거로 쓴 busy_rows와 candidate_slots도 그대로 복사해 함께 넘겨.",
+        "근거로 쓴 busy_rows와 candidate_slots도 그대로 복사해 함께 넘겨. "
+        "조회 기간에 모두가 가능한 시간이 정말 없으면 같은 후보로 계속 재시도하지 말고, "
+        "decide_final_slot에 final_slot=null과 이유를 담아 기록한 뒤 왜 못 잡았는지 설명해.",
         "일정 저장과 개인 기록은 Nana 담당이니 저장 요청은 '내 담당이 아니다'라고 알리고 정한 시간과 근거만 전달해. "
         "답변에는 누가 언제 바쁜지와 그 시간을 고른 근거를 담고, 남의 시간을 통보하듯 확정하지 마. "
         "기록이 없으면 지어내지 말고 못 찾았다고 말해.",
@@ -324,8 +326,11 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "busy_rows는 앞선 tool output에서 그대로 복사해 함께 넘긴다."
     "date_from~date_to 범위 밖, workday_start 이전에 시작하거나 workday_end 이후에 끝남,"
     "end_time이 start_time보다 이르거나 같음, 길이가 duration_minutes보다 짧음, busy_rows와 겹치는 후보는 검증에서 버려진다. "
-    "반환값의 candidate_slots가 검증을 통과한 후보다. 비어 있으면 다른 시간대로 후보를 다시 골라 재호출한다. "
-    "이 결과로 답변을 끝내지 말고 반드시 decide_final_slot을 이어서 호출해 최종 시간을 확정한다."
+    "반환값의 candidate_slots가 검증을 통과한 후보다. 비어 있으면 next_action에 무엇을 할지 적혀 있으니 그대로 따른다. "
+    "후보를 넘기지 않아 비었으면 후보를 채워 재호출하고, 넘긴 후보가 전부 제외됐으면 아직 시도하지 않은 시간대가 "
+    "남았는지 보고 판단한다. 조회 기간에 모두가 가능한 시간이 실제로 없으면 같은 후보로 반복 호출하지 않는다. "
+    "어느 경우든 답변은 decide_final_slot을 호출한 뒤에 한다. 시간을 찾았으면 확정해서, "
+    "찾지 못했으면 final_slot=null로 기록해서 마무리한다."
 )
 
 
@@ -498,13 +503,26 @@ def find_common_available_slots(
         candidate_slots=candidate_slots,
         llm_reason=llm_reason,
     )
-    # 후보를 비워 호출하면 검증할 대상이 없습니다. 무엇이 빠졌는지 agent에게 알려 재호출하게 합니다.
+    # 후보가 없는 경우 처리
     if not payload["candidate_slots"]:
-        payload["next_action"] = (
-            "검증을 통과한 후보가 없습니다. 이 tool은 후보를 계산해주지 않으니, "
-            "busy_rows를 직접 읽고 겹치지 않는 시간을 candidate_slots에 채워 이 tool을 다시 호출하세요. "
-            "후보 없음으로 답변을 끝내지 마세요."
-        )
+        candidate_count = len(candidate_slots or [])
+        payload["rejected_candidate_count"] = candidate_count
+        # 1. 후보를 아예 안 넘긴 경우  -> 후보를 채워 재호출
+        if candidate_count == 0:
+            payload["empty_reason"] = "no_candidates_submitted"
+            payload["next_action"] = (
+                "candidate_slots가 비어 있어 검증할 후보가 없습니다. 이 tool은 후보를 계산해주지 않으니, "
+                "busy_rows를 직접 읽고 겹치지 않는 시간을 candidate_slots에 채워 이 tool을 다시 호출하세요."
+            )
+        # 2. 넘긴 후보가 전부 제외된 경우 -> 다른 시간대가 남았는지 판단하고, 없으면 미확정 처리
+        else:
+            payload["empty_reason"] = "all_candidates_rejected"
+            payload["next_action"] = (
+                f"넘긴 후보 {candidate_count}개가 모두 검증에서 제외됐습니다. "
+                "busy_rows를 다시 보고 아직 시도하지 않은 빈 시간대가 있으면 다른 후보로 한 번 더 호출하세요. "
+                "조회 기간에 모두가 가능한 시간이 실제로 없다면 같은 후보로 반복 호출하지 말고, "
+                "decide_final_slot에 final_slot=null, needs_agent_selection=true와 그 이유를 담아 마무리하세요."
+            )
     return json.dumps(payload, ensure_ascii=False)
 
 
