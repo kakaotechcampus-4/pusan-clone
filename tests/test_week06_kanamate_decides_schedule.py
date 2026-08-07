@@ -10,6 +10,7 @@ tool_call_id)만 가진 가벼운 stub 클래스로 흉내 냅니다.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -223,6 +224,23 @@ def test_find_common_available_slots_dict_collects_busy_rows_when_none(monkeypat
     assert "규진" in result["members"]
 
 
+def test_find_common_available_slots_dict_does_not_duplicate_na_when_already_included(monkeypatch):
+    """member_names에 이미 '나'가 들어있으면 find_common_available_slots_dict가 '나'를 또 추가해
+    중복시키면 안 됩니다. (깃허브 리뷰에서 지적받은 회귀 케이스)"""
+
+    spy = _SpyToolInvoke(json.dumps({"ok": True, "rows": []}, ensure_ascii=False))
+    monkeypatch.setattr(w6, "collect_member_schedules", spy)
+
+    result = w6.find_common_available_slots_dict(
+        member_names=["나", "규진"],
+        date_from="2026-07-07",
+        date_to="2026-07-07",
+    )
+
+    assert result["members"].count("나") == 1
+    assert result["members"] == ["나", "규진"]
+
+
 def test_find_common_available_slots_dict_skips_collection_when_busy_rows_given(monkeypatch):
     spy = _SpyToolInvoke("{}")
     monkeypatch.setattr(w6, "collect_member_schedules", spy)
@@ -236,6 +254,42 @@ def test_find_common_available_slots_dict_skips_collection_when_busy_rows_given(
 
     assert spy.calls == []
     assert result["busy_rows"] == [{"date": "2026-07-07", "start_time": "09:00", "end_time": "10:00"}]
+
+
+def test_find_common_available_slots_dict_does_not_duplicate_na_with_explicit_busy_rows(monkeypatch):
+    """busy_rows를 명시적으로 넘겨 collect_member_schedules를 건너뛰는 경로에서도, member_names에
+    이미 '나'가 있으면 중복 추가되면 안 됩니다."""
+
+    spy = _SpyToolInvoke("{}")
+    monkeypatch.setattr(w6, "collect_member_schedules", spy)
+
+    result = w6.find_common_available_slots_dict(
+        member_names=["나"],
+        date_from="2026-07-07",
+        date_to="2026-07-07",
+        busy_rows=[],
+    )
+
+    assert spy.calls == []
+    assert result["members"] == ["나"]
+
+
+def test_find_common_available_slots_dict_still_adds_na_when_busy_rows_given_without_na(monkeypatch):
+    """busy_rows를 명시적으로 넘겨 collect_member_schedules를 건너뛰는 경로에서도, member_names에
+    "나"가 아직 없으면 여전히 자동으로 "나"가 채워져야 합니다."""
+
+    spy = _SpyToolInvoke("{}")
+    monkeypatch.setattr(w6, "collect_member_schedules", spy)
+
+    result = w6.find_common_available_slots_dict(
+        member_names=["규진"],
+        date_from="2026-07-07",
+        date_to="2026-07-07",
+        busy_rows=[],
+    )
+
+    assert spy.calls == []
+    assert result["members"] == ["규진", "나"]
 
 
 def test_find_common_available_slots_dict_normalizes_iso_datetime_bounds(monkeypatch):
@@ -498,3 +552,310 @@ def test_agent_tool_names_returns_correct_lists_per_agent():
     assert w6.agent_tool_names("kana_agent") == [w6.tool_name(t) for t in w6.kana_tools()]
     assert w6.agent_tool_names("supervisor") == ["nana_agent", "kana_agent"]
     assert w6.agent_tool_names("unknown_agent") == []
+
+
+# ---------------------------------------------------------------------------
+# 7. extract_langchain_trace
+# ---------------------------------------------------------------------------
+
+
+def test_extract_langchain_trace_picks_selected_agent_and_inner_tool_names():
+    kana_tool_output = {
+        "selected_agent": "kana_agent",
+        "answer": "회의는 2026-07-07 09:00-10:00로 확정했습니다.",
+        "trace": [],
+        "inner_tool_names": ["collect_member_schedules", "find_common_available_slots"],
+        "final_slot_payload": None,
+        "final_decision_payload": None,
+    }
+    result = _build_agent_result(
+        tool_events=[("kana_agent", {"query": "회의 시간 잡아줘"}, kana_tool_output)],
+        final_text="회의는 2026-07-07 09:00-10:00로 확정했습니다.",
+    )
+
+    trace = w6.extract_langchain_trace(result)
+
+    assert trace["supervisor_selected_agent"] == "kana_agent"
+    assert trace["inner_tool_names"] == ["collect_member_schedules", "find_common_available_slots"]
+
+
+def test_extract_langchain_trace_picks_nana_agent_as_selected_agent():
+    """selected_agent 판별은 {"nana_agent", "kana_agent"} 집합으로 대칭 처리되므로,
+    kana_agent만이 아니라 nana_agent 쪽도 같은 방식으로 커버해야 합니다."""
+
+    nana_tool_output = {
+        "selected_agent": "nana_agent",
+        "answer": "병원 예약을 8월 6일 14시~15시로 잡았습니다.",
+        "trace": [],
+        "inner_tool_names": ["personal_create_schedule"],
+    }
+    result = _build_agent_result(
+        tool_events=[("nana_agent", {"query": "병원 예약 잡아줘"}, nana_tool_output)],
+        final_text="병원 예약을 8월 6일 14시~15시로 잡았습니다.",
+    )
+
+    trace = w6.extract_langchain_trace(result)
+
+    assert trace["supervisor_selected_agent"] == "nana_agent"
+    assert trace["inner_tool_names"] == ["personal_create_schedule"]
+
+
+def test_extract_langchain_trace_reads_final_slot_payload_when_present():
+    kana_tool_output = {
+        "selected_agent": "kana_agent",
+        "answer": "확정했습니다.",
+        "trace": [],
+        "inner_tool_names": [],
+        "final_slot_payload": {"final_slot": "2026-07-07 09:00-10:00", "needs_agent_selection": False},
+        "final_decision_payload": None,
+    }
+    result = _build_agent_result(
+        tool_events=[("kana_agent", {"query": "회의 확정"}, kana_tool_output)],
+        final_text="확정했습니다.",
+    )
+
+    trace = w6.extract_langchain_trace(result)
+
+    assert trace["final_slot_payload"] == {"final_slot": "2026-07-07 09:00-10:00", "needs_agent_selection": False}
+
+
+def test_extract_langchain_trace_falls_back_to_content_when_final_slot_payload_absent():
+    """content에 final_slot_payload 키 자체가 없고 최상위에 final_slot이 바로 있으면,
+    그 content 전체를 final_slot_payload로 사용해야 합니다."""
+
+    raw_content = {"final_slot": "2026-07-07 09:00-10:00", "reason": "확정"}
+    result = _build_agent_result(
+        tool_events=[("decide_final_slot", {}, raw_content)],
+        final_text="확정했습니다.",
+    )
+
+    trace = w6.extract_langchain_trace(result)
+
+    assert trace["final_slot_payload"] == raw_content
+
+
+def test_extract_langchain_trace_reads_final_decision_payload_when_present():
+    final_decision = {"title": "회의", "status": "confirmed"}
+    kana_tool_output = {
+        "selected_agent": "kana_agent",
+        "answer": "확정했습니다.",
+        "trace": [],
+        "inner_tool_names": [],
+        "final_slot_payload": None,
+        "final_decision_payload": final_decision,
+    }
+    result = _build_agent_result(
+        tool_events=[("kana_agent", {"query": "회의 확정"}, kana_tool_output)],
+        final_text="확정했습니다.",
+    )
+
+    trace = w6.extract_langchain_trace(result)
+
+    assert trace["final_decision_payload"] == final_decision
+
+
+def test_extract_langchain_trace_selected_agent_none_when_no_agent_tool_called():
+    result = _build_agent_result(tool_events=[], final_text="아무것도 호출하지 않았습니다.")
+
+    trace = w6.extract_langchain_trace(result)
+
+    assert trace["supervisor_selected_agent"] is None
+    assert trace["inner_tool_names"] == []
+    assert trace["final_slot_payload"] is None
+    assert trace["final_decision_payload"] is None
+
+
+# ---------------------------------------------------------------------------
+# 8. build_langchain_supervisor_agent / build_week_agent
+# ---------------------------------------------------------------------------
+
+
+def test_build_langchain_supervisor_agent_creates_once_and_reuses_singleton(monkeypatch):
+    calls = _install_stub_create_agent(monkeypatch, result={"messages": []})
+
+    first = w6.build_langchain_supervisor_agent()
+    second = w6.build_langchain_supervisor_agent()
+
+    assert first is second
+    assert len(calls) == 1
+    kwargs = calls[0]
+    assert [w6.tool_name(t) for t in kwargs["tools"]] == ["nana_agent", "kana_agent"]
+    assert kwargs["system_prompt"] == w6.supervisor_system_prompt()
+
+
+def test_build_week_agent_returns_same_singleton_as_supervisor_agent(monkeypatch):
+    calls = _install_stub_create_agent(monkeypatch, result={"messages": []})
+
+    supervisor = w6.build_langchain_supervisor_agent()
+    week_agent = w6.build_week_agent()
+
+    assert week_agent is supervisor
+    assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# 9. propose_group_schedule
+# ---------------------------------------------------------------------------
+
+
+def test_propose_group_schedule_status_confirmed_when_selected_slot_given():
+    result = json.loads(
+        w6.propose_group_schedule.invoke(
+            {
+                "title": "정기 회의",
+                "member_names": ["규진"],
+                "candidate_slots": [],
+                "selected_slot": {
+                    "date": "2026-07-07",
+                    "start_time": "09:00",
+                    "end_time": "10:00",
+                    "duration_minutes": 60,
+                    "reason": "합의",
+                },
+                "reason": "모두 합의",
+            }
+        )
+    )
+
+    final_decision = result["final_decision"]
+    assert final_decision["status"] == "confirmed"
+    assert final_decision["selected_slot"]["start_time"] == "09:00"
+
+
+def test_propose_group_schedule_status_needs_manual_review_when_no_selected_slot():
+    result = json.loads(
+        w6.propose_group_schedule.invoke(
+            {
+                "title": "정기 회의",
+                "member_names": ["규진"],
+                "candidate_slots": [],
+                "selected_slot": None,
+                "reason": "아직 미정",
+            }
+        )
+    )
+
+    final_decision = result["final_decision"]
+    assert final_decision["status"] == "needs_manual_review"
+    assert final_decision["selected_slot"] is None
+
+
+def test_propose_group_schedule_normalizes_candidate_slots_and_member_names():
+    result = json.loads(
+        w6.propose_group_schedule.invoke(
+            {
+                "title": "정기 회의",
+                "member_names": ["규진"],
+                "candidate_slots": [
+                    {
+                        "date": "2026-07-07",
+                        "start_time": "09:00",
+                        "end_time": "10:00",
+                        "duration_minutes": 60,
+                        "reason": "후보1",
+                    }
+                ],
+                "selected_slot": None,
+                "reason": None,
+            }
+        )
+    )
+
+    final_decision = result["final_decision"]
+    assert final_decision["candidate_slots"] == [
+        {
+            "date": "2026-07-07",
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "duration_minutes": 60,
+            "reason": "후보1",
+        }
+    ]
+    assert "규진" in final_decision["members"]
+
+
+# ---------------------------------------------------------------------------
+# 10. 프롬프트 무결성 회귀 테스트
+#
+# 이 파일의 커밋 히스토리(13839cb "프롬프트 오류 수정", 645d9a2 "잘못 입력된 프롬프트 삭제")에서
+# 실제로 발생했던 두 종류의 실수를 다시 잡기 위한 테스트입니다:
+#   - 문자열 리터럴 사이에 콤마를 빠뜨려 두 문장이 공백 없이 이어붙는 실수
+#   - Nana에게 자신이 갖고 있지도 않은 nana_agent/kana_agent tool 이름을 언급하는 실행 불가능한 지시를
+#     끼워 넣는 실수
+# ---------------------------------------------------------------------------
+
+
+# "다"로 끝나는 서술어 뒤에 공백/구두점 없이 영문 tool 이름 등이 바로 붙는 경우를 잡습니다.
+# 현재 모든 정상 프롬프트 문자열에서 "다" 뒤에는 항상 공백, 마침표, 조사(한글) 등이 오고
+# 영문/언더스코어가 곧바로 붙는 경우가 없으므로, 이 패턴이 매치되면 implicit string concatenation
+# 실수로 두 문장이 그대로 이어붙은 것으로 볼 수 있습니다.
+_GLUED_WORD_PATTERN = re.compile(r"다[a-zA-Z_]")
+
+
+def test_week06_prompt_parts_has_no_exact_duplicate_lines():
+    """같은 라우팅 규칙 문구가 실수로 두 번 이상 리스트에 들어가면 안 됩니다."""
+
+    parts = w6.week06_prompt_parts()
+
+    assert len(parts) == len(set(parts))
+
+
+def test_supervisor_system_prompt_words_not_glued_together():
+    """콤마 누락으로 인한 implicit string concatenation 때문에 두 문장이 공백 없이
+    이어붙어 "위임한다kana_agent를" 같은 글자 뭉침이 생기지 않았는지 확인합니다."""
+
+    sources = {
+        "supervisor_system_prompt": [w6.supervisor_system_prompt()],
+        "week06_prompt_parts": w6.week06_prompt_parts(),
+        "nana_prompt_parts": w6.nana_prompt_parts(),
+        "kana_prompt_parts": w6.kana_prompt_parts(),
+    }
+
+    for label, strings in sources.items():
+        for text in strings:
+            match = _GLUED_WORD_PATTERN.search(text)
+            if match is None:
+                continue
+            context = text[max(0, match.start() - 20) : match.end() + 20]
+            pytest.fail(f"{label}에서 단어가 이어붙은 것으로 의심되는 부분 발견: {match.group(0)!r} (주변 문맥: {context!r})")
+
+
+def test_supervisor_system_prompt_has_bidirectional_reassignment_rules():
+    """kana_agent가 거절했을 때 nana_agent로 재위임하는 규칙과, 그 반대로 nana_agent가 거절했을 때
+    kana_agent로 재위임하는 규칙이 둘 다 존재해야 합니다. 한쪽 방향만 있으면 반대 방향으로 잘못
+    라우팅됐을 때 거절 응답 그대로 끝나버립니다."""
+
+    prompt = w6.supervisor_system_prompt()
+
+    kana_rejected_routes_to_nana = re.search(r"kana_agent를 호출했는데[^.]*nana_agent로 위임한다", prompt)
+    nana_rejected_routes_to_kana = re.search(r"nana_agent를 호출했는데[^.]*kana_agent로 위임한다", prompt)
+
+    assert kana_rejected_routes_to_nana is not None
+    assert nana_rejected_routes_to_kana is not None
+
+
+def test_nana_prompt_parts_does_not_reference_agent_tool_names():
+    """Nana 하위 에이전트는 nana_agent/kana_agent tool을 갖고 있지 않으므로, "nana_agent를 두 번
+    호출하지 마라" 같은 실행 불가능한 지시를 Nana의 prompt에 끼워 넣으면 안 됩니다.
+    (645d9a2 "잘못 입력된 프롬프트 삭제"에서 실제로 있었던 실수)"""
+
+    nana_text = " ".join(w6.nana_prompt_parts())
+
+    assert "nana_agent" not in nana_text
+    assert "kana_agent" not in nana_text
+
+
+def test_week06_prompt_parts_routes_prescheduled_registration_to_nana_even_with_participants():
+    """날짜/시간이 이미 정해진 등록 요청은 참석자가 있어도 nana_agent로 위임한다는 규칙이
+    실제로 프롬프트에 존재해야 합니다. (13839cb "프롬프트 오류 수정"에서 이 규칙이 빠졌다가
+    다시 추가된 이력이 있음)"""
+
+    parts = w6.supervisor_system_prompt().split("\n\n")
+
+    matching = [
+        part
+        for part in parts
+        if "참석자" in part and ("정해진" in part or "확정" in part) and "nana_agent" in part
+    ]
+
+    assert matching, "참석자가 있어도 날짜/시간이 정해진 등록 요청은 nana_agent로 위임한다는 규칙을 찾지 못했습니다."
