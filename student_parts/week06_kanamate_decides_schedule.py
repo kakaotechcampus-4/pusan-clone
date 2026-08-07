@@ -308,6 +308,8 @@ def supervisor_system_prompt() -> str:
             "날짜와 시간이 이미 정해진 등록 요청은 참석자가 있어도 nana_agent로 위임한다.",
             "kana_agent를 호출했는데 그 답변이 '저장/등록은 자기 업무가 아니다'라는 취지로 개인 일정 저장을 "
             "거절하는 내용이면, nana_agent로 위임한다.",
+            "nana_agent를 호출했는데 그 답변이 '이건 카나(외부 일정 조율 담당)의 업무다'라는 취지로 "
+            "그룹 조율/외부 일정 조회를 거절하는 내용이면, kana_agent로 위임한다.",
         ]
     )
 
@@ -484,7 +486,7 @@ def find_common_available_slots_dict(
         busy_rows = collected.get("rows", [])
     
     return find_common_available_slots_payload(
-        member_names = [*normalized_members, "나"],
+        member_names = normalized_members if "나" in normalized_members else [*normalized_members, "나"],
         date_from = norm_from,
         date_to = norm_to,
         busy_rows = busy_rows,
