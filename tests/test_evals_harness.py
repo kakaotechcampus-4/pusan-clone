@@ -946,6 +946,7 @@ def test_only_representative_routing_cases_repeat_by_default():
         "week06.supervisor.timeless_group_meeting_request",
         "week06.supervisor.coordinate_then_save",
         "week06.supervisor.followup_reference_resolution",
+        "week06.supervisor.no_slot_save_request",
         "week06.nana.group_request_boundary",
         "week06.nana.personal_schedule_lookup",
         "week06.kana.collect_only",
@@ -1125,16 +1126,16 @@ class TestWeek06RoutingCaseDataset:
         cases = cases_week06_routing.WEEK06_ROUTING_CASES
         ids = [case["id"] for case in cases]
 
-        assert len(cases) == 20
+        assert len(cases) == 22
         assert len(ids) == len(set(ids)), "케이스 id가 중복됐다"
         assert {case["surface"] for case in cases} == {"supervisor", "kana", "nana"}
 
     def test_total_runs_match_the_planned_budget(self):
-        """대표 13개는 3회, 나머지 7개는 1회 = 46회입니다."""
+        """대표 14개는 3회, 나머지 8개는 1회 = 50회입니다."""
 
         cases = cases_week06_routing.WEEK06_ROUTING_CASES
 
-        assert sum(case.get("repeats", 1) for case in cases) == 46
+        assert sum(case.get("repeats", 1) for case in cases) == 50
 
     def test_requirement_cases_and_strong_expectations_are_declared(self):
         cases = {
