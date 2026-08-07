@@ -570,6 +570,7 @@ def kana_agent(query: str) -> str:
     return json.dumps({
         "ok": True,
         "tool_name": "kana_agent",
+        "selected_agent": "kana_agent",
         "answer": extract_final_text(result),
         "trace": events,
         "inner_tool_names": _tool_call_names(events),
