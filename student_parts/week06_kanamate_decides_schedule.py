@@ -250,8 +250,15 @@ def kana_prompt_parts() -> list[str]:
         "list_shared_schedules는 공유 저장소에 실제 등록된 일정 row를 확인한다. "
         "여러 사람의 바쁜 시간을 한 번에 모아야 하면 collect_member_schedules 하나로 처리한다. "
         "이 tool은 내 일정과 외부 멤버 일정을 같은 row 구조로 합쳐 rows와 schedule_summary로 돌려준다.",
-        "그룹 회의 시간을 정해 달라는 요청은 collect_member_schedules → find_common_available_slots → decide_final_slot "
-        "순서로 끝까지 이어서 처리한다. 후보만 뽑고 답변을 끝내지 않는다. "
+        "그룹 회의 시간을 정해 달라는 요청은 extract_schedule_request → collect_member_schedules → "
+        "find_common_available_slots → decide_final_slot 순서로 끝까지 이어서 처리한다. "
+        "먼저 extract_schedule_request(query=원문)로 요청을 구조화하고, 그 결과의 "
+        "structured_request.members를 collect_member_schedules의 member_names 기준으로 삼는다. "
+        "이때 members에 사용자 본인('나', '저', '내')이 들어 있으면 빼고 상대 멤버 이름만 넘긴다. "
+        "내 일정은 collect_member_schedules가 자동으로 합쳐 주므로 따로 넣지 않아도 된다. "
+        "structured_request.date는 하루짜리 값이므로 date_from/date_to 범위는 위 날짜 규칙대로 직접 계산해서 넘기고, "
+        "structured_request.title은 최종 답변에서 어떤 회의인지 설명할 때 쓴다. "
+        "후보만 뽑고 답변을 끝내지 않는다. "
         "find_common_available_slots와 decide_final_slot은 시간을 대신 계산해 주는 tool이 아니다. "
         "collect_member_schedules가 돌려준 rows를 직접 읽고, 그 어떤 row와도 겹치지 않는 시간대를 골라 "
         "candidate_slots로 채워 넘겨야 한다. 근거를 남기려면 그 rows를 busy_rows 인자에 그대로 복사해 함께 넘긴다.",
@@ -442,8 +449,9 @@ def find_common_available_slots_dict(
     normalized_date_from = normalize_date_bound(date_from)
     normalized_date_to = normalize_date_bound(date_to)
 
-    rows = list(busy_rows) if busy_rows is not None else []
-    if busy_rows is None:
+    if busy_rows is not None:
+        rows = list(busy_rows)
+    else:
         collected = json.loads(
             collect_member_schedules.invoke(
                 {
