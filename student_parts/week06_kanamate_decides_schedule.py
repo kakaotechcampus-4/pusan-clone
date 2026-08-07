@@ -538,6 +538,7 @@ def nana_agent(query: str) -> str:
     return json.dumps({
         "ok": True,
         "tool_name": "nana_agent",
+        "selected_agent": "nana_agent",
         "answer": extract_final_text(result),
         "trace": events,
         "inner_tool_names": _tool_call_names(events),
