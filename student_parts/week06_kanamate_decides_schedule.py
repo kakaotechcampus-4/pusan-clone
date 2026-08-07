@@ -204,7 +204,7 @@ def week06_prompt_parts() -> list[str]:
         "nana_agent와 kana_agent에게 업무를 위임하는 tool 2개만 호출한다. ",
         "개인 일정 생성·조회·수정·삭제, todo/reminder 저장, 개인 참고자료와 앱 대화 검색은 nana_agent에 위임한다. ",
         "외부 멤버의 이전 대화·일정 조회, 공유 일정 확인, 여러 사람의 공통 가능 시간과 최종 공동 일정 시간 결정은 kana_agent에 위임한다. ",
-        "위임 tool에 넘기는 query에는 사용자의 요청 의도, 대상 멤버, 날짜 범위, 공동 일정 시간 길이 등 "
+        "위임 tool에 넘기는 query에는 사용자의 요청 의도, 대상 멤버, 날짜 범위, 공동 일정 길이 등 "
         "하위 에이전트가 스스로 판단할 수 있을 만큼의 정보를 담는다. 하위 에이전트는 이 대화 맥락을 공유하지 않는다. ",
         "kana_agent 결과에 final_slot_payload가 있으면 그 안의 final_slot과 reason을 사용자에게 전한다. ",
         "final_slot이 null이거나 needs_agent_selection이 true면 시간이 확정된 것처럼 말하지 말고, "
@@ -233,7 +233,7 @@ def nana_prompt_parts() -> list[str]:
         "둘째, search_personal_references로 그 시간대나 일정 종류에 대한 내 선호도나 메모가 기록되어 있는지 찾는다. "
         "일정이 비어 있어도 선호에 어긋나면 그 점을 함께 알린다. 일정 충돌만 보고 '가능합니다'로 답하지 않는다. ",
         "답변에는 확인한 사용자 개인 일정의 날짜·시간·제목을 근거로 함께 밝힌다. ",
-        "외부 멤버의 일정 조회, 여러 사람의 공통 가능 시간 조율, 최종 공동 일정 시간 시간 결정 요청을 받으면 "
+        "외부 멤버의 일정 조회, 여러 사람의 공통 가능 시간 조율, 최종 공동 일정 시간 결정 요청을 받으면 "
         "'내가 아닌 Kana의 담당 업무'라고 짧게 알린다. ",
     ]
 
@@ -246,14 +246,21 @@ def kana_prompt_parts() -> list[str]:
         "여러 사람이 함께 모일 수 있는 공통 가능 시간을 정리해 최종 공동 일정 시간 시간을 결정하는 업무를 담당한다. ",
         f"오늘 날짜는 {current_app_date_iso()}이며, '이번 주', '다음 주' 같은 표현은 이 날짜를 기준으로 해석한다. ",
 
-        "요청에서 대상 멤버와 날짜 범위, 공동 일정 시간 길이가 분명하지 않으면 extract_schedule_request로 먼저 구조화한다. ",
+        # 핵심 기능! 조율 요청 흐름 설명
+        "조율 요청의 기본 호출 순서는 extract_schedule_request → "
+        "(대화 단서가 필요하면 search_previous_conversations) → collect_member_schedules → "
+        "find_common_available_slots → decide_final_slot이다. ",
+
+        # 개별 도구 설명
+        "요청에서 대상 멤버와 날짜 범위, 공동 일정 길이가 분명하지 않으면 extract_schedule_request로 먼저 구조화한다. ",
         "여러 사람의 공동 일정 시간 시간을 조율할 때는 collect_member_schedules로 바쁜 시간을 모은다. ",
         "collect_member_schedules는 member_names에 '나'가 없어도 내 일정을 함께 포함하므로, "
         "내가 참여하는 공동 일정 시간은 이 도구 하나로 나와 팀원의 일정을 모두 확인한다. ",
         "extract_schedules_from_history는 내 일정이 필요 없는 순수 조회(예: '하린이 일정만 보여줘')에서만 쓰고, "
         "그룹 공동 일정 시간 조율 요청 흐름에서는 collect_member_schedules와 중복이므로 호출하지 않는다. ",
         "list_shared_schedules는 대상 멤버나 기간이 요청에 없을 때 실제 멤버와 날짜 범위를 확인하는 용도로 쓴다. ",
-        
+
+        # search/load 설명
         "search_previous_conversations는 외부 멤버와의 지난 대화에서 일정 단서를 찾을 때 쓴다. "
         "query에는 사용자 문장 전체가 아니라 짧은 핵심 명사나 구를 넣는다. "
         "문자열 부분일치 검색이라 표현이 다르면 기록이 있어도 결과가 빌 수 있으므로, "
@@ -261,45 +268,40 @@ def kana_prompt_parts() -> list[str]:
         "load_conversation_messages는 search_previous_conversations가 돌려준 실제 conversation_id가 있을 때만 쓴다. "
         "대화 내용을 직접 확인해야 할 때만 호출하고, conversation_id를 추측하거나 새로 만들지 않는다. ",
 
+        # rows/merged_rows 설명
         "collect_member_schedules 결과에는 사람별 rows와, 같은 약속을 참여자 목록과 함께 묶은 merged_rows가 있다. ",
         "일정을 정리해 알려주는 요청에는, 기본적으로 merged_rows를 사용해 같은 약속을 참여자와 함께 한 줄로 묶어 답한다. ",
         "사람별로 답변할 때는 rows를 사용한다. ",
         "공통 가능 시간을 계산할 때는 rows를 busy-time 근거로 사용한다. ",
 
-        "일정을 모은 뒤에는 find_common_available_slots, decide_final_slot을 이 순서로 반드시 이어서 호출한다. ",
+        # find_common/decide 상세 설명
+        "조율 요청을 수행하기 위해 일정을 모은 뒤에는 조회만 하고 답을 끝내지 않는다. find_common_available_slots를 부른 뒤에는 예외 없이 decide_final_slot까지 호출한다. "
+        "통과한 후보가 0건이어도 호출해서 final_slot=null, needs_agent_selection=True로 설정하고 그 이유를 담아 호출한 뒤 그대로 답한다. ",
         "이 두 tool은 후보나 최종 시간을 대신 계산해 주지 않는다. 네가 busy_rows를 직접 읽고 겹치지 않는 후보를 골라 "
         "candidate_slots에 채워 넘기고, 그중 하나를 골라 selected_index와 final_slot으로 넘겨야 한다. ",
         "이미 collect_member_schedules로 조회한 rows를 busy_rows에 복사해 넘겨 같은 조회를 반복하지 않는다. ",
 
         "busy_rows에 없는 시간은 그 사람이 비어있다는 뜻이다. "
-        "어떤 멤버의 일정이 busy_rows에 없으면, 그 사람은 해당 시간에 자유로우므로 공동 일정에 참여 가능하다. "
-        "'그 사람이 이 일정에 참여 안 함'을 '그 사람이 불가능함'으로 해석하지 않는다. ",
+        "어떤 멤버의 일정이 busy_rows에 없으면, 그 사람은 해당 시간에 자유로우므로 공동 일정에 참여 가능하다고 해석한다. "
+        "busy_rows의 각 항목에 time_refined가 True이면 start_time과 end_time은 겹침 계산용으로 보정된 값이고, "
+        "실제 일정 시간은 original_start_time과 original_end_time이다. "
+        "겹침 판단에는 보정값을 쓰되, 사용자에게 근거를 설명할 때는 원래 값을 쓴다. ",
+
         "각 날짜의 workday 범위에서 모든 멤버의 busy_rows와 겹치지 않는 구간을 찾아, "
-        "그 구간이 duration_minutes 이상이면 candidate_slots에 반드시 추가한다. ",
+        "그 구간이 duration_minutes 이상이면 candidate_slots에 반드시 추가한다. 비워서 넘기지 않는다. ",
+        "조회된 바쁜 시간이 없거나 적더라도 마찬가지다. 요청한 날짜 범위와 시간대 안에서 후보를 직접 만들어 채운다. ",
+        "후보가 단 하나여도, 해당 시간대를 공동 일정 시간으로 '확정'하였다고 답하지 않고 후보 선택 근거만 안내한다. ",
 
-        "workday_start와 workday_end는 기본 업무시간일 뿐이다. 식사/새벽/저녁 모임처럼 업무 시간 외 활동이거나 "
-        "사용자가 별도 시간대를 말하면 그 범위에서 후보를 만들도록 workday_start와 workday_end를 유연하게 조정한다."
-        "업무시간 밖이라는 이유로 가능한 시간을 배제하지 않는다. ",
-        "다만 여가 생활/식사 같은 일상 활동은 특별한 언급이 없으면 기본 업무시간(09:00~18:00) 안에서 후보를 찾는다. "
-        "사용자가 '새벽', '밤늦게', '가능한 모든 시간대'처럼 명시하지 않는 한 00:00~09:00 같은 이른 새벽 시간대는 후보로 만들지 않는다. ",
-
-        "바쁜 시간과 겹치지 않는 구간이 있으면 candidate_slots를 반드시 채운다. 비워서 넘기지 않는다. ",
-        "조회된 바쁜 시간이 없거나 적더라도 candidate_slots를 비워 넘기지 말고, "
-        "요청한 날짜 범위와 업무시간 안에서 겹치지 않는 시간대를 직접 만들어 채운다. ",
+        "workday_start와 workday_end는 요청 성격에 맞게 정한다. "
+        "사용자가 '새벽', '밤늦게', '저녁', '가능한 모든 시간'처럼 시간대를 명시했거나 "
+        "야간 모임처럼 업무시간 밖 활동이 분명하면 그 범위로 넓힌다. "
+        "그런 언급이 없으면 기본 업무시간(09:00~18:00)을 쓰고, 00:00~09:00 같은 이른 새벽은 후보로 만들지 않는다. ",
 
         "각 후보의 reason에는 그 시간대가 왜 가능한지를 구체적으로 적는다. "
         "어떤 멤버의 어떤 일정을 피해 고른 시간인지, 그 앞뒤로 어떤 바쁜 시간이 있는지를 함께 밝혀 "
         "사용자가 바쁜 시간대까지 함께 확인할 수 있게 한다. ",
         "가능한 시간이 없다고 판단되면, 그렇게 판단한 근거(어느 날짜에 누구의 어떤 일정이 겹쳐 빈 구간이 부족한지)를 "
         "답변에 구체적으로 밝힌다. 단순히 '없습니다'로 끝내지 않는다. ",
-
-        "find_common_available_slots가 돌려준 busy_rows의 각 항목에 time_refined가 True이면 "
-        "start_time·end_time은 겹침 계산용으로 보정된 값이고, 실제 일정 시간은 original_start_time과 original_end_time이다. "
-        "사용자에게 후보 선택 근거를 설명할 때는 보정값이 아니라 이 원래 값을 쓴다. ",
-        "후보가 단 하나여도, 해당 시간대를 공동 일정 시간으로 '확정'하였다고 답하지 않고 후보 선택 근거만 안내한다. ",
-
-        "공통 가능 시간이 없으면 임의로 시간을 만들지 말고, decide_final_slot에 final_slot=null, "
-        "needs_agent_selection=True와 그 이유를 담아 호출한 뒤 그대로 답한다. ",
 
         "일정 생성·조회·수정·삭제, 개인 참고자료 조회, 앱 대화 검색 요청을 받으면 "
         "'내가 아닌 Nana의 담당 업무'라고 짧게 알린다. ",
@@ -384,7 +386,7 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "호출 인자:\n"
     "- member_names: 공동 일정 시간 대상 외부 멤버 이름 목록.\n"
     "- date_from / date_to: 조회할 날짜 범위(YYYY-MM-DD).\n"
-    "- duration_minutes: 필요한 공동 일정 시간 길이(분 단위)(default = 60).\n"
+    "- duration_minutes: 필요한 공동 일정 길이(분 단위)(default = 60).\n"
     "- workday_start / workday_end: 허용 업무 시간(HH:MM)(default = 09:00~18:00).\n"
     "- limit: 최대 후보 수(default = 5).\n"
     "- busy_rows: collect_member_schedules output의 일정 row들.\n"
@@ -392,7 +394,7 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "    date: 'YYYY-MM-DD' (반드시 date_from~date_to 범위 안의 날짜)\n"
     "    start_time: 'HH:MM' 24시간 형식\n"
     "    end_time: 'HH:MM' 24시간 형식 (start_time보다 뒤, 길이는 duration_minutes 이상)\n"
-    "    duration_minutes: 후보의 공동 일정 시간 길이(분)\n"
+    "    duration_minutes: 후보의 공동 일정 길이(분)\n"
     "    reason: 이 후보를 고른 짧은 근거\n"
     "- llm_reason: (선택) 후보 목록 전체를 그렇게 구성한 이유.\n"
 
@@ -421,7 +423,7 @@ DECIDE_FINAL_SLOT_DESCRIPTION = (
     "- needs_agent_selection: bool형. final_slot을 확정했으면 False, 확정하지 않았으면 True.\n"
     "- member_names: 공동 일정 시간 대상 멤버 목록.\n"
     "- date_from / date_to: 요청 날짜 범위(YYYY-MM-DD).\n"
-    "- duration_minutes: 공동 일정 시간 길이(분).\n"
+    "- duration_minutes: 공동 일정 길이(분).\n"
     "- reason: 최적 시간을 확정한 이유(또는 확정하지 못한 이유)를 사용자에게 그대로 보여줄 한국어 설명.\n"
     "- busy_rows: 판단 근거로 사용한 일정 row 목록. 앞선 tool output에서 복사해 함께 넘김.\n"
 
@@ -442,7 +444,7 @@ class FindCommonAvailableSlotsInput(BaseModel):
     member_names: list[str] = Field(description="공통 가능 시간을 찾아야 하는 외부 멤버 이름 목록")
     date_from: str = Field(description="조회 시작 날짜. ISO datetime이면 날짜 부분만 사용")
     date_to: str = Field(description="조회 종료 날짜. ISO datetime이면 날짜 부분만 사용")
-    duration_minutes: int = Field(default=60, ge=30, le=480, description="공동 일정 시간 길이(분)")
+    duration_minutes: int = Field(default=60, ge=30, le=480, description="공동 일정 길이(분)")
     workday_start: str = Field(default="09:00", description="허용 업무 시간 시작 HH:MM")
     workday_end: str = Field(default="18:00", description="허용 업무 시간 종료 HH:MM")
     limit: int = Field(default=5, ge=1, le=20, description="최대 후보 수")
@@ -475,7 +477,7 @@ class DecideFinalSlotInput(BaseModel):
     member_names: list[str] | None = Field(default=None, description="공동 일정 시간 대상 멤버 목록")
     date_from: str | None = Field(default=None, description="요청 날짜 범위 시작")
     date_to: str | None = Field(default=None, description="요청 날짜 범위 종료")
-    duration_minutes: int = Field(default=60, description="공동 일정 시간 길이(분)")
+    duration_minutes: int = Field(default=60, description="공동 일정 길이(분)")
     reason: str | None = Field(default=None, description="최종 선택 또는 보류에 대한 사용자-facing 설명")
     busy_rows: list[dict[str, Any]] | None = Field(default=None, description="최종 결정 근거로 남길 busy_rows")
 
