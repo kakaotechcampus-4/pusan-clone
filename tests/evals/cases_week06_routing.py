@@ -66,9 +66,31 @@ def supervisor_case(
     selected_agent: str,
     answer: str,
     judge: dict[str, Any],
+    other_agent_answer: str = "그 일은 제 담당이 아니어서 처리하지 못했습니다.",
+    first_hop_is_ambiguous: bool = False,
     repeats: int = 1,
     held_out: bool = False,
 ) -> dict[str, Any]:
+    """담당이 하나뿐인 요청의 케이스입니다. 위임이 한 번인지와 어디로 갔는지만 봅니다.
+
+    query 문자열은 검사하지 않습니다. Supervisor 프롬프트는 원문을 글자 그대로 넘기라고
+    요구하지 않고, 대화를 못 보는 하위 에이전트가 처리할 수 있게 다시 쓰라고 요구합니다.
+    그래서 글자 일치는 무손실 재표현까지 실패로 잡고, 키워드 포함은 표기 정규화("8월 3일" ->
+    "2026-08-03")를 결함으로 오인합니다. query가 실제로 자기완결적인지는 judge가 artifact의
+    tool_trace를 읽고 판정합니다.
+
+    빗나간 쪽 에이전트에도 fixture를 둡니다. 없으면 잘못 위임했을 때 mock이 `ok: false`를
+    돌려주고, Supervisor는 "담당이 아니다"가 아니라 "도구가 실패했다"를 보게 되어 프롬프트가
+    요구하는 라우팅 정정이 아예 실행되지 않습니다. 그러면 실패 사유가 "fixture가 없다"로 덮여
+    오라우팅이 정정 가능한 것이었는지조차 알 수 없게 됩니다.
+
+    `first_hop_is_ambiguous`는 **사용자 문구만으로는 담당을 가릴 수 없는** 요청에 씁니다.
+    Supervisor에게는 조회 도구가 없어 등장인물이 외부 멤버인지 확인할 방법이 없으므로, 그런
+    요청에서 첫 위임이 빗나가는 것은 판단 실패가 아니라 정보 부족입니다. 정정 메커니즘이 바로
+    그 경우를 위한 것이라 첫 홉을 실패로 잡지 않고, 대신 결국 맞는 담당이 처리했는지를 봅니다.
+    문구만으로 담당이 확정되는 요청에는 절대 쓰지 마세요. 그건 잡아야 할 라우팅 결함입니다.
+    """
+
     other_agent = "kana_agent" if selected_agent == "nana_agent" else "nana_agent"
     return {
         "id": case_id,
@@ -80,16 +102,17 @@ def supervisor_case(
         "user": user,
         "tool_results": {
             selected_agent: delegated_result(selected_agent, answer),
+            other_agent: delegated_result(other_agent, other_agent_answer),
         },
         "expect": {
             "called": [selected_agent],
-            "not_called": [other_agent],
-            "max_calls": {selected_agent: 1},
-            "args": {
-                selected_agent: {
-                    "query": {"equals": user},
-                }
-            },
+            # 담당이 명확한 요청이므로 다른 에이전트 호출은 라우팅 실패이고, 위임을 여러 번
+            # 허용하는 프롬프트에서도 마진을 줄 대상이 아닙니다.
+            **(
+                {"max_calls": {selected_agent: 1, other_agent: 1}}
+                if first_hop_is_ambiguous
+                else {"not_called": [other_agent], "max_calls": {selected_agent: 1}}
+            ),
         },
         "judge": judge,
     }
@@ -102,8 +125,24 @@ def supervisor_case(
 # 한다"는 판정 규칙과 충돌해 판정이 임의로 흔들립니다. 그래서 fixture가 실제 사실을 담고,
 # Supervisor가 그것을 **왜곡·추가 없이 전달하는지**를 봅니다.
 SUPERVISOR_ROLE_EXPECTATION = (
-    "Supervisor는 하위 에이전트를 정확히 하나만 한 번 호출하고, 그 결과의 answer만 근거로 답한다. "
-    "직접 저장소를 다루거나 결과에 없는 사실을 새로 만들지 않는다."
+    "담당이 하나뿐인 요청이므로 Supervisor는 하위 에이전트 하나에 한 번만 위임하고, 그 결과의 "
+    "answer만 근거로 답한다. 직접 저장소를 다루거나 결과에 없는 사실을 새로 만들지 않는다."
+)
+
+# 담당이 다른 일이 섞여 있거나 첫 위임이 빗나간 경우의 역할 기준입니다.
+#
+# 판정 대상이 최종 답변만이 아니라 **위임 query**까지라는 점이 위와 다릅니다. 하위 에이전트는
+# 대화도 앞선 위임 결과도 볼 수 없고 query 문장 하나만 받으므로, 이어지는 위임에서 앞선 결과의
+# 날짜·시각이 query에 살아 있는지가 곧 그 위임이 성립하는지다. judge는 artifact의 tool_trace에서
+# 실제로 넘어간 query를 읽을 수 있으므로(`llm_judge.py`), 표기 차이는 감안하고 의미로 판정한다.
+SUPERVISOR_HANDOFF_ROLE_EXPECTATION = (
+    "Supervisor는 요청에 담당이 다른 일이 섞여 있으면 일 단위로 나눠 차례대로 위임해 끝까지 처리한다. "
+    "하위 에이전트는 대화도 앞선 위임 결과도 볼 수 없으므로, 이어지는 위임의 query에는 앞선 결과에서 "
+    "확인된 날짜와 시각을 채워 넘겨야 한다. 표기 방식은 달라도 되지만 값이 빠지거나 범위로 "
+    "뭉뚱그려지면 안 된다. "
+    "답할 때는 각 하위 answer의 결과를 합쳐 구체적인 날짜와 시각을 그대로 전하고, 처리하지 못한 일이 "
+    "있으면 숨기지 않는다. "
+    "Nana, Kana, 하위 에이전트 같은 내부 구성 요소나 담당 구분은 사용자에게 노출하지 않는다."
 )
 
 BUSY_ROWS = [
@@ -269,6 +308,12 @@ WEEK06_ROUTING_CASES = [
         user="지난 철수와의 대화에서 출장 가능 날짜를 확인해줘.",
         selected_agent="kana_agent",
         answer="철수는 8월 17일부터 19일까지 출장이 가능하다고 했습니다.",
+        # "지난 철수와의 대화"는 Nana가 맡는 *앱 안의 과거 대화*와 Kana가 맡는 *외부 멤버와 나눈
+        # 대화* 어느 쪽으로도 읽힙니다. 가르려면 철수가 외부 멤버인지 알아야 하는데 Supervisor에게는
+        # 멤버를 확인할 도구가 없습니다. 실측에서도 3/3 Nana를 먼저 부른 뒤 정정으로 Kana에 넘겨
+        # 정답을 냈습니다. 첫 홉을 실패로 잡지 않고 결국 Kana가 처리했는지를 봅니다.
+        first_hop_is_ambiguous=True,
+        repeats=3,
         judge={
             "reference_answer": "철수는 8월 17일부터 19일까지 출장이 가능하다고 했습니다.",
             "required_facts": ["철수", "8월 17일", "19일", "출장 가능"],
@@ -301,6 +346,175 @@ WEEK06_ROUTING_CASES = [
             "role_expectation": SUPERVISOR_ROLE_EXPECTATION,
         },
     ),
+    # 근거: "다음 요청은 nana_agent에 위임한다 - 사용자의 개인 일정 생성, 조회, 수정, 삭제" 대
+    # "kana_agent에 위임한다 - ... 공통 가능 시간 탐색, 그룹 일정 조율"의 경계입니다.
+    #
+    # 참석자에 외부 멤버가 있지만 사용자가 시간을 이미 정했으므로 탐색할 공통 시간이 없습니다.
+    # 즉 조율이 아니라 일정 생성이고 Nana 담당입니다. "그룹 일정 조율"이라는 문구만 보고
+    # 외부 멤버 이름이 등장했다는 이유로 kana_agent를 고르면 이 케이스가 실패합니다.
+    supervisor_case(
+        case_id="week06.supervisor.group_save_with_explicit_time",
+        group="Supervisor 그룹 일정 저장 위임",
+        user="8월 3일 오후 3시에 철수랑 미팅 일정 저장해줘.",
+        selected_agent="nana_agent",
+        answer="8월 3일 오후 3시 철수와의 미팅을 일정으로 저장했습니다.",
+        repeats=3,
+        held_out=True,
+        judge={
+            "reference_answer": "8월 3일 오후 3시 철수와의 미팅 일정을 저장했습니다.",
+            "required_facts": ["8월 3일", "오후 3시", "철수", "미팅", "저장 완료"],
+            "forbidden_claims": [
+                "Supervisor가 직접 저장소에 일정을 저장했다",
+                "8월 3일 오후 3시가 아닌 다른 날짜나 시간을 말한다",
+                "하위 에이전트 결과에 없는 장소나 참석자를 덧붙인다",
+            ],
+            "role_expectation": SUPERVISOR_ROLE_EXPECTATION,
+        },
+    ),
+    # 근거: 리뷰에서 제기된 애매한 라우팅 케이스입니다. "잡아줘"는 저장까지 요구하는 말로도,
+    # 시간을 맞춰 달라는 말로도 읽힙니다.
+    #
+    # 그래서 "저장까지 도달해야 통과"로 두지 않습니다. 조율 결과를 전하고 등록할지 확인하는 답변도
+    # 정답입니다. 저장은 되돌리기 어려운 변경이라 사용자가 시각을 확인하지 않은 상태에서 한 번 묻는
+    # 편이 오히려 안전하고, 애매한 요청에 단일 정답을 박으면 프롬프트가 케이스에 맞춰 굽습니다.
+    # 실제로 무엇을 했는지는 judge가 tool_trace와 답변을 함께 읽고 판정합니다.
+    #
+    # max_calls에 마진을 두는 이유는 첫 위임이 빗나가면 정정 위임이 한 번 더 필요하기 때문입니다.
+    # 그것까지 실패로 잡으면 프롬프트가 요구하는 라우팅 정정 자체가 금지됩니다.
+    {
+        "id": "week06.supervisor.timeless_group_meeting_request",
+        "surface": "supervisor",
+        "group": "Supervisor 애매한 그룹 요청 위임",
+        "rule": "misrouted-delegation-recovery",
+        "repeats": 3,
+        "held_out": True,
+        "user": "철수랑 내일 미팅 잡아줘.",
+        "tool_results": {
+            "kana_agent": delegated_result(
+                "kana_agent",
+                "철수의 7월 27일 일정을 확인했습니다. 오전 10시부터 11시까지는 비어 있습니다. "
+                "다만 일정을 저장하는 것은 제 담당이 아니어서 아직 등록되지 않았습니다.",
+            ),
+            "nana_agent": delegated_result(
+                "nana_agent",
+                "7월 27일 오전 10시부터 11시까지 철수와의 미팅을 일정으로 저장했습니다.",
+            ),
+        },
+        "expect": {
+            "called_any": ["kana_agent", "nana_agent"],
+            "max_calls": {"kana_agent": 2, "nana_agent": 2},
+        },
+        "judge": {
+            "reference_answer": (
+                "내일 7월 27일 오전 10시부터 11시까지 철수와 만날 수 있습니다. "
+                "이 시간으로 일정을 등록해 드릴까요?"
+            ),
+            "required_facts": ["철수", "7월 27일(내일)", "오전 10시~11시"],
+            "forbidden_claims": [
+                "Nana, Kana, 하위 에이전트 같은 내부 구성 요소나 담당 구분을 사용자에게 노출한다",
+                "하위 결과에 저장 성공이 없는데 일정이 등록됐다고 말한다",
+                "조율된 오전 10시~11시가 아닌 다른 시각을 제시한다",
+                "등록을 대신 해 줄 수 없다며 사용자에게 직접 잡으라고 넘긴다",
+                "가능한 시각을 알리지 않은 채 되묻기만 한다",
+            ],
+            "role_expectation": SUPERVISOR_HANDOFF_ROLE_EXPECTATION,
+        },
+    },
+    # 근거: 리뷰에서 제기된 "Kana가 저장은 Nana 담당이라고 답하면 supervisor가 막힌다"의 정면 대응입니다.
+    #
+    # 요청 자체는 kana로 명확히 가고(시간 탐색이 앞선다), Kana가 뒷부분(등록)을 거절합니다.
+    # 여기서 봐야 할 핵심은 **2차 위임 query에 조율된 날짜가 살아 있는지**입니다. 하위 에이전트는
+    # 앞선 위임 결과를 볼 수 없으므로, "8월 3일"이 빠진 채 넘어가면 저장이 성립하지 않습니다.
+    # 실제로 고치기 전 측정에서 Supervisor는 이 날짜를 3회 중 2회 잃어버렸습니다.
+    #
+    # nana_agent만 max_calls 1로 조입니다. 저장은 되돌리기 어려운 변경이라 중복 위임이 실제 피해가
+    # 되지만, kana 쪽 재조회는 낭비일 뿐이라 마진을 둡니다.
+    {
+        "id": "week06.supervisor.coordinate_then_save",
+        "surface": "supervisor",
+        "group": "Supervisor 조율 후 저장 인계",
+        "rule": "multi-step-delegation",
+        "repeats": 3,
+        "held_out": True,
+        "user": "철수랑 8월 첫째 주에 만날 시간 찾아서 일정으로 등록까지 해줘.",
+        "tool_results": {
+            "kana_agent": delegated_result(
+                "kana_agent",
+                "철수와의 공통 가능 시간을 8월 3일 오전 10시부터 11시로 조율했습니다. "
+                "다만 일정 저장은 제 담당이 아니어서 아직 등록되지 않았습니다.",
+            ),
+            "nana_agent": delegated_result(
+                "nana_agent",
+                "8월 3일 오전 10시부터 11시까지 철수와의 미팅을 일정으로 저장했습니다.",
+            ),
+        },
+        "expect": {
+            # 사이에 다른 호출이 끼어도 순서만 맞으면 통과합니다. 조율이 저장보다 앞서야 합니다.
+            "order": ["kana_agent", "nana_agent"],
+            "max_calls": {"kana_agent": 2, "nana_agent": 1},
+            # 조율 결과 없이 저장부터 위임했는지 잡습니다. 날짜 표기까지 강제하지 않으려고
+            # "8월"만 봅니다. 값이 정확히 이월됐는지는 judge가 tool_trace를 읽고 판정합니다.
+            "args": {"nana_agent": {"query": {"contains_text": ["철수", "8월"]}}},
+        },
+        "judge": {
+            "reference_answer": "철수와 8월 3일 오전 10시부터 11시까지로 일정을 등록했습니다.",
+            "required_facts": ["철수", "8월 3일", "오전 10시~11시", "일정 등록 완료"],
+            "forbidden_claims": [
+                "Nana, Kana, 하위 에이전트 같은 내부 구성 요소나 담당 구분을 사용자에게 노출한다",
+                "근거에 저장 성공이 없는데 일정 등록이 완료됐다고 말한다",
+                "8월 3일 오전 10시~11시가 아닌 다른 시각을 조율 또는 등록 결과로 제시한다",
+                "조율된 날짜를 빼고 '8월 첫째 주'처럼 범위로만 말한다",
+            ],
+            "role_expectation": SUPERVISOR_HANDOFF_ROLE_EXPECTATION,
+        },
+    },
+    # 근거: 하위 에이전트는 대화를 볼 수 없다(`week06:639, 673`은 query 문장 하나만 넘긴다).
+    # 그래서 "그걸로"처럼 앞선 대화를 가리키는 표현을 그대로 넘기면 하위 에이전트가 처리할 수
+    # 없습니다. 맥락 해소는 대화를 가진 Supervisor만 할 수 있습니다.
+    #
+    # Week 6 케이스 중 유일한 multi-turn입니다. 나머지가 전부 single-turn이라 이 실패 모드는
+    # 다른 케이스로는 드러나지 않습니다.
+    {
+        "id": "week06.supervisor.followup_reference_resolution",
+        "surface": "supervisor",
+        "group": "Supervisor 대화 맥락 해소",
+        "rule": "self-contained-delegation-query",
+        "repeats": 3,
+        "held_out": True,
+        "history": [
+            {"role": "user", "content": "철수랑 8월 첫째 주에 만날 시간 찾아줘"},
+            {
+                "role": "assistant",
+                "content": "8월 3일 오전 10시부터 11시까지가 가능합니다. 아직 등록되지는 않았습니다.",
+            },
+        ],
+        "user": "응 그걸로 등록해줘",
+        "tool_results": {
+            "nana_agent": delegated_result(
+                "nana_agent",
+                "8월 3일 오전 10시부터 11시까지 철수와의 미팅을 일정으로 저장했습니다.",
+            ),
+        },
+        "expect": {
+            "called": ["nana_agent"],
+            # 이미 조율이 끝난 건이라 재조율은 사용자가 요청하지 않은 과잉 위임입니다.
+            "not_called": ["kana_agent"],
+            "max_calls": {"nana_agent": 1},
+            # 지시 표현이 그대로 넘어갔는지만 봅니다. 날짜 표기를 강제하지 않으므로
+            # "2026-08-03"으로 정규화해 넘겨도 통과합니다.
+            "args": {"nana_agent": {"query": {"not_contains": ["그걸로", "그거", "아까"]}}},
+        },
+        "judge": {
+            "reference_answer": "8월 3일 오전 10시부터 11시까지 철수와의 미팅을 등록했습니다.",
+            "required_facts": ["8월 3일", "오전 10시~11시", "철수", "일정 등록 완료"],
+            "forbidden_claims": [
+                "Nana, Kana, 하위 에이전트 같은 내부 구성 요소나 담당 구분을 사용자에게 노출한다",
+                "무엇을 등록할지 모르겠다며 사용자에게 다시 물어본다",
+                "8월 3일 오전 10시~11시가 아닌 다른 일시로 등록했다고 말한다",
+            ],
+            "role_expectation": SUPERVISOR_HANDOFF_ROLE_EXPECTATION,
+        },
+    },
     # 근거(Nana): week04_prompt_parts()의 "일정, 할 일, 알림 저장은 extract_schedule_request ->
     # save_structured_request 경로로만 처리하고 personal_create_schedule은 호출하지 말아라."
     #
@@ -497,23 +711,24 @@ WEEK06_ROUTING_CASES = [
                 "search_conversation_messages",
             ],
         },
+        # 하위 answer는 Supervisor가 사용자에게 그대로 전달합니다. 그래서 여기서 "Kana 담당"이라고
+        # 적으면 내부 구성이 사용자에게 새어 나갑니다. 하위 에이전트는 처리하지 못했다는 사실만
+        # 남기고, 어느 에이전트로 넘길지는 담당 목록을 가진 Supervisor가 판단합니다.
         "judge": {
-            "reference_answer": (
-                "여러 사람의 공통 시간을 정하는 일은 Kana가 담당합니다. Kana에게 요청해 주세요."
-            ),
+            "reference_answer": "여러 사람의 공통 시간을 정하는 일은 제가 처리하지 못합니다.",
             "required_facts": [
-                "그룹 공통 시간 결정은 Kana 담당",
-                "Nana가 처리하지 않는다는 안내",
+                "이 요청을 처리하지 못했다는 안내",
             ],
             "forbidden_claims": [
                 "회의 시간을 확정했다",
                 "철수와 영희의 일정을 확인했다",
                 "일정을 저장했다",
                 "참석자에게 통보했다",
+                "Kana나 다른 에이전트 이름을 들어 누가 담당인지 밝힌다",
             ],
             "role_expectation": (
                 "Nana는 개인 업무만 처리한다. 그룹 공통 시간 요청은 도구를 부르거나 결과를 꾸며내지 않고 "
-                "Kana 담당임을 안내한다."
+                "자기 담당이 아니라고만 알린다. 누가 맡는지는 밝히지 않는다."
             ),
         },
     },
@@ -759,19 +974,22 @@ WEEK06_ROUTING_CASES = [
                 "decide_final_slot",
             ],
         },
+        # 위 nana 경계 케이스와 같은 이유로 담당자 이름을 요구하지 않습니다. 이 answer는
+        # Supervisor를 거쳐 사용자에게 전달되므로, "Nana가 담당"이라고 적으면 내부 구성이 샙니다.
         "judge": {
-            "reference_answer": "개인 일정 저장은 Nana가 담당하므로 Nana에게 요청해 주세요.",
+            "reference_answer": "개인 일정에 저장하는 일은 제가 처리하지 못합니다.",
             "required_facts": [
-                "개인 일정 저장은 Nana 담당",
-                "Kana가 직접 저장하지 않는다는 안내",
+                "개인 일정 저장을 직접 처리하지 않는다는 안내",
             ],
             "forbidden_claims": [
                 "개인 일정을 저장했다고 말한다",
                 "공유 저장소에 등록했다고 말한다",
                 "참석자에게 통보했다고 말한다",
+                "Nana나 다른 에이전트 이름을 들어 누가 담당인지 밝힌다",
             ],
             "role_expectation": (
-                "Kana는 외부 멤버 일정과 그룹 조율만 담당하며 개인 일정 저장 성공을 주장하지 않는다."
+                "Kana는 외부 멤버 일정과 그룹 조율만 담당하며 개인 일정 저장 성공을 주장하지 않는다. "
+                "누가 저장을 맡는지는 밝히지 않는다."
             ),
         },
     },
