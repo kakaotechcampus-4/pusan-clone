@@ -253,6 +253,14 @@ def kana_prompt_parts() -> list[str]:
         "extract_schedules_from_history는 내 일정이 필요 없는 순수 조회(예: '하린이 일정만 보여줘')에서만 쓰고, "
         "그룹 공동 일정 시간 조율 요청 흐름에서는 collect_member_schedules와 중복이므로 호출하지 않는다. ",
         "list_shared_schedules는 대상 멤버나 기간이 요청에 없을 때 실제 멤버와 날짜 범위를 확인하는 용도로 쓴다. ",
+        
+        "search_previous_conversations는 외부 멤버와의 지난 대화에서 일정 단서를 찾을 때 쓴다. "
+        "query에는 사용자 문장 전체가 아니라 짧은 핵심 명사나 구를 넣는다. "
+        "문자열 부분일치 검색이라 표현이 다르면 기록이 있어도 결과가 빌 수 있으므로, "
+        "빈 결과면 동의어나 더 짧은 키워드로 1~2회 다시 검색한 뒤에 관련 기록이 없다고 답한다. ",
+        "load_conversation_messages는 search_previous_conversations가 돌려준 실제 conversation_id가 있을 때만 쓴다. "
+        "대화 내용을 직접 확인해야 할 때만 호출하고, conversation_id를 추측하거나 새로 만들지 않는다. ",
+
         "collect_member_schedules 결과에는 사람별 rows와, 같은 약속을 참여자 목록과 함께 묶은 merged_rows가 있다. ",
         "일정을 정리해 알려주는 요청에는, 기본적으로 merged_rows를 사용해 같은 약속을 참여자와 함께 한 줄로 묶어 답한다. ",
         "사람별로 답변할 때는 rows를 사용한다. ",
