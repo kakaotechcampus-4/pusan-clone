@@ -425,7 +425,7 @@ def find_common_available_slots_dict(
         busy_rows = collected.get("rows", [])
 
     return find_common_available_slots_payload(
-        member_names=normalized_member_names,
+        member_names=["나", *normalized_member_names],
         date_from=normalized_date_from,
         date_to=normalized_date_to,
         busy_rows=busy_rows,
