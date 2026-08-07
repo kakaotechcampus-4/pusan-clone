@@ -16,6 +16,9 @@ from fixed.schedule_decision import (
     decide_final_slot_payload,
     find_common_available_slots_payload,
     normalize_date_bound,
+    parse_time_minutes,
+    date_range,
+    format_time_minutes
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
@@ -250,7 +253,7 @@ def kana_prompt_parts() -> list[str]:
         "이미 collect_member_schedules로 조회한 rows를 busy_rows에 복사해 넘겨 같은 조회를 반복하지 않는다. ",
 
         "busy_rows에 없는 시간은 그 사람이 비어있다는 뜻이다. "
-        "어떤 멤버의 일정이 busy_rows에 없으면, 그 사람은 해당 시간에 자유로우므로 회의 가능하다. "
+        "어떤 멤버의 일정이 busy_rows에 없으면, 그 사람은 해당 시간에 자유로우므로 공동 일정에 참여 가능하다. "
         "'그 사람이 이 일정에 참여 안 함'을 '그 사람이 불가능함'으로 해석하지 않는다. ",
         "각 날짜의 workday 범위에서 모든 멤버의 busy_rows와 겹치지 않는 구간을 찾아, "
         "그 구간이 duration_minutes 이상이면 candidate_slots에 반드시 추가한다. ",
@@ -259,8 +262,6 @@ def kana_prompt_parts() -> list[str]:
         "사용자가 별도 시간대를 말하면 그 범위에서 후보를 만들도록 workday_start와 workday_end를 유연하게 조정한다."
         "업무시간 밖이라는 이유로 가능한 시간을 배제하지 않는다. ",
         "바쁜 시간과 겹치지 않는 구간이 있으면 candidate_slots를 반드시 채운다. 비워서 넘기지 않는다. ",
-        "가능한 구간이 회의 길이보다 넓으면, 그 안에서 시작 시각을 달리한 후보를 여러 개 만들어 넘긴다. "
-        "예: 16:00~21:00이 비고 4시간이 필요하면 16:00-20:00, 16:30-20:30, 17:00-21:00 같은 후보를 함께 제시한다. ",
 
         "조회된 바쁜 시간이 없거나 적더라도 candidate_slots를 비워 넘기지 말고, "
         "요청한 날짜 범위와 업무시간 안에서 겹치지 않는 시간대를 직접 만들어 채운다. ",
@@ -269,6 +270,7 @@ def kana_prompt_parts() -> list[str]:
         "find_common_available_slots가 돌려준 busy_rows의 각 항목에 time_refined가 True이면 "
         "start_time·end_time은 겹침 계산용으로 보정된 값이고, 실제 일정 시간은 original_start_time과 original_end_time이다. "
         "사용자에게 후보 선택 근거를 설명할 때는 보정값이 아니라 이 원래 값을 쓴다. ",
+        "후보가 단 하나여도, 해당 시간대를 공동 일정 시간으로 '확정'하였다고 답하지 않고 후보 선택 근거만 안내한다. ",
 
         "공통 가능 시간이 없으면 임의로 시간을 만들지 말고, decide_final_slot에 final_slot=null, "
         "needs_agent_selection=True와 그 이유를 담아 호출한 뒤 그대로 답한다. ",
@@ -530,6 +532,51 @@ def _refine_busy_row(row: dict[str, Any], margin_minutes: int = MARGIN_MINUTES, 
     # 그 외: 원본 유지
     return row
 
+def _compute_free_slots(busy_rows, date_from, date_to, duration_minutes, workday_start, workday_end):
+    """busy_rows로부터 각 day의 빈 구간을 코드로 계산해 후보(하루 전체 조회)를 만든다.
+    LLM이 구간 뺄셈을 안정적으로 못 하므로, 후보 생성을 코드가 보조하도록 한다."""
+
+    duration = max(30, int(duration_minutes or 60))
+    work_start = parse_time_minutes(workday_start, 0)
+    work_end = parse_time_minutes(workday_end, 24 * 60)
+
+    slots = []
+    for day in date_range(date_from, date_to): # 현재 day의 busy 구간을 분 단위로 모으기
+        intervals = []
+        for row in busy_rows:
+            if row.get("date") != day:
+                continue
+            bs = parse_time_minutes(row.get("start_time"), 0)
+            be = parse_time_minutes(row.get("end_time"), 24 * 60)
+            if be > bs:
+                intervals.append((bs, be))
+        intervals.sort()
+
+        # busy 병합 + workday 안에서 빈 구간을 찾음
+        cursor = work_start
+        merged = []
+        for bs, be in intervals:
+            if be <= work_start or bs >= work_end:
+                continue
+            bs, be = max(bs, work_start), min(be, work_end)
+            if bs > cursor:
+                merged.append((cursor, bs))   # 빈 구간
+            cursor = max(cursor, be)
+        if cursor < work_end:
+            merged.append((cursor, work_end))
+
+        # duration 이상인 빈 구간만 후보로
+        for free_start, free_end in merged:
+            if free_end - free_start >= duration:
+                slots.append({
+                    "date": day,
+                    "start_time": format_time_minutes(free_start),
+                    "end_time": format_time_minutes(free_start + duration),
+                    "duration_minutes": duration,
+                    "reason": f"{day} {format_time_minutes(free_start)}~{format_time_minutes(free_end)} 구간이 비어 있음",
+                })
+    return slots
+
 
 def find_common_available_slots_dict(
     member_names: list[str],
@@ -557,7 +604,13 @@ def find_common_available_slots_dict(
         available_rows = recollect.get("rows", [])
 
     refined_rows = [_refine_busy_row(r, MARGIN_MINUTES, workday_start=workday_start, workday_end=workday_end) for r in available_rows]
-    
+
+    if not candidate_slots:
+        candidate_slots = _compute_free_slots(
+            refined_rows, norm_from, norm_to, duration_minutes,
+            workday_start, workday_end,
+        )
+
     payload = find_common_available_slots_payload(
         member_names=normalized_members,
         date_from=norm_from,
@@ -569,6 +622,7 @@ def find_common_available_slots_dict(
         busy_rows= refined_rows,
         candidate_slots=candidate_slots,
         llm_reason=llm_reason)
+    
     return payload
 
 
