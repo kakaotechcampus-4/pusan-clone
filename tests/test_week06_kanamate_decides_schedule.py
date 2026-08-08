@@ -18,15 +18,7 @@ import unittest
 from pathlib import Path
 
 from student_parts.week06_kanamate_decides_schedule import (
-    AGENT_ACTIONS,
-    AgentQueryInput,
     DECIDE_FINAL_SLOT_DESCRIPTION,
-    SHOW_AND_SAVE_TOP_CANDIDATE,
-    SHOW_CANDIDATES,
-    SHOW_TOP_CANDIDATE,
-    action_allows_confirm,
-    action_allows_save,
-    normalize_agent_action,
     _has_my_busy_rows,
     FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION,
     decide_final_slot,
@@ -331,61 +323,44 @@ class WideSlotGuardTest(unittest.TestCase):
         )
         self.assertIsNone(payload["final_slot"])
 
+    def test_busy와_겹치는_시각은_확정하지_않는다(self):
+        # 후보 목록에 없는 시각을 agent 가 지어내면 검증을 거치지 않는다. 너비만 보면
+        # 60분짜리라 통과하는데, 실제로는 이미 잡힌 일정 위에 얹힌다.
+        busy = [{"member_name": "나", "date": "2026-07-15", "start_time": "09:00",
+                 "end_time": "12:00", "title": "이미 잡힌 회의"}]
+        payload = self._decide(
+            candidate_slots=[_candidate()],
+            final_slot="2026-07-15 10:00-11:00",
+            busy_rows=busy,
+            duration_minutes=60,
+        )
+        self.assertIsNone(payload["final_slot"])
+        self.assertTrue(payload["needs_agent_selection"])
+        self.assertIn("이미 잡힌 회의", payload["reason"])
+
+    def test_selected_index로_고른_후보도_겹치면_막는다(self):
+        # 확정 경로가 둘이므로 둘 다 같은 검사를 받아야 한다.
+        busy = [{"member_name": "민준", "date": "2026-07-15", "start_time": "14:30",
+                 "end_time": "15:30", "title": "운영 회의"}]
+        payload = self._decide(candidate_slots=[_candidate()], selected_index=0, busy_rows=busy)
+        self.assertIsNone(payload["final_slot"])
+
+    def test_겹치지_않으면_확정한다(self):
+        busy = [{"member_name": "민준", "date": "2026-07-15", "start_time": "16:00",
+                 "end_time": "17:00", "title": "다른 회의"}]
+        payload = self._decide(candidate_slots=[_candidate()], selected_index=0, busy_rows=busy)
+        self.assertEqual(payload["final_slot"], "2026-07-15 14:00-15:00")
+
+    def test_busy_rows가_없으면_겹침은_검사하지_않는다(self):
+        # 근거가 없으면 판정할 수 없다. 알려진 한계다.
+        payload = self._decide(candidate_slots=[_candidate()], selected_index=0)
+        self.assertEqual(payload["final_slot"], "2026-07-15 14:00-15:00")
+
     def test_보류_중이면_아무것도_바꾸지_않는다(self):
         payload = self._decide(candidate_slots=[self._block()], duration_minutes=60)
         self.assertIsNone(payload["final_slot"])
         self.assertTrue(payload["needs_agent_selection"])
         self.assertNotIn("시각을 정해", payload["reason"])
-
-
-class AgentActionTest(unittest.TestCase):
-    """위임 action 어휘. 자연어 요약 대신 값으로 의도를 넘기기 위한 것이다.
-
-    지금은 기록만 하고 게이트로 쓰지 않는다. 확정/저장 판단은 프롬프트와 기존 가드가 한다.
-    여기서는 어휘와 허용 범위가 흔들리지 않는지만 고정한다.
-    """
-
-    def test_어휘는_세_가지다(self):
-        self.assertEqual(
-            AGENT_ACTIONS, (SHOW_CANDIDATES, SHOW_TOP_CANDIDATE, SHOW_AND_SAVE_TOP_CANDIDATE)
-        )
-
-    def test_정해진_값만_통과한다(self):
-        for action in AGENT_ACTIONS:
-            self.assertEqual(normalize_agent_action(action), action)
-
-    def test_모르는_값과_빈_값은_None이다(self):
-        # 가장 가까운 값으로 붙이지 않는다. "정하지 않았다"와 "잘못 정했다"를 섞으면
-        # 나중에 게이트로 쓸 때 무엇을 막는지 알 수 없다.
-        for value in ("save", "SHOW_CANDIDATES", "", "  ", None, 0, []):
-            self.assertIsNone(normalize_agent_action(value))
-
-    def test_앞뒤_공백은_정규화한다(self):
-        self.assertEqual(normalize_agent_action("  show_candidates  "), SHOW_CANDIDATES)
-
-    def test_확정_허용_범위(self):
-        self.assertFalse(action_allows_confirm(SHOW_CANDIDATES))
-        self.assertTrue(action_allows_confirm(SHOW_TOP_CANDIDATE))
-        self.assertTrue(action_allows_confirm(SHOW_AND_SAVE_TOP_CANDIDATE))
-
-    def test_저장_허용_범위(self):
-        # 확정과 저장은 되돌리는 비용이 다르다. 저장만 한 단계 더 좁다.
-        self.assertFalse(action_allows_save(SHOW_CANDIDATES))
-        self.assertFalse(action_allows_save(SHOW_TOP_CANDIDATE))
-        self.assertTrue(action_allows_save(SHOW_AND_SAVE_TOP_CANDIDATE))
-
-    def test_action이_없으면_둘_다_허용하지_않는다(self):
-        # 근거가 없을 때는 덜 하는 쪽으로 답한다.
-        self.assertFalse(action_allows_confirm(None))
-        self.assertFalse(action_allows_save(None))
-
-    def test_action은_선택_필드다(self):
-        # 넣지 않아도 지금까지와 똑같이 동작해야 한다.
-        self.assertIsNone(AgentQueryInput(query="내 일정 알려줘").action)
-        self.assertEqual(
-            AgentQueryInput(query="철수랑 잡아줘", action=SHOW_TOP_CANDIDATE).action,
-            SHOW_TOP_CANDIDATE,
-        )
 
 
 class ToolDescriptionContractTest(unittest.TestCase):

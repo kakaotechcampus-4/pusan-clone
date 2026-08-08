@@ -14,9 +14,11 @@ from fixed.runtime_clock import current_app_date_iso
 from fixed.schedule_decision import (
     CommonSlotCandidate,
     decide_final_slot_payload,
+    busy_rows_overlap,
     find_common_available_slots_payload,
     normalize_date_bound,
     parse_time_minutes,
+    slot_to_text,
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
@@ -549,65 +551,10 @@ class ProposeGroupScheduleInput(BaseModel):
     reason: str | None = None
 
 
-# supervisor 가 위임할 때 "무엇까지 해도 되는가"를 자연어 요약 대신 값으로 넘기기 위한 어휘다.
-# 지금은 기록만 하고 아무것도 막지 않는다. 확정·저장 판단은 프롬프트와 기존 가드가 그대로 한다.
-#
-# 자연어 query 만 넘기면 상위가 요약하는 과정에서 의도가 흔들린다. 실제로 "철수랑 회의
-# 잡아줘"가 "철수의 일정을 알려줘"로 바뀌어 하위가 다른 tool 을 고른 적이 있었다. 값으로
-# 함께 넘기면 대화가 길어져도 처음 선택한 행위가 그대로 남는다.
-SHOW_CANDIDATES = "show_candidates"
-SHOW_TOP_CANDIDATE = "show_top_candidate"
-SHOW_AND_SAVE_TOP_CANDIDATE = "show_and_save_top_candidate"
-
-AGENT_ACTIONS = (SHOW_CANDIDATES, SHOW_TOP_CANDIDATE, SHOW_AND_SAVE_TOP_CANDIDATE)
-
-
-def normalize_agent_action(value: Any) -> str | None:
-    """위임 action 을 정해진 어휘로 정규화한다. 모르는 값은 None. (순수 함수)
-
-    모르는 값을 임의로 가장 가까운 것에 붙이지 않는다. 붙이면 "정하지 않았다"와
-    "잘못 정했다"가 같은 값이 되어, 나중에 게이트로 쓸 때 무엇을 막는지 알 수 없다.
-    """
-
-    text = str(value or "").strip()
-    return text if text in AGENT_ACTIONS else None
-
-
-def action_allows_confirm(action: str | None) -> bool:
-    """이 action 이 최종 시간 확정까지 허용하는지. (순수 함수)
-
-    후보만 보여 달라는 요청(show_candidates)과 정해 달라는 요청을 가른다.
-    action 이 없으면(None) 판단 근거가 없으므로 허용하지 않는 쪽으로 답한다 —
-    확정은 되돌리기 어려운 쪽이다.
-    """
-
-    return action in (SHOW_TOP_CANDIDATE, SHOW_AND_SAVE_TOP_CANDIDATE)
-
-
-def action_allows_save(action: str | None) -> bool:
-    """이 action 이 앱 DB 저장까지 허용하는지. (순수 함수)
-
-    확정과 저장을 따로 두는 이유: 시간을 정하는 것과 그걸 내 일정으로 남기는 것은
-    되돌리는 비용이 다르다. 저장은 공유 저장소 동기화까지 이어진다.
-    """
-
-    return action == SHOW_AND_SAVE_TOP_CANDIDATE
-
-
 class AgentQueryInput(BaseModel):
     """하위 에이전트 위임 입력입니다."""
 
     query: str
-    # 선택 필드다. 넣지 않으면(None) 지금까지와 똑같이 동작한다.
-    action: str | None = Field(
-        default=None,
-        description=(
-            "이번 위임에서 어디까지 해도 되는지. show_candidates(후보만 보여준다) / "
-            "show_top_candidate(하나를 골라 확정한다) / "
-            "show_and_save_top_candidate(확정하고 내 일정으로 저장까지 한다) 중 하나. "
-            "사용자 요청에 맞는 것을 고르고, 애매하면 더 적게 하는 쪽을 고른다."
-        ),
-    )
 
 
 def _has_my_busy_rows(rows: list[dict[str, Any]] | None) -> bool:
@@ -766,71 +713,87 @@ def find_common_available_slots(
     )
 
 
-def _slot_minutes(slot: Any) -> int | None:
-    """후보 slot 의 길이를 분으로 잰다. 잴 수 없으면 None. (순수 함수)"""
+def _effective_final_slot(
+    final_slot: str | None,
+    selected_slot: Any | None,
+    selected_index: int | None,
+    candidate_slots: list[Any] | None,
+) -> str | None:
+    """실제로 기록될 최종 시간 텍스트를 구한다. (순수 함수)
 
-    if not isinstance(slot, dict):
-        return None
-    start = parse_time_minutes(slot.get("start_time"), -1)
-    end = parse_time_minutes(slot.get("end_time"), -1)
-    if start < 0 or end <= start:
-        return None
-    return end - start
-
-
-def _final_slot_minutes(final_slot: str | None) -> int | None:
-    """'YYYY-MM-DD HH:MM-HH:MM' 텍스트의 길이를 분으로 잰다. 잴 수 없으면 None. (순수 함수)
-
-    decide_final_slot_payload 는 final_slot 이 있으면 그 값을 그대로 최종으로 쓴다
-    (`final_slot or slot_to_text(selected)`). 그래서 넓은 구간인지 판정할 때도 후보가 아니라
-    실제로 기록될 이 텍스트를 봐야 한다.
+    decide_final_slot_payload 의 우선순위(`final_slot or slot_to_text(selected)`)를 그대로
+    따른다. 검증하는 값과 기록되는 값이 다르면 그 틈으로 새기 때문에, 검사도 여기서 나온
+    하나만 본다.
     """
+
+    if isinstance(final_slot, str) and final_slot.strip():
+        return final_slot.strip()
+
+    selected = selected_slot
+    if selected is None and selected_index is not None:
+        slots = list(candidate_slots or [])
+        if not isinstance(selected_index, int) or not 0 <= selected_index < len(slots):
+            return None  # 범위 밖 판정은 decide_final_slot_payload 가 이미 한다
+        selected = slots[selected_index]
+    if selected is None:
+        return None
+    return slot_to_text(selected.model_dump() if hasattr(selected, "model_dump") else selected)
+
+
+def _final_slot_parts(final_slot: str | None) -> tuple[str, int, int] | None:
+    """'YYYY-MM-DD HH:MM-HH:MM' 을 (날짜, 시작 분, 끝 분) 으로 읽는다. 못 읽으면 None. (순수 함수)"""
 
     if not isinstance(final_slot, str):
         return None
-    _, _, time_part = final_slot.strip().partition(" ")
+    day, _, time_part = final_slot.strip().partition(" ")
     start_text, _, end_text = time_part.partition("-")
     start = parse_time_minutes(start_text.strip(), -1)
     end = parse_time_minutes(end_text.strip(), -1)
-    if start < 0 or end <= start:
+    if not day.strip() or start < 0 or end <= start:
         return None
-    return end - start
+    return normalize_date_bound(day), start, end
 
 
-def _is_slot_wider_than_requested(
+def _reject_final_slot_reason(
     final_slot: str | None,
     selected_slot: Any | None,
     selected_index: int | None,
     candidate_slots: list[Any] | None,
     duration_minutes: int,
-) -> bool:
-    """확정하려는 구간이 요청한 회의 길이보다 지나치게 넓은지 본다. (순수 함수)
+    busy_rows: list[dict[str, Any]] | None,
+) -> str | None:
+    """확정하면 안 되는 시각이면 그 이유를, 아니면 None 을 준다. (순수 함수)
 
-    '가능 구간'과 '회의 시각'은 다르다. 09:00-18:00 은 비어 있다는 정보이지 9시간 회의를
-    하겠다는 뜻이 아닌데, 검증기는 '요청 길이 이상'만 보므로 그대로 통과한다.
-
-    확정 의사가 있을 때만 본다. 이미 보류라면 막을 것이 없다.
+    고르는 일은 agent 몫이고, 여기서는 덜 정해졌거나 명백히 틀린 것만 확정으로 굳히지
+    않는다. 두 가지를 본다.
+      - 요청한 회의 길이보다 지나치게 넓은 구간: '09:00-18:00 가능'은 비어 있다는 정보이지
+        9시간 회의를 하겠다는 뜻이 아니다. 2배까지 허용하는 이유는 agent 가
+        duration_minutes 를 안 넘기면 기본값 60 이 쓰여 정상적인 2시간 회의까지 막히기 때문이다.
+      - busy row 와 겹치는 시각: 후보 목록에 없는 시각을 agent 가 지어내 넘기면 검증을
+        거치지 않는다. 겹침 판정은 fixed/schedule_decision.py 의 함수를 그대로 써서
+        기준이 두 곳에 생기지 않게 한다.
     """
 
-    if final_slot is None and selected_slot is None and selected_index is None:
-        return False
+    text = _effective_final_slot(final_slot, selected_slot, selected_index, candidate_slots)
+    parts = _final_slot_parts(text)
+    if parts is None:
+        return None  # 확정 의사가 없거나 형식을 읽을 수 없으면 막을 것이 없다
 
-    # final_slot 이 있으면 그것이 곧 기록될 값이므로 먼저 본다. 후보 길이만 보면
-    # final_slot 만 넘긴 호출에서 넓은 구간이 그대로 확정된다.
-    minutes = _final_slot_minutes(final_slot)
+    day, start_minutes, end_minutes = parts
+    if end_minutes - start_minutes > max(30, int(duration_minutes or 60)) * 2:
+        return (
+            "가능한 구간은 찾았지만 요청한 회의 길이보다 넓어 회의 시각으로 확정하지 "
+            "않았습니다. 구간 안에서 어느 시각으로 할지 정해 주세요."
+        )
 
-    if minutes is None:
-        slot = selected_slot
-        if slot is None and selected_index is not None:
-            slots = list(candidate_slots or [])
-            if not isinstance(selected_index, int) or not 0 <= selected_index < len(slots):
-                return False  # 범위 밖 판정은 decide_final_slot_payload 가 이미 한다
-            slot = slots[selected_index]
-        minutes = _slot_minutes(slot if isinstance(slot, dict) else None)
-
-    if minutes is None:
-        return False
-    return minutes > max(30, int(duration_minutes or 60)) * 2
+    blockers = busy_rows_overlap(list(busy_rows or []), day, start_minutes, end_minutes)
+    if blockers:
+        titles = ", ".join(str(row.get("title") or "제목 없음") for row in blockers[:3])
+        return (
+            f"고른 시각({text})이 이미 잡힌 일정과 겹쳐 확정하지 않았습니다: {titles}. "
+            "겹치지 않는 후보 중에서 다시 골라 주세요."
+        )
+    return None
 
 
 @tool(description=DECIDE_FINAL_SLOT_DESCRIPTION, args_schema=DecideFinalSlotInput)
@@ -858,17 +821,17 @@ def decide_final_slot(
     # 고르는 일은 여전히 agent 몫이고, 여기서는 덜 정해진 것을 확정으로 굳히지만 않는다.
     # 2배까지 허용하는 이유: agent 가 duration_minutes 를 안 넘기면 기본값 60 이 쓰여서,
     # 실제로 2시간 회의를 잡는 정상 호출까지 막을 수 있다.
-    if _is_slot_wider_than_requested(final_slot, selected_slot, selected_index, candidate_slots, duration_minutes):
+    rejected = _reject_final_slot_reason(
+        final_slot, selected_slot, selected_index, candidate_slots, duration_minutes, busy_rows
+    )
+    if rejected:
         # selected_index/selected_slot 도 함께 비운다. 남겨두면 decide_final_slot_payload 가
         # 그 후보에서 final_slot 을 다시 도출해 막은 것이 되살아난다.
         final_slot = None
         selected_slot = None
         selected_index = None
         needs_agent_selection = True
-        reason = (
-            "가능한 구간은 찾았지만 요청한 회의 길이보다 넓어 회의 시각으로 확정하지 않았습니다. "
-            "구간 안에서 어느 시각으로 할지 정해 주세요."
-        )
+        reason = rejected
 
     return json.dumps(
         decide_final_slot_payload(
@@ -939,7 +902,7 @@ def propose_group_schedule(
 
 
 @tool(args_schema=AgentQueryInput)
-def nana_agent(query: str, action: str | None = None) -> str:
+def nana_agent(query: str) -> str:
     """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다.
 
     query 는 그 자체로 완결돼 있어야 한다. 하위 agent 는 매 호출이 백지에서 시작하므로
@@ -966,8 +929,6 @@ def nana_agent(query: str, action: str | None = None) -> str:
     return json.dumps(
         {
             "selected_agent": "nana_agent",
-            # 기록만 한다. 이 값으로 무엇을 막지는 않는다(아래 kana_agent 도 동일).
-            "action": normalize_agent_action(action),
             # supervisor 가 실질적으로 읽는 것은 answer 하나다. tool 결과는 못 보므로
             # 조회 내용이 answer 본문에 들어가 있어야 한다(nana_prompt_parts 의 지시).
             "answer": extract_final_text(result),
@@ -980,7 +941,7 @@ def nana_agent(query: str, action: str | None = None) -> str:
 
 
 @tool(args_schema=AgentQueryInput)
-def kana_agent(query: str, action: str | None = None) -> str:
+def kana_agent(query: str) -> str:
     """그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다.
 
     nana_agent 와 같은 뼈대에 payload 끌어올리기가 하나 더 붙는다. Nana 는 결과가 텍스트라
@@ -1018,7 +979,6 @@ def kana_agent(query: str, action: str | None = None) -> str:
     return json.dumps(
         {
             "selected_agent": "kana_agent",
-            "action": normalize_agent_action(action),
             "answer": extract_final_text(result),
             "trace": events,
             "inner_tool_names": _tool_call_names(events),
