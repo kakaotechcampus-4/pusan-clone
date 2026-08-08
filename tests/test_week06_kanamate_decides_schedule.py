@@ -143,7 +143,13 @@ class FindCommonAvailableSlotsDictTest(unittest.TestCase):
             date_to="2026-07-18",
             busy_rows=[_OUT_OF_RANGE_BUSY_ROW],
         )
-        self.assertIn("candidate_slots", payload["hint"])
+        self.assertIn("넘기지 않았다", payload["hint"])
+
+    def test_넘긴_후보가_전부_탈락하면_다르게_안내한다(self):
+        # 같은 안내를 하면 같은 후보로 재호출하는 루프에 빠진다.
+        payload = _find(_candidate(start_time="07:00", end_time="08:00"))
+        self.assertIn("모두 제외", payload["hint"])
+        self.assertNotIn("넘기지 않았다", payload["hint"])
 
     def test_후보가_있으면_hint를_남기지_않는다(self):
         self.assertNotIn("hint", _find(_candidate()))
@@ -289,10 +295,29 @@ class WideSlotGuardTest(unittest.TestCase):
         )
         self.assertEqual(payload["final_slot"], "2026-07-15 09:00-11:00")
 
-    def test_final_slot을_직접_넘겨도_넓으면_막는다(self):
+    def test_final_slot만_넘겨도_넓으면_막는다(self):
+        # 후보 길이만 보면 이 호출을 놓친다. 실제로 기록되는 값은 final_slot 텍스트다.
         payload = self._decide(
             candidate_slots=[self._block()],
-            selected_slot=self._block(),
+            final_slot="2026-07-15 09:00-18:00",
+            duration_minutes=60,
+        )
+        self.assertIsNone(payload["final_slot"])
+        self.assertTrue(payload["needs_agent_selection"])
+
+    def test_final_slot만_넘겼고_길이가_맞으면_확정한다(self):
+        payload = self._decide(
+            candidate_slots=[_candidate()],
+            final_slot="2026-07-15 14:00-15:00",
+            duration_minutes=60,
+        )
+        self.assertEqual(payload["final_slot"], "2026-07-15 14:00-15:00")
+
+    def test_final_slot이_후보보다_우선한다(self):
+        # decide_final_slot_payload 가 final_slot 을 우선하므로 판정도 그 값을 봐야 한다.
+        payload = self._decide(
+            candidate_slots=[_candidate()],
+            selected_index=0,
             final_slot="2026-07-15 09:00-18:00",
             duration_minutes=60,
         )

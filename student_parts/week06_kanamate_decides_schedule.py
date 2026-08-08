@@ -609,15 +609,35 @@ def find_common_available_slots_dict(
         )
         busy_rows = payload.get("rows", [])
     elif not _has_my_busy_rows(busy_rows):
-        # 내 일정이 근거에서 빠지는 것을 프롬프트에 맡기지 않는다. agent 가 exclude_me 로 조회한
-        # rows 를 그대로 넘기면 내 busy-time 이 통째로 빠지고, 이미 잡아둔 시간이 "비어 있다"로
-        # 추천된다(Week 5 공지의 버그 ①과 같은 실패). 조회 대상을 비워 부르면 내 일정만 온다.
+        # 내 일정이 근거에서 빠졌다. agent 가 exclude_me 로 조회한 rows 를 그대로 넘기면
+        # 내 busy-time 이 통째로 빠지고, 이미 잡아둔 시간이 "비어 있다"로 추천된다.
+        #
+        # 여기서 조용히 보태지 않는다. 백단에서 고쳐주면 agent 는 자기가 잘못 불렀다는 걸
+        # 모른 채 "이렇게 불러도 되는구나"를 학습하고 같은 호출을 반복한다. 실패로 돌려주면
+        # 무엇을 잘못했는지 알고 다시 부를 수 있다.
+        # 조회 대상을 비워 부르면 내 일정만 온다.
         mine = json.loads(
             collect_member_schedules.invoke(
                 {"member_names": [], "date_from": start, "date_to": end}
             )
         )
-        busy_rows = [*mine.get("rows", []), *busy_rows]
+        my_rows = mine.get("rows", [])
+        if my_rows:
+            # 내 일정이 실제로 있는데 근거에 없을 때만 실패다. 원래 없으면 빠질 것도 없다.
+            return {
+                "ok": False,
+                "tool_name": "find_common_available_slots",
+                "error": (
+                    f"busy_rows 에 내 일정이 빠져 있다. {start}~{end} 사이에 내 일정이 "
+                    f"{len(my_rows)}건 있는데 넘긴 busy_rows 에는 member_name 이 '나'인 row 가 없다. "
+                    "extract_schedules_of_members_include_me 로 다시 조회해 그 rows 를 "
+                    "busy_rows 로 넘겨라. 지금 rows 로 후보를 검증하면 이미 잡아둔 내 시간이 "
+                    "비어 있는 것으로 판정된다."
+                ),
+                "members": members,
+                "date_from": start,
+                "date_to": end,
+            }
     rows: list[dict[str, Any]] = busy_rows or []
 
     result = find_common_available_slots_payload(
@@ -638,14 +658,24 @@ def find_common_available_slots_dict(
         llm_reason=llm_reason,
     )
 
-    # 후보 0건은 "정말 가능한 시간이 없다"와 "후보를 안 넘겼거나 전부 탈락했다"가 구분되지
-    # 않는다. 탈락 사유를 알려주지 않는 필터라 agent 는 왜 비었는지 알 수 없다.
-    # 조용한 실패를 tool 결과에 실어 시끄럽게 만든다(가이드가 정한 키는 건드리지 않는다).
+    # 후보 0건은 "후보를 안 넘겼다"와 "넘긴 후보가 전부 탈락했다"가 섞여 있다. 필터가 사유를
+    # 남기지 않으므로 tool 결과에 실어 시끄럽게 만든다(가이드가 정한 키는 건드리지 않는다).
+    #
+    # 두 경우를 갈라 적는 이유: 뭉뚱그려 "채워서 다시 호출하라"고 하면, 후보를 냈다가 전부
+    # 탈락한 agent 가 같은 후보로 같은 호출을 반복하는 루프에 빠진다.
     if not result.get("candidate_slots"):
-        result["hint"] = (
-            "후보가 0건이다. candidate_slots 를 채워 다시 호출하라. 후보를 넘기지 않았거나, "
-            "넘긴 후보가 조회 기간·업무시간·요청 길이·busy 겹침 조건에 걸려 전부 탈락했다."
-        )
+        provided = list(candidate_slots or [])
+        if not provided:
+            result["hint"] = (
+                "candidate_slots 를 넘기지 않았다. busy_rows 를 읽고 비어 있는 시간대를 골라 "
+                "candidate_slots 를 채워 다시 호출하라."
+            )
+        else:
+            result["hint"] = (
+                f"넘긴 후보 {len(provided)}건이 모두 제외됐다(조회 기간·업무시간·요청 길이·"
+                "busy 겹침 중 하나에 걸렸다). 같은 후보로 다시 호출하지 말고 다른 시간대를 "
+                "고르거나, 조건에 맞는 시간이 없으면 없다고 답하라."
+            )
     return result
 
 
@@ -693,6 +723,25 @@ def _slot_minutes(slot: Any) -> int | None:
     return end - start
 
 
+def _final_slot_minutes(final_slot: str | None) -> int | None:
+    """'YYYY-MM-DD HH:MM-HH:MM' 텍스트의 길이를 분으로 잰다. 잴 수 없으면 None. (순수 함수)
+
+    decide_final_slot_payload 는 final_slot 이 있으면 그 값을 그대로 최종으로 쓴다
+    (`final_slot or slot_to_text(selected)`). 그래서 넓은 구간인지 판정할 때도 후보가 아니라
+    실제로 기록될 이 텍스트를 봐야 한다.
+    """
+
+    if not isinstance(final_slot, str):
+        return None
+    _, _, time_part = final_slot.strip().partition(" ")
+    start_text, _, end_text = time_part.partition("-")
+    start = parse_time_minutes(start_text.strip(), -1)
+    end = parse_time_minutes(end_text.strip(), -1)
+    if start < 0 or end <= start:
+        return None
+    return end - start
+
+
 def _is_slot_wider_than_requested(
     final_slot: str | None,
     selected_slot: Any | None,
@@ -711,14 +760,19 @@ def _is_slot_wider_than_requested(
     if final_slot is None and selected_slot is None and selected_index is None:
         return False
 
-    slot = selected_slot
-    if slot is None and selected_index is not None:
-        slots = list(candidate_slots or [])
-        if not isinstance(selected_index, int) or not 0 <= selected_index < len(slots):
-            return False  # 범위 밖 판정은 decide_final_slot_payload 가 이미 한다
-        slot = slots[selected_index]
+    # final_slot 이 있으면 그것이 곧 기록될 값이므로 먼저 본다. 후보 길이만 보면
+    # final_slot 만 넘긴 호출에서 넓은 구간이 그대로 확정된다.
+    minutes = _final_slot_minutes(final_slot)
 
-    minutes = _slot_minutes(slot if isinstance(slot, dict) else None)
+    if minutes is None:
+        slot = selected_slot
+        if slot is None and selected_index is not None:
+            slots = list(candidate_slots or [])
+            if not isinstance(selected_index, int) or not 0 <= selected_index < len(slots):
+                return False  # 범위 밖 판정은 decide_final_slot_payload 가 이미 한다
+            slot = slots[selected_index]
+        minutes = _slot_minutes(slot if isinstance(slot, dict) else None)
+
     if minutes is None:
         return False
     return minutes > max(30, int(duration_minutes or 60)) * 2
