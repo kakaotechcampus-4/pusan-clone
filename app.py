@@ -430,7 +430,7 @@ def build_demo() -> gr.Blocks:
                                 lines=2,
                                 elem_id="kanana-input",
                             )
-                            with gr.Column(min_width=110, scale=0, elem_classes=["send-controls"]):
+                            with gr.Column(min_width=90, scale=0, elem_classes=["send-controls"]):
                                 secret_mode = gr.Checkbox(label="Secret", value=False, elem_id="secret-mode") # 시크릿 대화 체크박스 컴포넌트
                                 send_btn = gr.Button("↑", elem_id="kanana-send", elem_classes=["send-button"])
             with gr.Tab("상세"):
