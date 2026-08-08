@@ -404,9 +404,7 @@ def find_common_available_slots_dict(
             else:
                 busy_rows = []
         except Exception as err:
-            import logging
-            logging.warning("collect_member_schedules fallback parsing failed: %s", err)
-            busy_rows = []
+            raise RuntimeError("collect_member_schedules failed while building busy_rows") from err
 
     return find_common_available_slots_payload(
         member_names=norm_members,
