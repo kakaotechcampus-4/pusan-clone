@@ -442,10 +442,25 @@ def create_shared_schedule(
     source_conversation_id: str | None = None,
     schedule_id: str | None = None,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
+    """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다.
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    schedule_id를 함께 넘기면 그 row를 갱신하고, 비워 두면 새 row를 만듭니다.
+    나중에 앱 원본 기준으로 삭제/갱신하려면 source_conversation_id를 같이 남깁니다.
+    """
+
+    return call_mcp_tool_sync(
+        tool_name="create_shared_schedule",
+        args={
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -453,10 +468,20 @@ def delete_shared_schedule(
     schedule_id: str | None = None,
     source_conversation_id: str | None = None,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
+    """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다.
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    schedule_id와 source_conversation_id 중 하나만 지정합니다. 두 값을 같이 넘기면
+    둘 중 하나라도 일치하는 row가 모두 지워져 의도보다 많이 삭제될 수 있습니다.
+    둘 다 비우면 아무것도 지우지 않고 deleted_count가 0으로 돌아옵니다.
+    """
+
+    return call_mcp_tool_sync(
+        tool_name="delete_shared_schedule",
+        args={
+            "schedule_id": schedule_id,
+            "source_conversation_id": source_conversation_id,
+        },
+    )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -501,8 +526,8 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        # create_shared_schedule,
-        # delete_shared_schedule,
+        create_shared_schedule,
+        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -519,10 +544,11 @@ def week05_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        "이번 주차부터 Nana는 외부 멤버 관련 도구 다섯 가지를 추가로 가진다: search_previous_conversations"
+        "이번 주차부터 Nana는 외부 멤버 관련 도구 일곱 가지를 추가로 가진다: search_previous_conversations"
         "(외부 멤버와의 과거 대화 검색), load_conversation_messages(특정 대화의 전체 메시지 로드), "
         "extract_schedules_from_history(과거 대화에서 멤버별 일정 추출), list_shared_schedules(공유 일정 저장소 조회), "
-        "collect_member_schedules(나와 여러 멤버의 일정을 한 번에 모아 비교).",
+        "collect_member_schedules(나와 여러 멤버의 일정을 한 번에 모아 비교), "
+        "create_shared_schedule(공유 일정 저장소에 row 등록/갱신), delete_shared_schedule(공유 일정 저장소에서 row 삭제).",
         "'철수랑 언제 얘기했었지', '예전에 나눈 대화 찾아줘'처럼 외부 멤버와의 과거 대화 자체를 찾는 질문이면 "
         "search_previous_conversations를 호출한다.",
         "search_previous_conversations로 찾은 특정 대화의 전체 내용을 봐야 하면 load_conversation_messages를 "
@@ -535,6 +561,16 @@ def week05_prompt_parts() -> list[str]:
         "같은 구조로 섞여 있다.",
         "extract_schedules_from_history나 collect_member_schedules의 rows/schedule_summary가 비어 있으면 "
         "그 기간에 대한 기록이 없다는 뜻이니, 일정이 있다/없다를 짐작해서 답하지 않는다.",
+        "공유 일정 저장소에 일정을 직접 등록하거나 고쳐야 하면 create_shared_schedule을, 등록된 일정을 지워야 하면 "
+        "delete_shared_schedule을 호출한다. 이 두 tool은 조회와 달리 공유 저장소를 실제로 바꾸므로, "
+        "사용자가 등록/수정/삭제를 명시적으로 요청했을 때만 사용한다. 조회 요청에는 절대 쓰지 않는다.",
+        "create_shared_schedule은 schedule_id를 넘기면 그 일정을 갱신하고, 넘기지 않으면 새 일정을 만든다. "
+        "기존 일정을 고치는 경우라면 먼저 list_shared_schedules로 schedule_id를 확인한 뒤 그 값을 넘긴다. "
+        "확인 없이 새로 만들면 같은 일정이 두 건으로 늘어난다.",
+        "delete_shared_schedule은 schedule_id와 source_conversation_id 중 하나만 지정해서 호출한다. "
+        "두 값을 같이 넘기면 둘 중 하나라도 일치하는 row가 모두 지워져 의도한 것보다 많이 삭제된다. "
+        "지울 대상의 schedule_id를 모르면 먼저 list_shared_schedules로 확인하고, 어떤 일정을 지울지 "
+        "사용자에게 알린 뒤 삭제한다.",
     ]
 
 
