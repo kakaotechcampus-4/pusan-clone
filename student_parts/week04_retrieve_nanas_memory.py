@@ -344,7 +344,12 @@ def search_conversation_message_rows(
 
 @tool(args_schema=AddPersonalReferenceInput)
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
-    """개인 참고자료를 ChromaDB에 추가합니다."""
+    """일정에 영향을 주는 선호(선호 시간대, 회의 길이, 피하고 싶은 요일 등)를 ChromaDB에 저장합니다.
+
+    일정 조율에 직접 쓰이는 선호만 저장합니다. 음식 취향처럼 일정과 무관한 내용은
+    저장하지 않습니다. 앱이 모든 발화를 대화 기록에 남기므로 그런 내용은
+    search_conversation_messages로 찾을 수 있습니다.
+    """
     payload = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags or [])
     return json_payload(payload)
 
@@ -352,7 +357,12 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
-    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
+    """일정에 영향을 주는 선호를 ChromaDB와 OpenAI embedding 기반으로 검색합니다.
+
+    선호 시간대, 회의 길이, 피하고 싶은 요일처럼 일정 조율에 쓰이는 선호만 들어 있습니다.
+    일정과 무관한 취향이나 과거에 나눈 대화 내용은 여기서 찾지 말고
+    search_conversation_messages를 사용합니다.
+    """
     payload = {"hits": search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)}
     return json_payload(payload)
 
@@ -464,30 +474,52 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        "이번 주차부터 Nana는 검색 도구 세 가지를 추가로 가진다: search_personal_references(개인 참고자료 검색), "
+        "이번 주차부터 Nana는 검색 도구 세 가지를 추가로 가진다: search_personal_references(일정 관련 선호 검색), "
         "search_saved_requests(SQLite에 저장된 일정/할 일/알림 검색), "
         "search_conversation_messages(SQLite에 저장된 일반 채팅 발화 검색).",
-        "'내가 적어둔', '선호', '메모', '참고자료' 같은 개인 지식/선호에 대한 질문이면 search_personal_references를 호출한다.",
+        "검색 도구를 고를 때의 기본값은 search_conversation_messages다. 어느 도구가 맞는지 판단이 서지 않으면 "
+        "search_conversation_messages를 호출한다. search_personal_references는 사용자가 일정을 잡을 때 "
+        "지켜야 할 선호를 묻는 것이 확실한 경우에만 쓴다.",
+        "이 기본값이 안전한 이유는 두 저장소의 관계에 있다. 사용자가 말한 내용은 모두 대화 기록에 남고, "
+        "그중 일정 선호만 참고자료에 따로 저장된다. 따라서 대화 기록에는 근거가 될 발화가 반드시 있다.",
+        "반대로 참고자료 검색은 저장된 항목 중 query와 가장 가까운 것을 항상 반환한다. 참고자료로 잘못 보내면 "
+        "결과가 비는 게 아니라, 질문과 무관한 일정 선호가 그럴듯한 모습으로 딸려 나온다. "
+        "틀렸다는 신호 없이 틀린 답을 하게 되므로, 애매하면 대화 기록을 고른다.",
+        "search_personal_references에는 일정 조율에 직접 영향을 주는 선호만 들어 있다. "
+        "'회의는 오전이 좋다', '점심시간은 비워둔다', '팀 싱크는 60분 이하로 잡는다'처럼 "
+        "일정을 잡을 때 지켜야 할 선호를 묻는 질문이면 search_personal_references를 호출한다.",
+        "일정과 무관한 취향이나 관심사(음식, 취미 등)는 참고자료로 저장되지 않고 대화 기록에만 남는다. "
+        "그런 내용을 물으면 search_personal_references가 아니라 search_conversation_messages를 호출한다.",
         "'예전에 잡은 일정', '저장해둔 할 일', '전에 만든 알림'처럼 구조화 저장 기록에 대한 질문이면 search_saved_requests를 호출한다.",
         "'예전에 나눈 대화', '저번에 뭐라고 했는지', '그때 내가/네가 말한 거'처럼 구조화 저장 기록이 아니라 "
         "과거 채팅 발화 자체를 찾아야 하는 질문이면 search_conversation_messages를 호출한다.",
+        "'저번에 ~ 얘기한 거 찾아줘'처럼 과거에 나눈 이야기를 찾아달라는 요청은 주제가 무엇이든 "
+        "search_conversation_messages를 호출한다. 주제가 선호처럼 보여도, 사용자가 묻는 대상이 "
+        "'그때 한 이야기'라면 대화 기록이 맞는 출처다. search_personal_references는 지금 일정을 잡을 때 "
+        "지켜야 할 선호가 무엇인지 물을 때만 쓴다.",
         "'한 번에', '통합해서', '이전 방식대로'처럼 참고자료와 일정을 동시에 찾아달라는 요청이면 "
         "search_personal_references와 search_saved_requests를 따로 부르는 대신 search_nana_memory 하나로 조회한다.",
         "search_nana_memory의 date_from/date_to는 사용자가 기간을 명시적으로 언급했을 때만 채우고, "
         "언급이 없으면 비워둔 채로 호출한다. 임의로 '이번 주' 같은 기본 범위를 채우면 실제로 관련 있는 "
         "일정/할 일/알림이 범위 밖으로 걸러져 빠질 수 있다.",
-        "사용자가 새로운 개인 참고자료(선호, 메모, 규칙 등)를 알려주면 add_personal_reference로 저장한다. tags가 없으면 빈 list로 넘긴다.",
+        "사용자가 일정에 영향을 주는 새 선호(선호 시간대, 회의 길이, 피하고 싶은 요일 등)를 알려주면 "
+        "add_personal_reference로 저장한다. tags가 없으면 빈 list로 넘긴다.",
+        "일정과 무관한 취향이나 잡담은 add_personal_reference로 저장하지 않는다. 앱이 모든 발화를 "
+        "대화 기록에 남기므로 저장하지 않아도 나중에 search_conversation_messages로 찾을 수 있고, "
+        "참고자료에 섞이면 일정 선호 검색의 정확도가 떨어진다.",
         "search_personal_references의 결과는 hits 키, search_saved_requests의 결과는 rows 키에 들어있다. "
-        "두 검색 결과가 모두 비어 있으면 근거가 없다고 답하고, 대화 맥락이나 추측으로 내용을 지어내지 않는다.",
+        "search_personal_references가 비어 있으면 사용자가 찾는 내용이 일정 선호가 아니라 지난 대화에 "
+        "있을 수 있으므로 search_conversation_messages를 한 번 더 시도한다. "
+        "그래도 모든 검색 결과가 비어 있으면 근거가 없다고 답하고, 추측으로 내용을 지어내지 않는다.",
         "search_conversation_messages 결과 chunk는 한 대화의 여러 발화를 시각 | role | 내용 형태로 함께 담고 있고, "
         "그 안에는 Nana(assistant)가 과거에 추측이나 오답으로 답했던 내용도 섞여 있을 수 있다. "
         "role이 assistant로 표시된 과거 발화는 그 자체로 사실 근거로 삼지 않고, 반드시 user 발화나 "
         "search_personal_references/search_saved_requests 같은 원천 데이터로 다시 확인한 뒤에만 사실로 인정한다.",
         "참고자료 검색 결과와 일정/할 일 검색 결과는 서로 다른 출처이므로 섞어서 하나의 근거처럼 말하지 않고, "
         "어느 출처에서 찾았는지 구분해서 답한다.",
-        "사용자의 개인 참고자료나 저장된 일정/할 일/알림에 대해 물으면, 답하기 전에 반드시 먼저 "
-        "search_personal_references 또는 search_saved_requests를 호출해서 확인한다. 검색 없이 "
-        "'있다'/'없다'를 짐작해서 답하지 않는다.",
+        "어느 도구를 쓸지는 위 기본값에 따라 정하고, 이 규칙은 그렇게 고른 도구를 실제로 호출하라는 뜻이다. "
+        "사용자의 일정 관련 선호나 저장된 일정/할 일/알림에 대해 물으면 검색 없이 '있다'/'없다'를 짐작해서 "
+        "답하지 않고, 기본값에 따라 고른 검색 도구를 호출해 확인한 뒤에 답한다.",
         "사용자가 명시적으로 요청하지 않으면 저장된 일정/할 일/알림을 스스로 수정하거나 삭제하지 않는다. "
         "다른 요청이나 선호를 이유로, 물어보지 않은 저장된 일정을 임의로 조정하지 않는다. "
         "일정 조정이 필요해 보이면 먼저 사용자에게 확인을 구한다.",
