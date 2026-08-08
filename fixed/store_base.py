@@ -34,12 +34,13 @@ def decode_schedule_row(row: dict[str, Any]) -> dict[str, Any]:
         decoded["attendees"] = json.loads(raw_attendees)
     except Exception:
         decoded["attendees"] = []
+    decoded["is_secret"] = bool(decoded.get("is_secret", 0))
     return decoded
 
 
 SCHEDULE_COLUMNS = (
     "schedule_id, request_id, owner, title, date, start_time, end_time, "
-    "attendees_json, source, created_at"
+    "attendees_json, is_secret, source, created_at"
 )
 SCHEDULE_COLUMNS_WITH_KIND = (
     f"{SCHEDULE_COLUMNS}, "
