@@ -521,12 +521,11 @@ class AppSQLiteStore(SQLiteFileStore):
 
     def list_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
         query = """
-            SELECT title, date, start_time, end_time, created_at
+            SELECT title, date, start_time, created_at
             FROM reminders
             ORDER BY
                 date ASC,
                 start_time ASC,
-                end_time ASC,
                 created_at ASC
             LIMIT ?
         """

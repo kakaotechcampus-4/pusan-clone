@@ -159,7 +159,7 @@ class StructuredRequest(BaseModel):
             "요청 종류(personal_schedule: 사용자 외의 참석자가 없는 개인 일정 생성 요청, "
             "group_schedule: 사용자 외의 참석자가 1명 이상 언급된 일정 생성 요청. 예) '철수랑 회의', '영희와 점심'"
             "todo: 완료해야 하는 작업 등록 요청, "
-            "reminder: start_time에 한 번, end_time에 한 번 알림 등록 요청, "
+            "reminder: start_time에 알림 등록 요청, "
             "unknown: 분류할 수 없는 요청)"
         )
     )
