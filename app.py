@@ -300,6 +300,7 @@ def finish_agent_response(
     pending_message: str,
     history: list[dict[str, Any]] | None,
     conversation_id: str | None,
+    secret_mode: bool = False,
 ) -> Any:
     history = history or []
     pending_message = (pending_message or "").strip()
@@ -317,7 +318,7 @@ def finish_agent_response(
         return
 
     active_conversation_id = conversation_id or None
-    for event in runtime.stream_agent(pending_message, active_conversation_id):
+    for event in runtime.stream_agent(pending_message, active_conversation_id, secret_mode=secret_mode): # 런타임 호출에 secret_mode 전달
         if event.status_text:
             history = _replace_pending_status(history, event.status_text)
             yield (
@@ -429,7 +430,9 @@ def build_demo() -> gr.Blocks:
                                 lines=2,
                                 elem_id="kanana-input",
                             )
-                            send_btn = gr.Button("↑", elem_id="kanana-send", elem_classes=["send-button"])
+                            with gr.Column(min_width=110, scale=0, elem_classes=["send-controls"]):
+                                secret_mode = gr.Checkbox(label="Secret", value=False, elem_id="secret-mode") # 시크릿 대화 체크박스 컴포넌트
+                                send_btn = gr.Button("↑", elem_id="kanana-send", elem_classes=["send-button"])
             with gr.Tab("상세"):
                 with gr.Row(elem_classes=["details-layout"]):
                     with gr.Column(scale=1, min_width=720, elem_classes=["detail-card", "trace-detail-card"]):
@@ -470,7 +473,7 @@ def build_demo() -> gr.Blocks:
             queue=False,
         ).then(
             finish_agent_response,
-            inputs=[pending_message, chatbot, conversation_id],
+            inputs=[pending_message, chatbot, conversation_id, secret_mode],
             outputs=finish_outputs,
             show_progress="hidden",
         )
