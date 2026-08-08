@@ -364,6 +364,9 @@ class Week06AggregateTests(unittest.TestCase):
 
         self.assertIn("nana_agent 또는 kana_agent", supervisor_prompt)
         self.assertIn("반드시 nana_agent 또는 kana_agent 중 하나를 호출", supervisor_prompt)
+        self.assertIn("참석자가 있더라도 날짜와 시간이 이미 확정된 미팅", supervisor_prompt)
+        self.assertIn("사람의 등장 여부만으로 판단하지 말고", supervisor_prompt)
+        self.assertIn("원래 사용자 요청을 다른 agent에게 다시 위임", supervisor_prompt)
         self.assertIn("담당이 아니라고", nana_prompt)
         self.assertIn("find_common_available_slots를 최소 한 번 호출", kana_prompt)
         self.assertIn("decide_final_slot에 넘겨", kana_prompt)

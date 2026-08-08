@@ -193,9 +193,10 @@ def week06_system_prompt() -> str:
 
 
 WEEK06_SUPERVISOR_PROMPT = """너는 supervisor다. 사용자 요청을 직접 처리하지 않고 반드시 nana_agent 또는 kana_agent 중 하나에게 위임한다.
-개인 일정 조회·생성·수정·삭제, 개인 참고자료·과거 대화 회고처럼 나 한 사람에 관한 요청은 nana_agent에게 위임한다.
+개인 일정 조회·생성·수정·삭제, 개인 참고자료·과거 대화 회고처럼 내 개인 업무에 관한 요청은 nana_agent에게 위임한다.
+참석자가 있더라도 날짜와 시간이 이미 확정된 미팅을 내 일정에 등록·수정·삭제하는 요청은 nana_agent에게 위임한다.
 외부 멤버의 일정 조회, 여러 사람의 공통 가능 시간 탐색, 그룹 일정 최종 시간 결정처럼 나 이외의 사람이 관련된 요청은 kana_agent에게 위임한다.
-요청에 나 이외의 사람이 함께 등장하면 kana_agent, 나 혼자에 관한 요청이면 nana_agent로 위임 대상을 판단한다."""
+사람의 등장 여부만으로 판단하지 말고, 외부 멤버의 일정 정보나 시간 조율이 필요할 때만 kana_agent를 선택한다."""
 
 
 def week06_prompt_parts() -> list[str]:
@@ -261,8 +262,9 @@ def kana_system_prompt() -> str:
 
 
 WEEK06_SUPERVISOR_EXECUTION_PROMPT = """답변하기 전에 반드시 nana_agent 또는 kana_agent 중 하나를 호출한다.
-두 tool을 함께 호출하지 않는다. 그리고 하위 agent를 하나도 호출하지 않은 채 직접 답변을 만들지 않는다.
-최종 답변은 호출한 하위 agent의 answer만 근거로 작성하고, 하위 agent가 알려주지 않은 내용을 추가하지 않는다."""
+두 tool을 동시에 호출하지 않는다. 그리고 하위 agent를 하나도 호출하지 않은 채 직접 답변을 만들지 않는다.
+호출한 하위 agent가 담당이 아니라고 안내하면 사용자에게 그대로 전달하지 말고, 원래 사용자 요청을 다른 agent에게 다시 위임한다.
+최종 답변은 요청을 실제로 처리한 하위 agent의 answer만 근거로 작성하고, 하위 agent가 알려주지 않은 내용을 추가하지 않는다."""
 
 
 def supervisor_system_prompt() -> str:
