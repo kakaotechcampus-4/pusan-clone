@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+from datetime import date
 from typing import Any
 
 import pytest
@@ -514,6 +515,7 @@ class TestSubagents:
 class TestToolComposition:
     def test_kana_and_supervisor_expose_only_their_assigned_tools(self, week06):
         assert [item.name for item in week06.kana_tools()] == [
+            "resolve_relative_date_range",
             "extract_schedule_request",
             "search_previous_conversations",
             "load_conversation_messages",
@@ -558,3 +560,108 @@ class TestToolComposition:
                 "system_prompt": "supervisor-prompt",
             }
         ]
+
+
+class TestRelativeDateRange:
+    """상대 날짜 표현을 달력 범위로 바꾸는 순수 함수입니다.
+
+    이 계산을 도구로 분리한 이유는 실측 때문입니다. 이전에는 Kana가 상대 날짜를
+    extract_schedule_request로 해석했는데, 그 도구는 저장 요청을 구조화하는 용도라
+    structured_request.date 한 칸만 있습니다. "다음주 중에"처럼 범위를 가리키는 표현은
+    담길 자리가 없어 date=None으로 돌아왔고, Kana가 같은 인자로 6번 재호출한 뒤 포기했습니다.
+
+    today를 인자로 받으므로 달 경계와 윤년을 실행 시점과 무관하게 고정할 수 있습니다.
+    """
+
+    # 2026-08-08은 토요일입니다. 주 경계는 fixed/runtime_clock과 같은 월요일 시작 규칙입니다.
+    SATURDAY = date(2026, 8, 8)
+
+    @pytest.mark.parametrize(
+        ("unit", "quantity", "weekday", "expected"),
+        [
+            ("day", 0, None, ("2026-08-08", "2026-08-08")),
+            ("day", 3, None, ("2026-08-11", "2026-08-11")),
+            ("day", -1, None, ("2026-08-07", "2026-08-07")),
+            ("week", 0, None, ("2026-08-03", "2026-08-09")),
+            ("week", 1, None, ("2026-08-10", "2026-08-16")),
+            ("week", -1, None, ("2026-07-27", "2026-08-02")),
+            ("week", 1, "목", ("2026-08-13", "2026-08-13")),
+            ("week", 0, "토", ("2026-08-08", "2026-08-08")),
+            ("month", 0, None, ("2026-08-01", "2026-08-31")),
+            ("month", 1, None, ("2026-09-01", "2026-09-30")),
+            ("year", 1, None, ("2027-01-01", "2027-12-31")),
+            ("year", -1, None, ("2025-01-01", "2025-12-31")),
+        ],
+    )
+    def test_resolves_common_expressions(self, week06, unit, quantity, weekday, expected):
+        assert week06.relative_date_range(unit, quantity, weekday, self.SATURDAY) == expected
+
+    @pytest.mark.parametrize(
+        ("today", "quantity", "expected"),
+        [
+            # 12월에서 다음 달로 넘어가면 해가 바뀝니다.
+            (date(2026, 12, 15), 1, ("2027-01-01", "2027-01-31")),
+            # 1월에서 지난달로 가면 해가 되돌아갑니다.
+            (date(2026, 1, 5), -1, ("2025-12-01", "2025-12-31")),
+            # 윤년 2월의 말일은 29일입니다.
+            (date(2028, 1, 31), 1, ("2028-02-01", "2028-02-29")),
+            # 평년 2월은 28일입니다.
+            (date(2026, 1, 31), 1, ("2026-02-01", "2026-02-28")),
+        ],
+    )
+    def test_month_arithmetic_crosses_year_and_leap_boundaries(
+        self, week06, today, quantity, expected
+    ):
+        assert week06.relative_date_range("month", quantity, None, today) == expected
+
+    def test_weekday_narrowing_inside_a_month_picks_the_first_match(self, week06):
+        """범위가 하루보다 길면 그 안의 첫 해당 요일로 좁힙니다."""
+
+        assert week06.relative_date_range("month", 0, "화", self.SATURDAY) == (
+            "2026-08-04",
+            "2026-08-04",
+        )
+
+    def test_unknown_unit_and_weekday_are_rejected(self, week06):
+        with pytest.raises(ValueError, match="단위"):
+            week06.relative_date_range("fortnight", 1, None, self.SATURDAY)
+        with pytest.raises(ValueError, match="요일"):
+            week06.relative_date_range("week", 1, "Thursday", self.SATURDAY)
+
+    def test_weekday_missing_from_a_single_day_range_is_rejected(self, week06):
+        """하루짜리 범위에 없는 요일을 요구하면 조용히 다른 날을 주지 않습니다."""
+
+        with pytest.raises(ValueError, match="없습니다"):
+            week06.relative_date_range("day", 0, "월", self.SATURDAY)
+
+    def test_tool_returns_the_range_with_todays_base_date(self, week06, monkeypatch):
+        monkeypatch.setattr(week06, "current_app_date", lambda: self.SATURDAY)
+        monkeypatch.setattr(week06, "current_app_date_iso", lambda: self.SATURDAY.isoformat())
+
+        payload = json.loads(
+            week06.resolve_relative_date_range.invoke({"unit": "week", "quantity": 1})
+        )
+
+        assert payload["ok"] is True
+        assert payload["base_date"] == "2026-08-08"
+        assert (payload["date_from"], payload["date_to"]) == ("2026-08-10", "2026-08-16")
+
+    def test_tool_reports_impossible_requests_instead_of_raising(self, week06, monkeypatch):
+        """스키마는 통과하지만 계산이 불가능한 조합은 ok:false로 돌려줍니다.
+
+        도구가 예외를 던지면 agent는 "도구가 고장났다"를 보게 되고, 조용히 다른 날짜를
+        돌려주면 틀린 날짜가 저장됩니다. 둘 다 피합니다.
+        """
+
+        monkeypatch.setattr(week06, "current_app_date", lambda: self.SATURDAY)
+
+        payload = json.loads(
+            # 토요일 하루짜리 범위에는 월요일이 없습니다.
+            week06.resolve_relative_date_range.invoke({"unit": "day", "weekday": "월"})
+        )
+
+        assert payload["ok"] is False
+        assert "월" in payload["error"]
+
+    def test_kana_can_reach_the_tool(self, week06):
+        assert week06.resolve_relative_date_range in week06.kana_tools()

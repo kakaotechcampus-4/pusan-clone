@@ -202,6 +202,25 @@ OPEN_WEEK_SLOT = {
     "reason": "조회된 방해 일정이 없어 모두 가능합니다.",
 }
 
+# 회의 길이를 말하지 않은 요청의 후보입니다. 도구 기본값(`week06:427`의
+# `duration_minutes: int = Field(default=60, ge=30, le=480)`)과 같은 한 시간짜리입니다.
+DEFAULT_DURATION_SLOT = {
+    "date": "2026-08-20",
+    "start_time": "09:00",
+    "end_time": "10:00",
+    "duration_minutes": 60,
+    "reason": "조회된 방해 일정이 없어 업무시간 앞머리에 한 시간을 잡았습니다.",
+}
+
+# 상대 범위 케이스: EVAL_TODAY(2026-07-26, 일요일) 기준 "다음주"는 07-27(월)~08-02(일)입니다.
+RELATIVE_WEEK_SLOT = {
+    "date": "2026-07-27",
+    "start_time": "09:00",
+    "end_time": "10:00",
+    "duration_minutes": 60,
+    "reason": "조회된 방해 일정이 없어 다음 주 첫날 오전에 한 시간을 잡았습니다.",
+}
+
 # 공통 시간 없음 케이스: 허용 창(09:00~10:00)이 철수의 고정 일정과 정확히 겹칩니다.
 BLOCKED_ROWS = [
     {
@@ -532,6 +551,76 @@ WEEK06_ROUTING_CASES = [
             "role_expectation": SUPERVISOR_HANDOFF_ROLE_EXPECTATION,
         },
     },
+    # 근거: 실제 앱 재현에서 나온 결함입니다. Supervisor가 이어지는 턴에서 위임 query에 연도를
+    # 채우며 2024를 지어냈습니다(대화 어디에도 2024는 없었습니다).
+    #
+    # 원인은 앵커 부재입니다. Kana와 Nana 프롬프트에는 "오늘은 ...이다"가 있지만 Supervisor에는
+    # 없습니다. 자기완결 query를 쓸 책임은 Supervisor에 있는데 날짜 기준만 없는 구조입니다.
+    # 앞 턴 답변이 "내일 7월 27일"처럼 사람에게 자연스럽게 연도를 빼고 말하면, 다음 턴에서 그
+    # 답변이 유일한 근거가 되는 순간 연도를 지어내게 됩니다.
+    #
+    # 임의의 연도가 아니라 하필 2024가 나온 것이 앵커 부재의 단서였습니다. 모델이 학습 데이터가
+    # 몰린 시점으로 끌린 것입니다.
+    #
+    # 트리거가 구체적입니다. 후속 요청이 "변경해줘"면 앞 답변의 표기("내일 7월 27일")를 그대로
+    # 옮겨 연도가 필요 없지만, "저장해줘"면 날짜를 완전한 형식으로 새로 씁니다. 그때 연도가
+    # 필요해지고 앵커가 없어 지어냅니다. 수정 전 상태에서 6/6 재현됩니다.
+    #
+    # 연도를 반드시 쓰라고 요구하지는 않습니다(연도 없이 넘기면 앵커가 있는 하위가 해석합니다).
+    # 잡아야 할 것은 **틀린 연도를 확정해서 넘기는 것**이라 not_contains로 봅니다.
+    #
+    # 사용자가 이미 저장된 건을 또 저장해 달라고 하는 상황이라 "이미 저장했다고 답해야 하지
+    # 않나"라는 별개 논점이 섞여 있습니다. 그건 이 케이스가 보는 대상이 아니므로 판정에 넣지
+    # 않았습니다.
+    {
+        "id": "week06.supervisor.year_anchor_on_followup",
+        "surface": "supervisor",
+        "group": "Supervisor 이어지는 턴의 날짜 기준",
+        "rule": "no-fabricated-year",
+        "repeats": 3,
+        "held_out": True,
+        "history": [
+            {"role": "user", "content": "철수랑 내일 미팅 잡아줘"},
+            {
+                "role": "assistant",
+                "content": "내일 7월 27일 오전 11시부터 12시까지 철수와 미팅 일정을 잡아 저장했습니다.",
+            },
+        ],
+        "user": "응 저장해줘",
+        "tool_results": {
+            "nana_agent": delegated_result(
+                "nana_agent",
+                "7월 27일 오전 11시부터 12시까지 철수와의 미팅 일정을 저장했습니다.",
+            ),
+            "kana_agent": delegated_result(
+                "kana_agent",
+                "일정 저장은 제 담당이 아닙니다.",
+            ),
+        },
+        "expect": {
+            "called": ["nana_agent"],
+            "max_calls": {"nana_agent": 1, "kana_agent": 1},
+            "args": {
+                "nana_agent": {
+                    "query": {"not_contains": ["2023", "2024", "2025", "2027"]},
+                }
+            },
+        },
+        "judge": {
+            "reference_answer": "7월 27일 오전 11시부터 12시까지 철수와의 미팅 일정을 저장했습니다.",
+            "required_facts": ["7월 27일", "오전 11시~12시"],
+            "forbidden_claims": [
+                "2026년이 아닌 다른 해의 날짜를 말한다",
+                "하위 결과에 없는 일시를 말한다",
+                "Nana, Kana, 하위 에이전트 같은 내부 구성 요소나 담당 구분을 사용자에게 노출한다",
+            ],
+            "role_expectation": (
+                "이어지는 요청을 위임할 때 Supervisor는 대화에서 확인되지 않은 값을 만들어 넣지 않는다. "
+                "앞 답변이 연도를 생략했다면 오늘 날짜를 기준으로 맞는 연도를 채우는 것은 정상이고, "
+                "그와 다른 해를 확정하는 것이 위반이다."
+            ),
+        },
+    },
     # 근거: 실제 앱 재현에서 나온 결함입니다. 조율 결과가 "가능한 시간 없음"인데 사용자가 이어서
     # "저장해줘"라고 하자, Supervisor가 근거에 없는 날짜(8월 19일, 8월 17일)를 만들어 저장까지
     # 시켰습니다. 사용자 발화 자체가 모순인 상황("그 시간"이 가리킬 시간이 없음)입니다.
@@ -589,7 +678,10 @@ WEEK06_ROUTING_CASES = [
             ),
         },
         "expect": {
-            "max_calls": {"kana_agent": 1, "nana_agent": 1},
+            # judge가 확인해 준 바에 따르면 여기서 위임하면 답변이 앞선 사실과 모순됩니다.
+            # judge 없이도 잡히도록 predicate로 고정합니다.
+            "not_called": ["nana_agent"],
+            "max_calls": {"kana_agent": 1},
         },
         "judge": {
             "reference_answer": (
@@ -615,6 +707,9 @@ WEEK06_ROUTING_CASES = [
         "surface": "supervisor",
         "group": "Supervisor 조율 실패 후속 요청",
         "rule": "no-basis-no-fabrication",
+        # 경계 케이스라 실측 통과율이 4회 중 3회 수준입니다. 1회 실행으로는 한 번 삐끗한 것과
+        # 상시 실패를 구분할 수 없어 3회로 둡니다.
+        "repeats": 3,
         "held_out": True,
         "history": [
             {"role": "user", "content": "철수랑 8월 15일 가능한 시간 찾아줘"},
@@ -635,7 +730,10 @@ WEEK06_ROUTING_CASES = [
             ),
         },
         "expect": {
-            "max_calls": {"kana_agent": 1, "nana_agent": 1},
+            # judge가 확인해 준 바에 따르면 여기서 위임하면 답변이 앞선 사실과 모순됩니다.
+            # judge 없이도 잡히도록 predicate로 고정합니다.
+            "not_called": ["nana_agent"],
+            "max_calls": {"kana_agent": 1},
         },
         "judge": {
             "reference_answer": (
@@ -649,6 +747,127 @@ WEEK06_ROUTING_CASES = [
                 "Nana, Kana, 하위 에이전트 같은 내부 구성 요소나 담당 구분을 사용자에게 노출한다",
             ],
             "role_expectation": SUPERVISOR_NO_BASIS_ROLE_EXPECTATION,
+        },
+    },
+    # 근거: 리뷰어가 `week06_kanamate_decides_schedule.py:305`에 남긴 반례를 정면으로 재는
+    # 케이스입니다. "조율은 됐는데 저장이 남은" 상태에서 이어지는 저장 요청을 봅니다.
+    #
+    # 기존 `coordinate_then_save`는 한 턴 안에서 조율과 저장을 함께 시켜서, 하위가 저장을
+    # 거절하고 되돌아오는 경로를 지나지 않습니다. 실제 앱 재현(12회)에서 깨진 것은 그 경로가
+    # 아니라 **조율이 끝난 다음 턴의 저장**이었고, 저장 성공은 1/12였습니다.
+    #
+    # 관측된 실패 두 가지를 이 케이스 하나로 봅니다.
+    # - 위임을 아예 하지 않고 제목·장소처럼 저장에 필수가 아닌 정보를 되묻는다(2/6).
+    # - kana_agent로 보낸 뒤 "담당이 아니다"를 받고도 nana_agent로 넘기지 않는다(리뷰어 지적).
+    #
+    # kana_agent fixture는 잘못 위임했을 때 "담당이 아니다"를 받게 하려고 둡니다. 없으면 mock이
+    # ok:false를 돌려줘 실패 사유가 "fixture가 없다"로 덮입니다. 호출 자체는 not_called로 잡습니다.
+    #
+    # 주의: 이 케이스는 eval에서 수정 전에도 통과했습니다. 하네스 고정 시계(EVAL_TODAY)가
+    # 프로덕션과 다른 동작 영역이라, 여기서 green이라고 위 결함이 없다는 뜻은 아닙니다.
+    # 이 케이스가 지키는 것은 위임 형태이고, 결함 자체의 전후 비교는 실제 시계로 따로 했습니다.
+    #
+    # query에 날짜 표기를 강제하지 않습니다. Supervisor는 "8월 20일"과 "2026-08-20" 중 어느
+    # 쪽으로도 정규화하며 둘 다 자기완결적입니다. 값이 제대로 이월됐는지는 judge가 tool_trace를
+    # 읽고 판정하고, predicate는 **가리키는 표현을 해소하지 않은 것**만 잡습니다.
+    {
+        "id": "week06.supervisor.save_after_coordination",
+        "surface": "supervisor",
+        "group": "Supervisor 조율 후속 저장 인계",
+        "rule": "multi-step-delegation",
+        "repeats": 3,
+        "held_out": True,
+        "history": [
+            {"role": "user", "content": "철수랑 8월 20일 가능한 시간 찾아줘"},
+            {
+                "role": "assistant",
+                "content": "8월 20일 오전 10시부터 11시까지 철수와 만날 수 있는 시간으로 확정했습니다.",
+            },
+        ],
+        "user": "그 때 회의 일정 저장해줘",
+        "tool_results": {
+            "kana_agent": delegated_result(
+                "kana_agent",
+                "일정 저장은 제 담당이 아니어서 처리하지 못했습니다.",
+            ),
+            "nana_agent": delegated_result(
+                "nana_agent",
+                "8월 20일 오전 10시부터 11시까지 철수와의 회의 일정을 저장했습니다.",
+            ),
+        },
+        "expect": {
+            "called": ["nana_agent"],
+            # "저장해줘"는 문구만으로 담당이 정해지므로 kana 호출은 잡아야 할 라우팅 결함입니다.
+            # 하위가 거절했을 때 정정되는지는 별도 케이스(rerouted_confirmation)에서 봅니다.
+            "not_called": ["kana_agent"],
+            "max_calls": {"nana_agent": 1},
+            "args": {
+                "nana_agent": {
+                    "query": {"not_contains": ["그 때", "그때", "아까", "그 시간"]},
+                }
+            },
+        },
+        "judge": {
+            "reference_answer": "8월 20일 오전 10시부터 11시까지 철수와의 회의 일정을 저장했습니다.",
+            "required_facts": ["8월 20일", "오전 10시~11시", "철수", "저장 완료"],
+            "forbidden_claims": [
+                "Nana, Kana, 하위 에이전트 같은 내부 구성 요소나 담당 구분을 사용자에게 노출한다",
+                "저장하지 못했다고 말한다",
+                "앞선 답변에 있는 8월 20일 오전 10시~11시가 아닌 다른 시각을 말한다",
+                "제목이나 장소처럼 앞선 답변에 없던 정보를 요구하며 저장을 미룬다",
+            ],
+            "role_expectation": (
+                "앞 턴에서 날짜와 시각이 확정됐으므로 Supervisor는 되묻지 않고 저장을 위임한다. "
+                "위임 query에는 대화에서 확인한 날짜, 시각, 사람 이름을 채워 넣는다. "
+                "하위가 담당이 아니라고 답하면 다른 하위에 한 번 넘겨 저장을 끝낸다."
+            ),
+        },
+    },
+    # 근거: 리뷰어가 `week06_kanamate_decides_schedule.py:305`에 적은 정정 경로 자체를 봅니다.
+    # 위 save_after_coordination은 담당이 문구로 정해지는 요청이라 kana 호출을 결함으로 잡으므로,
+    # kana fixture가 쓰이지 않아 "거절을 받고 다른 쪽으로 넘기는" 동작이 평가되지 않습니다.
+    #
+    # 여기서는 첫 홉이 진짜로 애매한 요청을 씁니다. "확정해줘"는 아직 시간을 정하라는 뜻(kana)으로도,
+    # 정해진 시간을 확정 저장하라는 뜻(nana)으로도 읽힙니다. Supervisor에게는 어느 쪽인지 가릴
+    # 조회 도구가 없으므로 첫 홉이 빗나가는 것은 판단 실패가 아니라 정보 부족입니다.
+    # `supervisor_case`의 first_hop_is_ambiguous와 같은 취급이고, 보는 것은 결국 nana가
+    # 처리했는지입니다.
+    #
+    # held-out: 프롬프트에 없는 동사로 같은 규칙을 묻습니다("저장해줘"가 아니라 "확정해줘").
+    {
+        "id": "week06.supervisor.rerouted_confirmation",
+        "surface": "supervisor",
+        "group": "Supervisor 조율 후속 저장 인계",
+        "rule": "reroute-after-not-my-job",
+        "repeats": 3,
+        "held_out": True,
+        "user": "철수와 8월 20일 오전 10시부터 11시까지 회의 확정해줘.",
+        "tool_results": {
+            "kana_agent": delegated_result(
+                "kana_agent",
+                "8월 20일 오전 10시부터 11시까지로 확인했습니다. 그 일정은 아직 저장되지 않았습니다.",
+            ),
+            "nana_agent": delegated_result(
+                "nana_agent",
+                "8월 20일 오전 10시부터 11시까지 철수와의 회의 일정을 저장했습니다.",
+            ),
+        },
+        "expect": {
+            "called": ["nana_agent"],
+            "max_calls": {"nana_agent": 1, "kana_agent": 1},
+        },
+        "judge": {
+            "reference_answer": "8월 20일 오전 10시부터 11시까지 철수와의 회의 일정을 저장했습니다.",
+            "required_facts": ["8월 20일", "오전 10시~11시", "철수", "저장 완료"],
+            "forbidden_claims": [
+                "Nana, Kana, 하위 에이전트 같은 내부 구성 요소나 담당 구분을 사용자에게 노출한다",
+                "저장하지 못했다고 말한다",
+                "8월 20일 오전 10시~11시가 아닌 다른 시각을 말한다",
+            ],
+            "role_expectation": (
+                "첫 위임이 빗나가 아직 저장되지 않았다는 답을 받으면 Supervisor는 거기서 멈추지 않고 "
+                "다른 하위에 한 번 넘겨 저장을 끝낸다. 사용자에게는 처리 결과만 전한다."
+            ),
         },
     },
     # 근거(Nana): week04_prompt_parts()의 "일정, 할 일, 알림 저장은 extract_schedule_request ->
@@ -865,6 +1084,158 @@ WEEK06_ROUTING_CASES = [
             "role_expectation": (
                 "Nana는 개인 업무만 처리한다. 그룹 공통 시간 요청은 도구를 부르거나 결과를 꾸며내지 않고 "
                 "자기 담당이 아니라고만 알린다. 누가 맡는지는 밝히지 않는다."
+            ),
+        },
+    },
+    # 근거: 실제 앱 재현에서 나온 결함입니다. 시각이 이미 확정된 "철수와의 회의" 저장을 Nana가
+    # "그룹 일정으로 분류되어 개인 일정 저장 담당이 아니다"라며 거절했습니다(12회 중 3회).
+    # 한 번은 "개인 일정 저장 담당인 Nana가 처리할 수 없습니다"라며 자기 이름까지 노출했습니다.
+    #
+    # 원인은 `week06:241`의 "외부 멤버의 대화나 일정, 여러 사람의 공통 시간 결정은 네 담당이
+    # 아니다"가 **이미 정해진 일정의 저장**에까지 적용되는 것입니다. 반대편 `week06:304`에서
+    # Kana도 저장은 담당이 아니라고 하므로, 참석자가 있는 일정의 저장은 양쪽 모두 담당이 아닌
+    # 구멍이 됩니다.
+    #
+    # 도구 계약은 반대입니다. `week02:180`이 group_schedule을 "참여자가 존재하는 일정"으로
+    # 정의하고 `week03:293`의 save_structured_request가 personal_schedule과 group_schedule을
+    # 함께 받습니다. 즉 참석자가 있는 일정의 저장은 Nana의 도구가 처리하도록 만들어져 있습니다.
+    #
+    # 바로 위 group_request_boundary와 한 쌍입니다. 저쪽은 "공통 시간을 **정해** 달라"는
+    # 요청을 거절해야 통과하고, 이쪽은 "**정해진** 시각을 저장해 달라"는 요청을 처리해야
+    # 통과합니다. 경계를 한쪽만 두면 거절이 곧 정답이 되어 이 결함이 가점을 받습니다.
+    #
+    # user 문장은 사람의 말투가 아니라 **Supervisor가 실제로 넘기는 형태**입니다. 하위 에이전트의
+    # 입력은 언제나 Supervisor가 다시 쓴 query이므로(`week06:683`) 그 분포로 재야 합니다.
+    #
+    # 이 차이가 통과와 실패를 갈랐습니다. 실제 Nana에 직접 4회씩 태워 측정한 값입니다.
+    #   "2026년 8월 20일 목요일 오전 10시부터 11시까지 철수와의 회의 일정을 저장해줘"  저장 1/4
+    #   "8월 20일 오전 10시부터 11시까지 철수와의 회의 일정 저장해줘."                  저장 4/4
+    # 사람 말투로 쓴 처음 버전은 8회 반복에서도 전부 통과해 결함을 하나도 잡지 못했습니다.
+    #
+    # 이름도 함께 작용합니다. 같은 문형에서 영희로 바꾸면 오전·오후 모두 4/4로 저장합니다.
+    # 코드에는 차이가 없습니다 — extract_schedule_request가 두 이름에 대해 kind와 members까지
+    # 같은 구조를 돌려주고, Nana 프롬프트에는 사람 이름이 하나도 없습니다. 즉 경계 규칙이
+    # 덜 정해져 있어서 모델이 부수적인 단서로 판단을 메우고 있습니다. 고칠 대상이 바로 그것이라
+    # 규칙이 실제로 흔들리는 입력을 케이스로 둡니다.
+    #
+    # held_out을 붙이지 않습니다. 이 문장으로 프롬프트를 고쳤으므로 더 이상 일반화의 증거가
+    # 아닙니다. 일반화는 아래 heldout_personal_lunch_save가 봅니다.
+    #
+    # 주의: 이 케이스는 eval에서 수정 전에도 통과했습니다. 하네스 고정 시계(EVAL_TODAY)가
+    # 프로덕션과 다른 동작 영역이라, 여기서 green이라고 위 결함이 없다는 뜻은 아닙니다.
+    # 결함의 전후 비교(1/6 -> 6/6)는 실제 시계에서 따로 측정했습니다.
+    {
+        "id": "week06.nana.confirmed_group_schedule_save",
+        "surface": "nana",
+        "group": "Nana 역할 경계",
+        "rule": "save-confirmed-schedule-with-members",
+        "repeats": 3,
+        "user": "2026년 8월 20일 목요일 오전 10시부터 11시까지 철수와의 회의 일정을 저장해줘",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="철수와의 회의",
+                original_text="2026년 8월 20일 목요일 오전 10시부터 11시까지 철수와의 회의 일정을 저장해줘",
+                date="2026-08-20",
+                start_time="10:00",
+                end_time="11:00",
+                members=["철수"],
+            ),
+            "save_structured_request": save_tool_result(
+                "group_schedule",
+                title="철수와의 회의",
+                date="2026-08-20",
+                start_time="10:00",
+                end_time="11:00",
+                members=["철수"],
+            ),
+        },
+        "expect": {
+            "order": ["extract_schedule_request", "save_structured_request"],
+            "not_called": FORBIDDEN_LEGACY_SAVE,
+            "max_calls": {"save_structured_request": 1},
+            # 저장 tool 결과가 정적 fixture라 성공만 보면 엉뚱한 날짜·참석자로 저장해도 통과합니다.
+            "args": {
+                "save_structured_request": {
+                    "kind": {"equals": "group_schedule"},
+                    "date": {"equals": "2026-08-20"},
+                    "start_time": {"equals": "10:00"},
+                    "members": {"contains": ["철수"]},
+                }
+            },
+            "result_equals": successful_save_results("group_schedule"),
+        },
+        "judge": {
+            "reference_answer": "8월 20일 오전 10시부터 11시까지 철수와의 회의 일정을 저장했습니다.",
+            "required_facts": ["2026-08-20", "10:00", "철수", "저장 성공"],
+            "forbidden_claims": [
+                "이 요청이 자기 담당이 아니라고 말한다",
+                "그룹 일정이라서 저장할 수 없다고 말한다",
+                "Nana나 다른 에이전트 이름을 들어 누가 담당인지 밝힌다",
+                "저장에 실패했다고 말한다",
+                "철수의 일정을 조회했다",
+            ],
+            "role_expectation": (
+                "참석자가 있어도 시각이 이미 정해진 일정의 저장은 Nana가 직접 처리한다. "
+                "담당이 아닌 것은 공통 시간을 새로 정하는 일이지 정해진 일정을 저장하는 일이 아니다."
+            ),
+        },
+    },
+    # 위 케이스로 프롬프트를 고쳤으므로, 규칙을 이해한 것인지 그 문장을 외운 것인지 여기서 가릅니다.
+    # 튜닝에 한 번도 쓰지 않은 표면형입니다 - 사람 이름, 약속 종류, 달을 모두 바꿨습니다.
+    {
+        "id": "week06.nana.heldout_personal_lunch_save",
+        "surface": "nana",
+        "group": "Nana 역할 경계",
+        "rule": "save-confirmed-schedule-with-members",
+        "repeats": 3,
+        "held_out": True,
+        "user": "2026년 9월 3일 목요일 오후 1시부터 2시까지 민수와의 점심 약속 일정을 저장해줘",
+        "tool_results": {
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="민수와의 점심 약속",
+                original_text="2026년 9월 3일 목요일 오후 1시부터 2시까지 민수와의 점심 약속 일정을 저장해줘",
+                date="2026-09-03",
+                start_time="13:00",
+                end_time="14:00",
+                members=["민수"],
+            ),
+            "save_structured_request": save_tool_result(
+                "group_schedule",
+                title="민수와의 점심 약속",
+                date="2026-09-03",
+                start_time="13:00",
+                end_time="14:00",
+                members=["민수"],
+            ),
+        },
+        "expect": {
+            "order": ["extract_schedule_request", "save_structured_request"],
+            "not_called": FORBIDDEN_LEGACY_SAVE,
+            "max_calls": {"save_structured_request": 1},
+            "args": {
+                "save_structured_request": {
+                    "kind": {"equals": "group_schedule"},
+                    "date": {"equals": "2026-09-03"},
+                    "start_time": {"equals": "13:00"},
+                    "members": {"contains": ["민수"]},
+                }
+            },
+            "result_equals": successful_save_results("group_schedule"),
+        },
+        "judge": {
+            "reference_answer": "9월 3일 오후 1시부터 2시까지 민수와의 점심 약속을 저장했습니다.",
+            "required_facts": ["2026-09-03", "13:00", "민수", "저장 성공"],
+            "forbidden_claims": [
+                "이 요청이 자기 담당이 아니라고 말한다",
+                "여러 사람이 관련된 일정이라 저장할 수 없다고 말한다",
+                "저장에 실패했다고 말한다",
+                "민수의 일정을 조회했다",
+            ],
+            "role_expectation": (
+                "참석자가 있어도 시각이 이미 정해진 일정의 저장은 Nana가 직접 처리한다. "
+                "약속의 종류나 참석자 이름은 이 판단을 바꾸지 않는다."
             ),
         },
     },
@@ -1190,12 +1561,17 @@ WEEK06_ROUTING_CASES = [
         "repeats": 3,
         "user": "나와 철수, 영희가 8월 10일에 한 시간 만날 공통 시간을 정해줘.",
         "tool_results": {
-            "extract_schedule_request": {
-                "kind": "group_schedule",
-                "date_from": "2026-08-10",
-                "date_to": "2026-08-10",
-                "duration_minutes": 60,
-            },
+            # 실제 extract_schedule_request는 {ok, tool_name, base_date, structured_request}를
+            # 돌려주고 structured_request에는 date 한 칸만 있습니다. date_from/date_to/
+            # duration_minutes는 이 도구가 만들지 않는 필드라, 그렇게 적어 두면 Kana에게
+            # 실제로는 오지 않는 값을 쥐여 주게 됩니다.
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="철수, 영희와의 회의",
+                original_text="나와 철수, 영희가 8월 10일에 한 시간 만날 공통 시간을 정해줘.",
+                date="2026-08-10",
+                members=["철수", "영희"],
+            ),
             "collect_member_schedules": {
                 "ok": True,
                 "tool_name": "collect_member_schedules",
@@ -1227,6 +1603,10 @@ WEEK06_ROUTING_CASES = [
                 "find_common_available_slots",
                 "decide_final_slot",
             ],
+            # 요청에 날짜가 명시돼 있으므로 상대 날짜 도구를 부를 이유가 없습니다.
+            # 부르려면 quantity를 맞추려고 다시 날짜 계산을 해야 해서, 그 계산을 도구로
+            # 옮긴 뜻이 사라집니다.
+            "not_called": ["resolve_relative_date_range"],
             "max_calls": {
                 "collect_member_schedules": 1,
                 "find_common_available_slots": 1,
@@ -1284,12 +1664,15 @@ WEEK06_ROUTING_CASES = [
         "held_out": True,
         "user": "민수, 철수와 8월 17일부터 23일 사이에 한 시간 회의 시간을 정해줘.",
         "tool_results": {
-            "extract_schedule_request": {
-                "kind": "group_schedule",
-                "date_from": "2026-08-17",
-                "date_to": "2026-08-23",
-                "duration_minutes": 60,
-            },
+            # 기간 요청이라 실제 도구는 date 한 칸을 채우지 못합니다. 실측에서도 범위 표현에는
+            # date=None이 돌아왔습니다. 날짜 범위는 resolve_relative_date_range가 맡습니다.
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="민수, 철수와의 회의",
+                original_text="민수, 철수와 8월 17일부터 23일 사이에 한 시간 회의 시간을 정해줘.",
+                date=None,
+                members=["민수", "철수"],
+            ),
             "collect_member_schedules": {
                 "ok": True,
                 "tool_name": "collect_member_schedules",
@@ -1321,6 +1704,10 @@ WEEK06_ROUTING_CASES = [
                 "find_common_available_slots",
                 "decide_final_slot",
             ],
+            # 요청에 날짜가 명시돼 있으므로 상대 날짜 도구를 부를 이유가 없습니다.
+            # 부르려면 quantity를 맞추려고 다시 날짜 계산을 해야 해서, 그 계산을 도구로
+            # 옮긴 뜻이 사라집니다.
+            "not_called": ["resolve_relative_date_range"],
             "max_calls": {
                 "collect_member_schedules": 1,
                 "find_common_available_slots": 1,
@@ -1366,6 +1753,237 @@ WEEK06_ROUTING_CASES = [
             ),
         },
     },
+    # 근거: 실제 앱 재현에서 나온 결함입니다. "민수랑 다음주 중에 가능한 시간 찾아줘"에
+    # Kana가 extract_schedule_request를 **같은 인자로 6번** 부르고 전부 date=None을 받은 뒤
+    # 사용자에게 되물었습니다.
+    #
+    # 원인은 도구를 용도 밖으로 쓴 것입니다. extract_schedule_request는 저장 요청을 구조화하는
+    # 도구라 structured_request에 date 한 칸만 있고 범위를 담을 자리가 없습니다. "다음주"처럼
+    # 기간을 가리키는 표현은 구조적으로 null이 되고, Kana에는 그 다음에 갈 곳이 없었습니다.
+    #
+    # 그래서 날짜 계산을 resolve_relative_date_range로 옮겼습니다. 달력 산술은 순수 함수라
+    # tests/test_week06_kanamate_decides_schedule.py가 확정하고, 여기서는 LLM이 표현을 단위와
+    # 수량으로 옮긴 뒤 그 결과를 뒤 도구로 이어 붙이는지만 봅니다.
+    #
+    # collect_member_schedules의 날짜를 args로 보는 이유가 있습니다. 실측 4회 중 1회에서
+    # 해소된 범위 대신 오늘 날짜로 조회했습니다. find/decide만 맞으면 통과해 버리므로 첫 조회를
+    # 직접 확인합니다.
+    {
+        "id": "week06.kana.relative_week_range",
+        "surface": "kana",
+        "group": "Kana 상대 날짜 해석",
+        "rule": "resolve-relative-dates-with-the-tool",
+        "repeats": 3,
+        "held_out": True,
+        "user": "민수와 다음주 중에 가능한 공통 시간을 찾아줘.",
+        "tool_results": {
+            "resolve_relative_date_range": {
+                "ok": True,
+                "tool_name": "resolve_relative_date_range",
+                "base_date": "2026-07-26",
+                "date_from": "2026-07-27",
+                "date_to": "2026-08-02",
+            },
+            "collect_member_schedules": {
+                "ok": True,
+                "tool_name": "collect_member_schedules",
+                "rows": [],
+            },
+            "find_common_available_slots": {
+                "ok": True,
+                "tool_name": "find_common_available_slots",
+                "members": ["나", "민수"],
+                "busy_rows": [],
+                "candidate_slots": [RELATIVE_WEEK_SLOT],
+            },
+            "decide_final_slot": {
+                "final_slot": "2026-07-27 09:00-10:00",
+                "needs_agent_selection": False,
+                "selected_index": 0,
+                "candidate_slots": [RELATIVE_WEEK_SLOT],
+                "busy_rows": [],
+            },
+        },
+        "expect": {
+            "called": [
+                "resolve_relative_date_range",
+                "collect_member_schedules",
+                "find_common_available_slots",
+                "decide_final_slot",
+            ],
+            "order": [
+                "resolve_relative_date_range",
+                "collect_member_schedules",
+                "find_common_available_slots",
+                "decide_final_slot",
+            ],
+            # 범위 표현을 저장 구조화 도구로 보내던 경로가 되살아나는지 봅니다.
+            "not_called": ["extract_schedule_request"],
+            "max_calls": {
+                "resolve_relative_date_range": 1,
+                "collect_member_schedules": 1,
+                "find_common_available_slots": 1,
+                "decide_final_slot": 1,
+            },
+            "args": {
+                "resolve_relative_date_range": {
+                    "unit": {"equals": "week"},
+                    "quantity": {"equals": 1},
+                },
+                "collect_member_schedules": {
+                    "member_names": {"contains": ["민수"]},
+                    "date_from": {"equals": "2026-07-27"},
+                    "date_to": {"equals": "2026-08-02"},
+                },
+                "find_common_available_slots": {
+                    "date_from": {"equals": "2026-07-27"},
+                    "date_to": {"equals": "2026-08-02"},
+                    "candidate_slots": {"min_items": 1},
+                },
+                "decide_final_slot": {"needs_agent_selection": {"equals": False}},
+            },
+            "arg_equals_result": GROUP_SLOT_DATA_LINKS,
+            "candidates_are_valid": candidates_are_valid(
+                date_from="2026-07-27",
+                date_to="2026-08-02",
+                duration_minutes=60,
+            ),
+        },
+        "judge": {
+            "reference_answer": "다음 주 7월 27일 09:00~10:00로 확정했습니다.",
+            "required_facts": ["2026-07-27", "09:00-10:00", "확정됨", "민수"],
+            "forbidden_claims": [
+                "날짜 범위나 회의 길이를 사용자에게 되묻는다",
+                "2026-07-27~2026-08-02 밖의 날짜를 제시한다",
+                "가능한 시간이 없다고 말한다",
+                "공유 저장소나 개인 일정에 저장했다",
+            ],
+            "role_expectation": (
+                "Kana는 상대 날짜 표현을 도구로 실제 범위로 바꾼 뒤 그 범위로 일정을 모으고 "
+                "한 시간짜리 시간대를 확정한다. 날짜를 직접 계산하거나 사용자에게 되묻지 않는다."
+            ),
+        },
+    },
+    # 근거: 실제 앱 재현에서 나온 결함입니다. 회의 길이를 말하지 않은 요청에
+    # `decide_final_slot(final_slot="2026-08-13 09:00-18:00")`으로 업무시간 9시간 전체를
+    # 회의로 확정했습니다(12회 중 6회). 그러면 답변이 "9시부터 18시까지 가능합니다"가 되어
+    # 다음 턴의 저장 요청이 가리킬 시각이 없어집니다.
+    #
+    # 원인은 `week06:283`의 1단계가 "회의 길이와 허용 시간대를 파악한다"까지만 정하고 요청에
+    # 길이가 없을 때를 정하지 않는 것입니다. 도구 쪽에는 이미 답이 있습니다 — `week06:427`의
+    # `duration_minutes: int = Field(default=60, ge=30, le=480)`가 기본 한 시간이고 상한이
+    # 480분이라, 9시간은 인자로는 넘길 수조차 없는 값입니다. final_slot을 문자열로 넘겨
+    # 이 제약을 우회한 것입니다.
+    #
+    # 바로 위 empty_busy_rows_have_availability와 조회 결과(빈 rows)는 같고 요청에 길이가
+    # 없다는 점만 다릅니다. 기존 케이스는 사용자 문장에 "한 시간"이 있고 fixture가
+    # duration_minutes=60을 먹여주므로 Kana가 길이를 스스로 정할 일이 없습니다.
+    # 그래서 이 실패 모드는 기존 케이스로는 드러나지 않습니다.
+    #
+    # 판정은 candidates_are_valid에 겁니다. 후보의 길이·근무시간·날짜 계약을 순수 검증기로
+    # 확인하므로 9시간짜리 후보가 그대로 걸립니다.
+    #
+    # user 문장은 Supervisor가 실제로 넘긴 형태를 씁니다(`week06:683`의 query 하나가 하위의
+    # 입력 전부입니다). 사람 말투로 바꿔 쓰면 같은 결함이 재현되지 않는 것을 nana 쪽 케이스에서
+    # 실측했습니다. 같은 이유로 여기서도 실제 위임 문장의 형태를 유지합니다.
+    #
+    # held-out: 프롬프트와 기존 케이스에 없는 표면형입니다("정해줘"가 아니라 길이 없는 "찾아줘").
+    {
+        "id": "week06.kana.slot_without_duration",
+        "surface": "kana",
+        "group": "Kana 회의 길이 미지정",
+        "rule": "default-meeting-duration",
+        "repeats": 3,
+        "held_out": True,
+        # 실제 로그에는 "철수와 나"와 "나와 철수" 두 형태가 다 나옵니다. 앞의 형태에서는 Kana가
+        # member_names를 ['철수','나']와 ['나','철수'] 사이에서 오갔고, 그 순서는 이 케이스가
+        # 보려는 대상이 아닌데 member_names 데이터 링크를 흔듭니다. 순서가 안정적인 쪽을 씁니다.
+        "user": "2026년 8월 20일 목요일에 나와 철수의 공통 가능한 시간을 찾아줘.",
+        "tool_results": {
+            # 요청에 회의 길이가 없으므로 fixture도 길이를 주지 않습니다. 실제 도구의 스키마에도
+            # 회의 길이 필드는 없으니, 여기에 값을 만들어 넣으면 Kana가 길이를 정할 일이
+            # 없어져 케이스가 무의미해집니다.
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="철수와의 회의",
+                original_text="2026년 8월 20일 목요일에 나와 철수의 공통 가능한 시간을 찾아줘.",
+                date="2026-08-20",
+                members=["철수"],
+            ),
+            "collect_member_schedules": {
+                "ok": True,
+                "tool_name": "collect_member_schedules",
+                "rows": [],
+            },
+            "find_common_available_slots": {
+                "ok": True,
+                "tool_name": "find_common_available_slots",
+                "members": ["나", "철수"],
+                "busy_rows": [],
+                "candidate_slots": [DEFAULT_DURATION_SLOT],
+            },
+            "decide_final_slot": {
+                "final_slot": "2026-08-20 09:00-10:00",
+                "needs_agent_selection": False,
+                "selected_index": 0,
+                "candidate_slots": [DEFAULT_DURATION_SLOT],
+                "busy_rows": [],
+            },
+        },
+        "expect": {
+            "called": [
+                "collect_member_schedules",
+                "find_common_available_slots",
+                "decide_final_slot",
+            ],
+            "order": [
+                "collect_member_schedules",
+                "find_common_available_slots",
+                "decide_final_slot",
+            ],
+            # 요청에 날짜가 명시돼 있으므로 상대 날짜 도구를 부를 이유가 없습니다.
+            # 부르려면 quantity를 맞추려고 다시 날짜 계산을 해야 해서, 그 계산을 도구로
+            # 옮긴 뜻이 사라집니다.
+            "not_called": ["resolve_relative_date_range"],
+            "max_calls": {
+                "collect_member_schedules": 1,
+                "find_common_available_slots": 1,
+                "decide_final_slot": 1,
+            },
+            "args": {
+                "collect_member_schedules": {
+                    "member_names": {"contains": ["철수"]},
+                    "date_from": {"equals": "2026-08-20"},
+                    "date_to": {"equals": "2026-08-20"},
+                },
+                "find_common_available_slots": {
+                    "date_from": {"equals": "2026-08-20"},
+                    "date_to": {"equals": "2026-08-20"},
+                    "candidate_slots": {"min_items": 1},
+                },
+                "decide_final_slot": {"needs_agent_selection": {"equals": False}},
+            },
+            "arg_equals_result": GROUP_SLOT_DATA_LINKS,
+            "candidates_are_valid": candidates_are_valid(
+                date_from="2026-08-20",
+                date_to="2026-08-20",
+                duration_minutes=60,
+            ),
+        },
+        "judge": {
+            "reference_answer": "8월 20일 09:00~10:00로 확정했습니다. 철수와 겹치는 일정이 없습니다.",
+            "required_facts": ["2026-08-20", "한 시간짜리 시간대", "확정됨"],
+            "forbidden_claims": [
+                "업무시간 전체(09:00~18:00)를 하나의 회의 시간으로 확정한다",
+                "가능한 시간이 없다고 말한다",
+                "공유 저장소나 개인 일정에 저장했다",
+            ],
+            "role_expectation": (
+                "요청에 회의 길이가 없으면 Kana는 도구 기본값인 한 시간으로 보고 한 시간짜리 "
+                "시간대를 확정한다. 조회된 빈 시간 전체를 하나의 회의로 확정하지 않는다."
+            ),
+        },
+    },
     # 근거(Kana): "공통 시간 요청에서는 후보가 없더라도 위 세 도구를 모두 호출해야 한다.
     # collect_member_schedules 결과만 보고 답변을 끝내지 말고, 빈 candidate_slots도
     # find_common_available_slots로 검증한 뒤 decide_final_slot으로 미결정 상태를 기록한다."
@@ -1380,12 +1998,15 @@ WEEK06_ROUTING_CASES = [
         "held_out": True,
         "user": "나와 철수가 8월 11일 오전 9시부터 10시 사이에 한 시간 만날 수 있는지 정해줘.",
         "tool_results": {
-            "extract_schedule_request": {
-                "kind": "group_schedule",
-                "date_from": "2026-08-11",
-                "date_to": "2026-08-11",
-                "duration_minutes": 60,
-            },
+            "extract_schedule_request": extraction_tool_result(
+                kind="group_schedule",
+                title="철수와의 회의",
+                original_text="나와 철수가 8월 11일 오전 9시부터 10시 사이에 한 시간 만날 수 있는지 정해줘.",
+                date="2026-08-11",
+                start_time="09:00",
+                end_time="10:00",
+                members=["철수"],
+            ),
             "collect_member_schedules": {
                 "ok": True,
                 "tool_name": "collect_member_schedules",
@@ -1412,6 +2033,10 @@ WEEK06_ROUTING_CASES = [
                 "find_common_available_slots",
                 "decide_final_slot",
             ],
+            # 요청에 날짜가 명시돼 있으므로 상대 날짜 도구를 부를 이유가 없습니다.
+            # 부르려면 quantity를 맞추려고 다시 날짜 계산을 해야 해서, 그 계산을 도구로
+            # 옮긴 뜻이 사라집니다.
+            "not_called": ["resolve_relative_date_range"],
             "max_calls": {
                 "collect_member_schedules": 1,
                 "find_common_available_slots": 1,
