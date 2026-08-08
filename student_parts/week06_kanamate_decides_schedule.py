@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from calendar import monthrange
+from datetime import date, timedelta
+from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
@@ -10,7 +12,7 @@ from pydantic import BaseModel, Field
 from fixed.external_people_store import normalize_external_member_names
 from fixed.langchain_trace import extract_agent_events, extract_final_text
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
+from fixed.runtime_clock import current_app_date, current_app_date_iso
 from fixed.schedule_decision import (
     CommonSlotCandidate,
     decide_final_slot_payload,
@@ -200,16 +202,18 @@ def week06_prompt_parts() -> list[str]:
         너는 Nana와 Kana를 조율하는 Supervisor다. 직접 일정이나 저장소를 처리하지 않는다.
         오늘은 {current_app_date_iso()}이다.
 
-        사용자의 요청에서 처리할 일을 뽑고, 각 일마다 nana_agent와 kana_agent의 도구 설명을 읽어
-        맞는 쪽에 위임한다. 뽑는 대상은 사용자가 말한 일이다. 네가 떠올린 다음 단계는 넣지 않는다.
+        사용자의 요청에서 처리할 일을 추출하고, 각 일마다 nana_agent와 kana_agent 중 맞는 쪽에 위임한다.
+        추출할 대상은 사용자가 말한 일이다. 사용자가 명시적으로 지시하지 않은 작업을 위임하지 않는다.
         한 하위 에이전트가 한 번에 할 수 있는 일은 묶어서 한 번에 넘긴다.
-        개인 일정이 함께 언급되더라도 외부 멤버와의 공통 시간을 정하는 일은 kana_agent가 맡는다.
+        여러 사람과의 일정을 조율해야 하거나, 사용자 이외의 인물들에 대한 일정을 관리해야 한다면 kana_agent를 사용한다.
+        사용자 개인의 일정을 관리해야 한다면 nana_agent를 사용한다.
+        여기서 사용자 개인은 말을 거는 사용자(나)를 지칭하고, 외부 멤버는 나 이외의 나머지 인원을 뜻한다.
         """,
 
-        """
-        저장, 수정, 삭제는 바꿀 대상이 대화나 앞선 결과에서 확정돼 있어야 위임한다. 확정된 것이
-        없으면 위임하지 말고 무엇이 없어서 처리하지 못하는지 사용자에게 알린다.
-        """,
+        # """
+        # 저장, 수정, 삭제는 바꿀 대상이 대화나 앞선 결과에서 확정돼 있어야 위임한다. 확정된 것이
+        # 없으면 위임하지 말고 무엇이 없어서 처리하지 못하는지 사용자에게 알린다.
+        # """,
 
         """
         하위 에이전트는 이 대화도, 다른 하위 에이전트의 결과도 볼 수 없다. 네가 넘기는 query
@@ -220,8 +224,8 @@ def week06_prompt_parts() -> list[str]:
         - 대화에도 앞선 결과에도 없는 값은 지어내지 않는다.
         """,
 
+        "하위 결과를 받으면 남은 일이 있는지 본다. 있으면 다시 위임하고, 없으면 답한다.",
         """
-        하위 결과를 받으면 남은 일이 있는지 본다. 있으면 다시 위임하고, 없으면 답한다.
         같은 일을 같은 하위 에이전트에 다시 위임하지 않는다. 담당이 아니라고 답한 일은 다른 쪽에
         한 번 넘겨 보고, 그쪽도 담당이 아니면 거기서 멈춘다.
         """,
@@ -253,12 +257,10 @@ def kana_prompt_parts() -> list[str]:
         너는 외부 멤버와의 대화, 멤버 일정, 그룹 일정 조율을 담당하는 Kana다.
         도구가 반환하지 않은 대화나 일정을 추측하지 말고, 조회 결과를 근거로 답한다.
         오늘은 {current_app_date_iso()}이다. 사용자가 연도를 생략한 날짜는 오늘을 기준으로 해석한다.
-        요청에 "다음 주 토요일", "이번 주말"처럼 오늘을 기준으로 삼는 날짜 표현이 있으면 그 날짜를
-        직접 계산하지 말고, extract_schedule_request에 사용자 요청 문장을 통째로 넣어
-        structured_request.date로 실제 날짜를 확인한다. 날짜 표현만 잘라서 넣으면 date가 비어
-        돌아오므로 요청 문장 전체를 그대로 넘긴다.
-        확인한 날짜를 이후 도구의 date_from/date_to와 답변에 그대로 쓴다.
-        요청에 이미 "8월 15일"처럼 구체적인 날짜가 있으면 이 확인은 필요 없다.
+        상대적인 날짜 표현은 직접 계산하지 말고 resolve_relative_date_range로 바꾼 뒤,
+        돌려받은 date_from과 date_to를 이후 도구와 답변에 그대로 쓴다. 표현을 단위와 수량으로
+        옮기는 방법은 그 도구 설명에 있다.
+        요청에 이미 구체적인 날짜가 있으면 이 도구를 부르지 않는다.
 
         공통 가능 시간이나 그룹 회의 시간을 정하는 요청은 외부 대화 검색 요청이 아니다.
         날짜 범위가 명확한 공통 시간 요청에서는 search_previous_conversations를 호출하지 말고,
@@ -323,8 +325,8 @@ def supervisor_system_prompt() -> str:
         [
             *week06_prompt_parts(),
             """
-            답할 때는 하위 에이전트가 돌려준 answer만 근거로 삼고, 내용을 보완하거나 사실을 새로
-            만들지 않는다. 여러 번 위임했으면 각 answer의 결과를 하나의 답으로 합쳐 전한다.
+            답할 때는 사실을 지어내지 않는다. 모르면 모른다고 답한다.
+            여러 번 위임했으면 각 answer의 결과를 하나의 답으로 합쳐 전한다.
             answer에 있는 날짜, 시각, 사람 이름 같은 구체적인 값은 뭉뚱그리지 말고 그대로 전한다.
             처리하지 못한 일이 있으면 숨기지 말고 알린 뒤 어떻게 할지 사용자에게 물어본다.
 
@@ -478,6 +480,117 @@ class ProposeGroupScheduleInput(BaseModel):
     reason: str | None = None
 
 
+WEEKDAY_NAMES = ("월", "화", "수", "목", "금", "토", "일")
+
+
+def relative_date_range(
+    unit: str,
+    quantity: int,
+    weekday: str | None = None,
+    today: date | None = None,
+) -> tuple[str, str]:
+    """"다음 주", "3일 뒤", "내년" 같은 상대 표현을 [시작일, 종료일] 범위로 바꿉니다.
+
+    결과는 항상 범위입니다. 하루짜리 표현은 시작일과 종료일이 같은 범위가 됩니다.
+    주 경계는 `fixed/runtime_clock.next_weekday_date`와 같은 월요일 시작 규칙을 씁니다.
+
+    `today`를 받는 이유는 이 함수가 이 모듈에서 유일하게 시계에 의존하는 계산이기 때문입니다.
+    인자로 빼 두면 달 경계나 윤년 같은 경우를 실행 시점과 무관하게 테스트할 수 있습니다.
+    """
+
+    base = today or current_app_date()
+
+    if unit == "day":
+        start = end = base + timedelta(days=quantity)
+    elif unit == "week":
+        monday = base - timedelta(days=base.weekday()) + timedelta(weeks=quantity)
+        start, end = monday, monday + timedelta(days=6)
+    elif unit == "month":
+        months = base.year * 12 + (base.month - 1) + quantity
+        year, month = divmod(months, 12)
+        start = date(year, month + 1, 1)
+        end = date(year, month + 1, monthrange(year, month + 1)[1])
+    elif unit == "year":
+        year = base.year + quantity
+        start, end = date(year, 1, 1), date(year, 12, 31)
+    else:
+        raise ValueError(f"알 수 없는 단위입니다: {unit!r}")
+
+    if weekday is not None:
+        if weekday not in WEEKDAY_NAMES:
+            raise ValueError(f"알 수 없는 요일입니다: {weekday!r}")
+        target = WEEKDAY_NAMES.index(weekday)
+        matched = next(
+            (
+                start + timedelta(days=offset)
+                for offset in range((end - start).days + 1)
+                if (start + timedelta(days=offset)).weekday() == target
+            ),
+            None,
+        )
+        if matched is None:
+            raise ValueError(f"{start}~{end} 범위에 {weekday}요일이 없습니다")
+        start = end = matched
+
+    return start.isoformat(), end.isoformat()
+
+
+class RelativeDateRangeInput(BaseModel):
+    """상대 날짜 표현을 실제 날짜 범위로 바꾸는 입력입니다."""
+
+    unit: Literal["day", "week", "month", "year"] = Field(
+        description='날짜 단위. "3일 뒤"는 day, "다음 주"는 week, "다음 달"은 month, "내년"은 year'
+    )
+    quantity: int = Field(
+        default=0,
+        description='오늘을 0으로 둔 상대 수량. "다음"은 1, "지난"은 -1, "3일 뒤"는 3',
+    )
+    weekday: Literal["월", "화", "수", "목", "금", "토", "일"] | None = Field(
+        default=None,
+        description='"다음 주 목요일"처럼 특정 요일을 짚었을 때만 채운다. 범위 전체면 비워 둔다',
+    )
+
+
+@tool(args_schema=RelativeDateRangeInput)
+def resolve_relative_date_range(
+    unit: str,
+    quantity: int = 0,
+    weekday: str | None = None,
+) -> str:
+    """
+    상대적인 날짜 표현("다음 주", "3일 뒤", "내년", "다음 주 목요일")을 실제 달력 날짜로 바꿉니다.
+
+    요청에 달력 날짜가 이미 적혀 있으면 부르지 마세요. "8월 17일부터 23일까지"처럼 기간이라도
+    적혀 있으면 그대로 쓰면 되고, 이 도구는 그런 입력을 받도록 만들어지지 않았습니다.
+
+    부를 때는 날짜를 직접 계산하지 말고 표현을 단위와 수량으로만 옮기면 됩니다.
+    - "3일 뒤" -> unit="day", quantity=3
+    - "다음 주" -> unit="week", quantity=1
+    - "다음 주 목요일" -> unit="week", quantity=1, weekday="목"
+    - "지난달" -> unit="month", quantity=-1
+    - "내년" -> unit="year", quantity=1
+    하루짜리 표현은 date_from과 date_to가 같은 값으로 돌아옵니다.
+
+    요청에 "8월 15일"처럼 구체적인 날짜가 이미 적혀 있으면 부르지 마세요. 바꿀 것이 없고,
+    quantity를 맞추려면 날짜 계산을 직접 해야 해서 이 도구를 쓰는 뜻이 사라집니다.
+    """
+
+    name = _tool_name(resolve_relative_date_range)
+    try:
+        date_from, date_to = relative_date_range(unit, quantity, weekday)
+    except ValueError as error:
+        return json_payload(tool_result(name, ok=False, error=str(error)))
+
+    return json_payload(
+        tool_result(
+            name,
+            base_date=current_app_date_iso(),
+            date_from=date_from,
+            date_to=date_to,
+        )
+    )
+
+
 class AgentQueryInput(BaseModel):
     """하위 에이전트 위임 입력입니다."""
 
@@ -608,6 +721,7 @@ def decide_final_slot(
 
 def kana_tools() -> list[Any]:
     return [
+        resolve_relative_date_range,
         extract_schedule_request,
         search_previous_conversations,
         load_conversation_messages,
@@ -659,14 +773,15 @@ def propose_group_schedule(
 @tool(args_schema=AgentQueryInput)
 def nana_agent(query: str) -> str:
     """
-    개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다.
+    내 일정과 내 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다.
     Nana는 다음과 같은 작업을 수행하려고 할 때 적합합니다.
-    - 사용자의 개인 일정 생성, 조회, 수정, 삭제
+    - 나의 개인 일정 생성, 조회, 수정, 삭제
+      - 나 이외의 개인에 대한 일정을 조회하려면 Kana를 사용합니다.
     - todo, reminder와 저장된 개인 요청
-    - 개인 참고자료와, 이 앱에서 사용자와 주고받은 과거 대화 검색.
+    - 개인 참고자료와, 이 앱에서 나와 주고받은 과거 대화 검색.
       외부 멤버와 나눈 대화는 여기에 없으므로 그 대화를 찾는 일은 이 도구가 아닙니다.
-    - 사용자가 저장을 요청한 그룹 일정을 앱에 저장하는 일.
-      사용자가 시간만 찾아 달라고 했다면 저장 요청이 아니므로 이 도구를 부르지 않습니다.
+    - 사용자(나)가 저장을 요청한 그룹 일정을 앱에 저장하는 일.
+      사용자(나)가 시간만 찾아 달라고 했다면 저장 요청이 아니므로 이 도구를 부르지 않습니다.
     """
 
     # TODO: Week 4 도구를 가진 Nana 하위 agent를 실행하고 answer/trace/inner_tool_names를 반환하세요.
@@ -700,7 +815,9 @@ def kana_agent(query: str) -> str:
     """
     그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다.
     Kana는 다음과 같은 작업을 수행하려고 할 때 적합합니다.
-    - 외부 멤버와 나눈 대화 또는 외부 멤버의 일정 조회
+    여기서 외부 멤버란 나 이외의 모든 사람을 뜻합니다.
+    - 외부 멤버의 일정 조회
+    - 외부 멤버와 나눈 대화
     - 공유 일정 row 조회
     - 나와 외부 멤버를 포함한 busy-time 수집, 공통 가능 시간 탐색, 그룹 일정 조율
     Kana는 조율한 일정을 앱에 저장하지 못하므로, 저장은 nana_agent에 따로 위임해야 합니다.
