@@ -99,7 +99,7 @@ def sync_group_schedule_to_shared(schedule: dict[str, Any]) -> dict[str, Any]:
                     "date": schedule.get("date"),
                     "start_time": schedule.get("start_time") or "미정",
                     "end_time": schedule.get("end_time") or "미정",
-                    "notes": f"앱 그룹 일정 자동 동기화 · 참석자: {attendee_text}",
+                    "notes": f"앱 그룹 일정 자동 동기화 · 참석자: 나, {attendee_text}",
                     "source_conversation_id": f"group:{schedule['request_id']}:{member_name}",
                     "schedule_id": f"shared_{schedule['schedule_id']}_{index}",
                 },

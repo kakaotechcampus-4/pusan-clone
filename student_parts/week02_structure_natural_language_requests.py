@@ -166,8 +166,8 @@ class StructuredRequest(BaseModel):
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     title: str | None = Field(default=None, description="일정의 제목")
     date: str | None = Field(default=None, description="일정 날짜(YYYY-MM-DD)")
-    start_time: str | None = Field(default=None, description="시작 시간(HH:MM)")
-    end_time: str | None = Field(default=None, description="종료 시간(HH:MM)")
+    start_time: str | None = Field(default=None, description="시작 시간(HH:MM), 확실하지 않으면 None")
+    end_time: str | None = Field(default=None, description="종료 시간(HH:MM), 확실하지 않으면 None")
     # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
     members: list[str] = Field(default_factory=list, description="참석자 목록")
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
@@ -268,6 +268,8 @@ def week02_prompt_parts() -> list[str]:
         "members에는 조사나 호칭을 뗀 순수한 이름만 넣는다. "
         "'하린이와', '하린이', '서연이랑', '서연이는'처럼 조사가 붙은 형태는 '하린', '하린', '서연', '서연'으로 바꿔서 넣는다. ",
         "members 필드가 비어있지 않다면, kind 필드는 반드시 group_schedule로 설정한다.",
+        "title에는 사람 이름이나 '~와/과의', '~랑' 같은 참석자 표현을 넣지 않고, 일정의 내용만 넣는다. "
+        "예를 들어 '서연과의 회의'는 title='회의', members=['서연']로 나누고, '하린이랑 점심'은 title='점심', members=['하린']로 나눈다. ",
     ]
 
 

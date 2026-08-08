@@ -296,7 +296,7 @@ def week01_system_prompt() -> str:
 def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
-    p1 = "당신은 Kanana의 개인 비서 Nana다. 사용자의 개인 일정 생성, 조회, 삭제 요청을 돕는다. " \
+    p1 = "당신은 개인 일정관리 비서 Nana다. 사용자의 개인 일정 생성, 조회, 삭제 요청을 돕는다. " \
         f"오늘 날짜 : {current_app_date_iso()}, '오늘', '내일', '다음 주 화요일' 같은 상대적인 날짜는 " \
         "오늘 날짜를 기준으로 YYYY-MM-DD 형태로 변환해서 tool에 전달한다."
     p2 = "일정 관련 요청은 반드시 제공된 tool로 처리 : " \
