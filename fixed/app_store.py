@@ -106,7 +106,7 @@ class AppSQLiteStore(SQLiteFileStore):
                     request_id TEXT,
                     title TEXT NOT NULL,
                     due_date TEXT,
-                    priority TEXT,
+                    priority TEXT NOT NULL DEFAULT 'MEDIUM' CHECK (priority IN ('LOW', 'MEDIUM', 'HIGH')),
                     created_at TEXT NOT NULL
                 );
 
@@ -390,10 +390,10 @@ class AppSQLiteStore(SQLiteFileStore):
                 todo_id = new_id("todo")
                 conn.execute(
                     """
-                    INSERT INTO todos (todo_id, request_id, title, due_date, priority, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO todos (todo_id, request_id, title, due_date, end_time, priority, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (todo_id, request_id, title, date, priority, created_at),
+                    (todo_id, request_id, title, date, end_time, priority, created_at),
                 )
                 saved_rows.append({"table": "todos", "id": todo_id})
             elif kind == "reminder":
@@ -519,6 +519,39 @@ class AppSQLiteStore(SQLiteFileStore):
             rows = [dict(row) for row in cur.fetchall()]
         return [decode_schedule_row(row) for row in rows]
 
+    def list_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
+        query = """
+            SELECT title, date, start_time, end_time, created_at
+            FROM reminders
+            ORDER BY
+                date ASC,
+                start_time ASC,
+                end_time ASC,
+                created_at ASC
+            LIMIT ?
+        """
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(query, (limit,)).fetchall()]
+
+    def list_todos(self, limit: int = 50) -> list[dict[str, Any]]:
+        query = """
+            SELECT title, due_date, end_time, priority, created_at
+            FROM todos
+            ORDER BY
+                CASE UPPER(TRIM(COALESCE(priority, '')))
+                    WHEN 'HIGH' THEN 3
+                    WHEN 'MEDIUM' THEN 2
+                    WHEN 'LOW' THEN 1
+                    ELSE 0
+                END DESC,
+                due_date ASC,
+                end_time ASC,
+                created_at DESC
+            LIMIT ?
+        """
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(query, (limit,)).fetchall()]
+    
     def update_schedule(
         self,
         schedule_id: str,
