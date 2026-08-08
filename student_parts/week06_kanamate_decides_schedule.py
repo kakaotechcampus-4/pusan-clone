@@ -549,10 +549,65 @@ class ProposeGroupScheduleInput(BaseModel):
     reason: str | None = None
 
 
+# supervisor 가 위임할 때 "무엇까지 해도 되는가"를 자연어 요약 대신 값으로 넘기기 위한 어휘다.
+# 지금은 기록만 하고 아무것도 막지 않는다. 확정·저장 판단은 프롬프트와 기존 가드가 그대로 한다.
+#
+# 자연어 query 만 넘기면 상위가 요약하는 과정에서 의도가 흔들린다. 실제로 "철수랑 회의
+# 잡아줘"가 "철수의 일정을 알려줘"로 바뀌어 하위가 다른 tool 을 고른 적이 있었다. 값으로
+# 함께 넘기면 대화가 길어져도 처음 선택한 행위가 그대로 남는다.
+SHOW_CANDIDATES = "show_candidates"
+SHOW_TOP_CANDIDATE = "show_top_candidate"
+SHOW_AND_SAVE_TOP_CANDIDATE = "show_and_save_top_candidate"
+
+AGENT_ACTIONS = (SHOW_CANDIDATES, SHOW_TOP_CANDIDATE, SHOW_AND_SAVE_TOP_CANDIDATE)
+
+
+def normalize_agent_action(value: Any) -> str | None:
+    """위임 action 을 정해진 어휘로 정규화한다. 모르는 값은 None. (순수 함수)
+
+    모르는 값을 임의로 가장 가까운 것에 붙이지 않는다. 붙이면 "정하지 않았다"와
+    "잘못 정했다"가 같은 값이 되어, 나중에 게이트로 쓸 때 무엇을 막는지 알 수 없다.
+    """
+
+    text = str(value or "").strip()
+    return text if text in AGENT_ACTIONS else None
+
+
+def action_allows_confirm(action: str | None) -> bool:
+    """이 action 이 최종 시간 확정까지 허용하는지. (순수 함수)
+
+    후보만 보여 달라는 요청(show_candidates)과 정해 달라는 요청을 가른다.
+    action 이 없으면(None) 판단 근거가 없으므로 허용하지 않는 쪽으로 답한다 —
+    확정은 되돌리기 어려운 쪽이다.
+    """
+
+    return action in (SHOW_TOP_CANDIDATE, SHOW_AND_SAVE_TOP_CANDIDATE)
+
+
+def action_allows_save(action: str | None) -> bool:
+    """이 action 이 앱 DB 저장까지 허용하는지. (순수 함수)
+
+    확정과 저장을 따로 두는 이유: 시간을 정하는 것과 그걸 내 일정으로 남기는 것은
+    되돌리는 비용이 다르다. 저장은 공유 저장소 동기화까지 이어진다.
+    """
+
+    return action == SHOW_AND_SAVE_TOP_CANDIDATE
+
+
 class AgentQueryInput(BaseModel):
     """하위 에이전트 위임 입력입니다."""
 
     query: str
+    # 선택 필드다. 넣지 않으면(None) 지금까지와 똑같이 동작한다.
+    action: str | None = Field(
+        default=None,
+        description=(
+            "이번 위임에서 어디까지 해도 되는지. show_candidates(후보만 보여준다) / "
+            "show_top_candidate(하나를 골라 확정한다) / "
+            "show_and_save_top_candidate(확정하고 내 일정으로 저장까지 한다) 중 하나. "
+            "사용자 요청에 맞는 것을 고르고, 애매하면 더 적게 하는 쪽을 고른다."
+        ),
+    )
 
 
 def _has_my_busy_rows(rows: list[dict[str, Any]] | None) -> bool:
@@ -884,7 +939,7 @@ def propose_group_schedule(
 
 
 @tool(args_schema=AgentQueryInput)
-def nana_agent(query: str) -> str:
+def nana_agent(query: str, action: str | None = None) -> str:
     """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다.
 
     query 는 그 자체로 완결돼 있어야 한다. 하위 agent 는 매 호출이 백지에서 시작하므로
@@ -911,6 +966,8 @@ def nana_agent(query: str) -> str:
     return json.dumps(
         {
             "selected_agent": "nana_agent",
+            # 기록만 한다. 이 값으로 무엇을 막지는 않는다(아래 kana_agent 도 동일).
+            "action": normalize_agent_action(action),
             # supervisor 가 실질적으로 읽는 것은 answer 하나다. tool 결과는 못 보므로
             # 조회 내용이 answer 본문에 들어가 있어야 한다(nana_prompt_parts 의 지시).
             "answer": extract_final_text(result),
@@ -923,7 +980,7 @@ def nana_agent(query: str) -> str:
 
 
 @tool(args_schema=AgentQueryInput)
-def kana_agent(query: str) -> str:
+def kana_agent(query: str, action: str | None = None) -> str:
     """그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다.
 
     nana_agent 와 같은 뼈대에 payload 끌어올리기가 하나 더 붙는다. Nana 는 결과가 텍스트라
@@ -961,6 +1018,7 @@ def kana_agent(query: str) -> str:
     return json.dumps(
         {
             "selected_agent": "kana_agent",
+            "action": normalize_agent_action(action),
             "answer": extract_final_text(result),
             "trace": events,
             "inner_tool_names": _tool_call_names(events),
