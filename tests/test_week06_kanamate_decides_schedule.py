@@ -19,6 +19,7 @@ from pathlib import Path
 
 from student_parts.week06_kanamate_decides_schedule import (
     DECIDE_FINAL_SLOT_DESCRIPTION,
+    _reject_final_slot_reason,
     _has_my_busy_rows,
     FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION,
     decide_final_slot,
@@ -159,6 +160,9 @@ class DecideFinalSlotTest(unittest.TestCase):
     """확정하지 말아야 할 때 확정하지 않는지를 본다. 이 도메인에서 가장 비싼 실패다."""
 
     def _decide(self, **kwargs):
+        # 근거에 "나" row 가 없으면 구현이 그날 내 일정을 직접 조회한다(저장소 접근).
+        # 단위 테스트는 범위 밖 "나" row 를 기본 근거로 넣어 그 경로를 타지 않게 한다.
+        kwargs.setdefault("busy_rows", [_OUT_OF_RANGE_BUSY_ROW])
         return json.loads(decide_final_slot.invoke(kwargs))
 
     def test_selected_index로_최종_시간을_도출한다(self):
@@ -189,7 +193,8 @@ class DecideFinalSlotTest(unittest.TestCase):
             self.assertIn(key, payload)
 
     def test_근거로_넘긴_값을_그대로_남긴다(self):
-        busy = [{"member_name": "민준", "date": "2026-07-15", "start_time": "09:00", "end_time": "10:00"}]
+        busy = [_OUT_OF_RANGE_BUSY_ROW,
+                {"member_name": "민준", "date": "2026-07-15", "start_time": "09:00", "end_time": "10:00"}]
         payload = self._decide(
             candidate_slots=[_candidate()],
             selected_index=0,
@@ -271,6 +276,8 @@ class WideSlotGuardTest(unittest.TestCase):
     """
 
     def _decide(self, **kwargs):
+        # DecideFinalSlotTest 와 같은 이유로 범위 밖 "나" row 를 기본 근거로 둔다.
+        kwargs.setdefault("busy_rows", [_OUT_OF_RANGE_BUSY_ROW])
         return json.loads(decide_final_slot.invoke(kwargs))
 
     def _block(self, start="09:00", end="18:00"):
@@ -327,7 +334,7 @@ class WideSlotGuardTest(unittest.TestCase):
         # 후보 목록에 없는 시각을 agent 가 지어내면 검증을 거치지 않는다. 너비만 보면
         # 60분짜리라 통과하는데, 실제로는 이미 잡힌 일정 위에 얹힌다.
         busy = [{"member_name": "나", "date": "2026-07-15", "start_time": "09:00",
-                 "end_time": "12:00", "title": "이미 잡힌 회의"}]
+                 "end_time": "12:00", "title": "이미 잡힌 회의"}]  # "나" row 가 있어 재조회 없음
         payload = self._decide(
             candidate_slots=[_candidate()],
             final_slot="2026-07-15 10:00-11:00",
@@ -340,21 +347,54 @@ class WideSlotGuardTest(unittest.TestCase):
 
     def test_selected_index로_고른_후보도_겹치면_막는다(self):
         # 확정 경로가 둘이므로 둘 다 같은 검사를 받아야 한다.
-        busy = [{"member_name": "민준", "date": "2026-07-15", "start_time": "14:30",
+        busy = [_OUT_OF_RANGE_BUSY_ROW,
+                {"member_name": "민준", "date": "2026-07-15", "start_time": "14:30",
                  "end_time": "15:30", "title": "운영 회의"}]
         payload = self._decide(candidate_slots=[_candidate()], selected_index=0, busy_rows=busy)
         self.assertIsNone(payload["final_slot"])
 
     def test_겹치지_않으면_확정한다(self):
-        busy = [{"member_name": "민준", "date": "2026-07-15", "start_time": "16:00",
+        busy = [_OUT_OF_RANGE_BUSY_ROW,
+                {"member_name": "민준", "date": "2026-07-15", "start_time": "16:00",
                  "end_time": "17:00", "title": "다른 회의"}]
         payload = self._decide(candidate_slots=[_candidate()], selected_index=0, busy_rows=busy)
         self.assertEqual(payload["final_slot"], "2026-07-15 14:00-15:00")
 
-    def test_busy_rows가_없으면_겹침은_검사하지_않는다(self):
-        # 근거가 없으면 판정할 수 없다. 알려진 한계다.
+    def test_근거에_내_일정이_있으면_다시_조회하지_않는다(self):
+        # "나" row 가 있으면 저장소를 타지 않는다. 이 테스트가 통과하는 것 자체가 그 증거다.
         payload = self._decide(candidate_slots=[_candidate()], selected_index=0)
         self.assertEqual(payload["final_slot"], "2026-07-15 14:00-15:00")
+
+    def test_근거에_내_일정이_없으면_그날_내_일정을_직접_보고_막는다(self):
+        # busy_rows 를 안 넘겼거나 exclude_me rows 만 넘긴 확정 시도는, 근거만 믿으면
+        # 내 일정과의 충돌을 볼 수 없다. 그날 하루치를 직접 조회해 한 번 더 본다.
+        mine = [{"member_name": "나", "date": "2026-07-15", "start_time": "09:00",
+                 "end_time": "12:00", "title": "이미 잡힌 회의"}]
+        reason = _reject_final_slot_reason(
+            final_slot="2026-07-15 10:00-11:00",
+            selected_slot=None, selected_index=None, candidate_slots=[_candidate()],
+            duration_minutes=60,
+            busy_rows=[{"member_name": "민준", "date": "2026-07-15",
+                        "start_time": "16:00", "end_time": "17:00"}],
+            my_rows_for_day=lambda day: mine,
+        )
+        self.assertIsNotNone(reason)
+        self.assertIn("이미 잡힌 회의", reason)
+
+    def test_근거에_내_일정이_있으면_조회하지_않는다(self):
+        # 있으면 loader 를 부르지 않는다. 부르면 이 테스트가 터진다.
+        def _explode(day):
+            raise AssertionError("내 일정이 이미 있는데 다시 조회했습니다")
+
+        reason = _reject_final_slot_reason(
+            final_slot="2026-07-15 14:00-15:00",
+            selected_slot=None, selected_index=None, candidate_slots=[_candidate()],
+            duration_minutes=60,
+            busy_rows=[{"member_name": "나", "date": "2026-07-15",
+                        "start_time": "09:00", "end_time": "10:00"}],
+            my_rows_for_day=_explode,
+        )
+        self.assertIsNone(reason)
 
     def test_보류_중이면_아무것도_바꾸지_않는다(self):
         payload = self._decide(candidate_slots=[self._block()], duration_minutes=60)

@@ -754,6 +754,15 @@ def _final_slot_parts(final_slot: str | None) -> tuple[str, int, int] | None:
     return normalize_date_bound(day), start, end
 
 
+def _my_rows_for_day(day: str) -> list[dict[str, Any]]:
+    """그날 하루치 내 일정만 가져온다. 조회 대상을 비우면 내 일정만 온다."""
+
+    payload = json.loads(
+        collect_member_schedules.invoke({"member_names": [], "date_from": day, "date_to": day})
+    )
+    return payload.get("rows", [])
+
+
 def _reject_final_slot_reason(
     final_slot: str | None,
     selected_slot: Any | None,
@@ -761,6 +770,7 @@ def _reject_final_slot_reason(
     candidate_slots: list[Any] | None,
     duration_minutes: int,
     busy_rows: list[dict[str, Any]] | None,
+    my_rows_for_day: Any = None,
 ) -> str | None:
     """확정하면 안 되는 시각이면 그 이유를, 아니면 None 을 준다. (순수 함수)
 
@@ -772,6 +782,11 @@ def _reject_final_slot_reason(
       - busy row 와 겹치는 시각: 후보 목록에 없는 시각을 agent 가 지어내 넘기면 검증을
         거치지 않는다. 겹침 판정은 fixed/schedule_decision.py 의 함수를 그대로 써서
         기준이 두 곳에 생기지 않게 한다.
+
+    넘어온 근거에 내 일정이 없으면 그 하루치만 직접 조회해 한 번 더 본다. busy_rows 를
+    아예 안 넘겼거나 exclude_me 로 조회한 rows 를 넘긴 호출에서는, 근거만 믿으면 내
+    일정과의 충돌을 볼 수 없기 때문이다. 근거에 내 일정이 이미 있으면 조회하지 않는다.
+    다른 멤버의 일정은 이름을 알 수 없어 재조회할 수 없으므로 넘겨준 근거로만 판단한다.
     """
 
     text = _effective_final_slot(final_slot, selected_slot, selected_index, candidate_slots)
@@ -786,7 +801,14 @@ def _reject_final_slot_reason(
             "않았습니다. 구간 안에서 어느 시각으로 할지 정해 주세요."
         )
 
-    blockers = busy_rows_overlap(list(busy_rows or []), day, start_minutes, end_minutes)
+    rows = list(busy_rows or [])
+    if not _has_my_busy_rows(rows):
+        # my_rows_for_day 는 테스트에서 저장소 없이 이 판정을 시험하기 위한 주입 인자다
+        # (Week 5 의 _personal_schedules_for_current_scope(app_store=...) 와 같은 방식).
+        loader = my_rows_for_day or _my_rows_for_day
+        rows = [*loader(day), *rows]
+
+    blockers = busy_rows_overlap(rows, day, start_minutes, end_minutes)
     if blockers:
         titles = ", ".join(str(row.get("title") or "제목 없음") for row in blockers[:3])
         return (
