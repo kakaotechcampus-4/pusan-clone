@@ -203,7 +203,7 @@ def test_collect_member_schedules_treats_missing_rows_key_as_empty_list(monkeypa
             "date": "2026-07-30",
             "start_time": "09:00",
             "end_time": "10:00",
-            "notes": None,
+            "notes": "Nana 개인 일정",
         }
     ]
 
@@ -597,9 +597,12 @@ def test_personal_schedules_without_any_id_is_always_kept(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_collect_member_schedules_personal_row_notes_defaults_to_none_when_missing(monkeypatch, stub_sqlite_store):
-    """이 테스트가 잡으려는 실패: week01 PERSONAL_SCHEDULES row에는 notes 키가 없는데
-    schedule.get("notes")가 KeyError를 내면(=.get이 아니라 [] 접근으로 바뀌면) 회귀."""
+def test_collect_member_schedules_personal_row_notes_describe_personal_schedule_when_source_row_has_no_notes(
+    monkeypatch, stub_sqlite_store
+):
+    """이 테스트가 잡으려는 실패: week01 PERSONAL_SCHEDULES row에는 notes 키가 없어도,
+    notes는 원본 row의 notes 필드를 그대로 읽는 게 아니라 request.kind를 보고
+    "Nana 개인 일정"으로 채워져야 합니다(_my_schedule_notes)."""
 
     monkeypatch.setattr(w5, "call_mcp_tool_sync", _SpyMcpToolSync(return_value=_mcp_envelope(rows=[])))
 
@@ -617,7 +620,7 @@ def test_collect_member_schedules_personal_row_notes_defaults_to_none_when_missi
         member_names=[], date_from="2026-07-30", date_to="2026-07-30", personal_schedules=[personal_schedule]
     )
 
-    assert payload["rows"][0]["notes"] is None
+    assert payload["rows"][0]["notes"] == "Nana 개인 일정"
 
 
 def test_collect_member_schedules_personal_row_uses_end_time_key_not_end_date(monkeypatch, stub_sqlite_store):
