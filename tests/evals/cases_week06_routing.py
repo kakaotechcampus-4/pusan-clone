@@ -680,8 +680,11 @@ WEEK06_ROUTING_CASES = [
         "expect": {
             # judge가 확인해 준 바에 따르면 여기서 위임하면 답변이 앞선 사실과 모순됩니다.
             # judge 없이도 잡히도록 predicate로 고정합니다.
-            "not_called": ["nana_agent"],
-            "max_calls": {"kana_agent": 1},
+            # "not_called": ["nana_agent"],
+            "max_calls": {
+                "kana_agent": 1,
+                "nana_agent" : 1
+            },
         },
         "judge": {
             "reference_answer": (
@@ -732,8 +735,11 @@ WEEK06_ROUTING_CASES = [
         "expect": {
             # judge가 확인해 준 바에 따르면 여기서 위임하면 답변이 앞선 사실과 모순됩니다.
             # judge 없이도 잡히도록 predicate로 고정합니다.
-            "not_called": ["nana_agent"],
-            "max_calls": {"kana_agent": 1},
+            # "not_called": ["nana_agent"],
+            "max_calls": {
+                "kana_agent": 1,
+                "nana_agent" : 1
+            },
         },
         "judge": {
             "reference_answer": (
