@@ -323,9 +323,9 @@ DECIDE_FINAL_SLOT_DESCRIPTION = (
     #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
     #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
     #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    "이 tool은 최종 회의 시간을 스스로 고르지 않는다. find_common_available_slots가 만든 candidate_slots 중 "
-    "하나를 직접 검토해 selected_index(또는 selected_slot)와 final_slot('YYYY-MM-DD HH:MM-HH:MM' 형식)을 "
-    "채워 넘겨야 한다. 아직 확정할 수 없다면 final_slot은 비워 두고 needs_agent_selection=true로 넘겨라. "
+    "이 tool은 최종 회의 시간을 스스로 고르지 않는다. "
+    "find_common_available_slots가 만든 candidate_slots 중 하나를 직접 검토해 selected_index(또는 selected_slot)와 final_slot('YYYY-MM-DD HH:MM-HH:MM' 형식)을 채워 넘겨야 한다. "
+    "아직 확정할 수 없다면 final_slot은 비워 두고 needs_agent_selection=true로 넘겨라. "
     "reason에는 그 선택 또는 보류 이유를 사용자에게 보여줄 수 있는 문장으로 적어야 한다."
     "candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘겨 최종 결정의 근거를 trace에 남겨야 한다."
 )
