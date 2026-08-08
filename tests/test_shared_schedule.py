@@ -55,7 +55,7 @@ def test_list_shared_schedules(run_agent):
     assert rows, f"공유 일정 rows가 비어있습니다: {payloads}"
 
 
-def test_create_group_meeting_syncs_to_shared(run_agent, app_store, external_store):
+def test_create_group_meeting_syncs_to_shared(run_agent):
     """[그룹-생성] Week 6에서는 Kana가 find_common_available_slots와 decide_final_slot으로 그룹 일정을 확정한다."""
     result = run_agent("철수랑 8월 10일 16시에 기획 미팅 잡아줘")
 
