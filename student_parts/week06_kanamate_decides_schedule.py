@@ -284,6 +284,13 @@ KANA_COORDINATION_PROMPT = (
     "1) collect_member_schedules로 내 일정과 멤버들의 busy-time rows를 모은다. "
     "2) 그 rows를 직접 읽고 아무 row와도 겹치지 않는 시간대를 스스로 고른다. "
     "Python tool이 대신 골라 주지 않으므로 이 판단은 네가 한다. "
+    # 미정 row는 무시해도 되는 row가 아니라 가장 넓게 막는 row다. 이 사실을 여기서 알려 주지
+    # 않으면 시간이 안 적혔으니 비어 있다고 읽고 그 날짜로 후보를 고른다.
+    "이때 start_time이나 end_time이 \"미정\"인 row를 시간이 비었다는 뜻으로 읽지 않는다. "
+    "시간을 모르는 일정이라 검증은 그 구간 전체를 바쁜 것으로 계산한다. "
+    "둘 다 미정이면 그 날짜 하루가 통째로 막히므로 그런 날짜는 후보에서 빼고 다른 날짜를 고른다. "
+    "범위 안의 모든 날짜가 미정 row로 막혀 있으면 후보를 억지로 만들지 말고, "
+    "누구의 어떤 일정이 시간 미정이라 날짜를 못 잡았는지 답변에 밝힌다. "
     "3) 고른 후보를 candidate_slots에, 2번에서 본 rows를 busy_rows에 담아 find_common_available_slots를 "
     "호출해 검증받는다. "
     "4) 검증을 통과한 후보 중 하나를 골라 decide_final_slot에 selected_index와 final_slot을 넘겨 확정한다. "
@@ -315,10 +322,13 @@ def week06_system_prompt() -> str:
 def week06_prompt_parts() -> list[str]:
     """1~6주차 supervisor system prompt 조각을 누적합니다."""
 
+    # SUPERVISOR_EXECUTION_PROMPT까지 여기에 둔다. supervisor_system_prompt()에만 붙여 두면
+    # week06_prompt_parts()를 따로 가져다 쓰는 쪽에는 실행 지시가 빠진 프롬프트가 넘어간다.
     return [
         *week05_prompt_parts(),
         SUPERVISOR_ROLE_PROMPT,
         SUPERVISOR_DELEGATION_PROMPT,
+        SUPERVISOR_EXECUTION_PROMPT,
     ]
 
 
@@ -360,12 +370,7 @@ def kana_system_prompt() -> str:
 
 
 def supervisor_system_prompt() -> str:
-    return join_system_prompt(
-        [
-            *week06_prompt_parts(),
-            SUPERVISOR_EXECUTION_PROMPT,
-        ]
-    )
+    return join_system_prompt(week06_prompt_parts())
 
 
 def _tool_call_names(events: list[dict[str, Any]]) -> list[str]:
@@ -475,6 +480,9 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "duration_minutes(분 단위 정수), reason(그 시간을 고른 짧은 근거)을 모두 채웁니다. "
     "busy_rows에는 앞선 조회 tool output의 rows를 그대로 복사해 넘깁니다. 넘기지 않으면 이 tool이 다시 조회하지만, "
     "후보를 고를 때 본 것과 같은 근거로 검증받으려면 복사해 넘기는 편이 정확합니다. "
+    "시간이 \"미정\"인 row도 빼지 말고 그대로 넘기세요. 시간을 모르는 일정을 지우면 이미 일정이 있는 시간이 "
+    "가능한 시간으로 통과합니다. 대신 이 tool은 미정 row가 실제로 막는 구간을 undecided_time_rows와 "
+    "fully_blocked_dates로 함께 돌려주므로, 후보가 빠졌으면 그 날짜를 피해 다시 고르세요. "
     "후보는 workday_start~workday_end 안에 있어야 하고, duration_minutes 이상 길어야 하며, "
     "어떤 busy row와도 겹치면 안 됩니다. 이 조건을 어긴 후보는 결과에서 조용히 빠지므로 "
     "돌아온 candidate_slots가 비었으면 다른 시간대로 다시 고르세요. "
@@ -552,6 +560,49 @@ class AgentQueryInput(BaseModel):
     query: str
 
 
+def _is_undecided_time(value: Any) -> bool:
+    return str(value or "").strip() in {"", "미정"}
+
+
+def _undecided_time_notes(busy_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """시간이 "미정"인 busy row가 실제로 막아 버리는 구간을 payload 밖으로 드러냅니다.
+
+    fixed/schedule_decision.py의 busy_rows_overlap()은 start_time이 비면 00:00을,
+    end_time이 비면 24:00을 fallback으로 쓴다. 그래서 둘 다 "미정"인 row 하나가
+    그 날짜 하루를 통째로 막는다. collect_member_schedules는 원본에 시간이 없으면
+    그대로 "미정"을 채워 내려보내므로 이런 row는 실제로 들어온다.
+
+    막는 것 자체는 안전한 쪽이라 그대로 둔다. 언제 바쁜지 모르는 일정을 없는 셈 치고
+    빼면 이미 일정이 있는 사람에게 "그 시간 가능하다"고 추천하게 된다.
+    문제는 이 판정이 agent에게 보이지 않는다는 것이다. 후보는 조용히 빠지고 agent는
+    이유를 몰라 같은 날짜로 다시 고르거나 "가능한 시간이 없다"고 단정한다.
+    그래서 row는 손대지 않고, 무엇이 어디를 막았는지만 함께 실어 보낸다.
+    """
+
+    notes: list[dict[str, Any]] = []
+    fully_blocked_dates: set[str] = set()
+    for row in busy_rows:
+        start_undecided = _is_undecided_time(row.get("start_time"))
+        end_undecided = _is_undecided_time(row.get("end_time"))
+        if not start_undecided and not end_undecided:
+            continue
+        day = str(row.get("date") or "").strip()
+        whole_day = start_undecided and end_undecided
+        if whole_day and day:
+            fully_blocked_dates.add(day)
+        notes.append(
+            {
+                "member_name": row.get("member_name"),
+                "title": row.get("title"),
+                "date": day,
+                "blocked_from": "00:00" if start_undecided else row.get("start_time"),
+                "blocked_to": "24:00" if end_undecided else row.get("end_time"),
+                "blocks_whole_day": whole_day,
+            }
+        )
+    return notes, sorted(fully_blocked_dates)
+
+
 def find_common_available_slots_dict(
     member_names: list[str],
     date_from: str,
@@ -592,7 +643,7 @@ def find_common_available_slots_dict(
         )
         busy_rows = collected.get("rows") or []
 
-    return find_common_available_slots_payload(
+    payload = find_common_available_slots_payload(
         member_names=members,
         date_from=normalized_from,
         date_to=normalized_to,
@@ -604,6 +655,19 @@ def find_common_available_slots_dict(
         candidate_slots=candidate_slots,
         llm_reason=llm_reason,
     )
+
+    undecided_rows, fully_blocked_dates = _undecided_time_notes(busy_rows)
+    if undecided_rows:
+        payload["undecided_time_rows"] = undecided_rows
+        payload["fully_blocked_dates"] = fully_blocked_dates
+        payload["undecided_time_notice"] = (
+            "시간이 \"미정\"인 busy row는 그 구간 전체를 바쁜 것으로 계산합니다. "
+            "start_time과 end_time이 모두 미정이면 그 날짜 하루가 통째로 막히므로 "
+            f"{', '.join(fully_blocked_dates) or '해당 날짜'}는 후보에서 빼고 다른 날짜로 고르세요. "
+            "이 row를 빼고 다시 호출하지 마세요. 언제 바쁜지 모르는 일정을 지운 채 검증하면 "
+            "이미 일정이 있는 시간을 가능한 시간으로 추천하게 됩니다."
+        )
+    return payload
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
