@@ -58,7 +58,7 @@ return {"answer": extract_final_text(result), "trace": events, "inner_tool_names
 
 `[Week 6 위임 전환]`이 가장 중요한 조각이다. Week 1~5 조각은 "tool을 직접 부르는 단일 agent"를 전제로 쓰여 있고 supervisor에게는 그 tool이 하나도 없다. 이 전제를 끄지 않으면 없는 tool을 부르려다 같은 호출을 반복한다 — `docs/week02_프롬프트충돌_중복호출_오류해결.md`와 같은 유형이라, 거기서 쓴 override 패턴을 그대로 썼다.
 
-`kana_prompt_parts()`는 누적이 없으므로 Week 5에서 이미 정한 규칙(오늘 날짜, 후보를 먼저 제시하는 절차, 조회 필터 규칙, 반복 호출 금지, 이름 포함 답변 포맷)을 **전부 다시 적었다.** 적지 않으면 `docs/week03_작업정리.md`의 "따를 지시가 없던 상태"가 그대로 재현된다.
+`kana_prompt_parts()`는 누적이 없으므로 Week 5에서 이미 정한 규칙(오늘 날짜, 후보를 먼저 제시하는 절차, 조회 필터 규칙, 반복 호출 금지, 이름 포함 답변 포맷)이 없으면 `docs/week03_작업정리.md`의 "따를 지시가 없던 상태"가 그대로 재현된다. 처음에는 그 규칙들을 **전부 다시 적었는데**, 복사본이 둘이 되어 한쪽만 고치면 어긋나는 문제가 있었다. 지금은 아래 "공통 규칙을 한 곳으로 모으고 어긋남을 테스트로 잡기"대로 `student_parts/shared_prompt_rules.py`를 참조한다.
 
 ---
 
@@ -407,6 +407,128 @@ MCP 호출 횟수도 함께 셌다.
   비교하려면 멤버별 날짜 범위를 더 받아야 한다.
 - coverage 조회는 `limit=200` 한 번이라, 확인 대상 멤버들의 row 합이 200을 넘으면 뒤쪽 멤버가
   "기록 없음"으로 잘못 판정될 수 있다. 현재 fixture는 18건이라 여유가 크다.
+
+---
+
+## 공통 규칙을 한 곳으로 모으고 어긋남을 테스트로 잡기 (멘토 리뷰 반영)
+
+> 리팩터링 + 테스트 추가다. 프롬프트 내용과 tool 계약은 그대로다.
+
+### 리뷰 지적
+
+`kana_prompt_parts()`가 Week 5 규칙을 누적 없이 처음부터 다시 적은 곳이고,
+KPT에 적은 **"같은 규칙이 두 파일에 살아서 한쪽만 고치면 조용히 어긋난다"**가 바로 여기라는 지적이었다.
+Kana가 누적을 안 하는 건 스캐폴딩 설계라 바꿀 수 없으니
+
+1. 공통 규칙(날짜·조회 필터 등)을 한 곳에 두고 supervisor/Nana/Kana가 각자 참조하는 형태가 가능한지
+2. `"회의 시간 정해줘 → 확정이 아니라 후보 제시"` 같은 핵심 동작을 입력→기대로 테스트에 박아 두기
+
+두 가지를 제안받았다.
+
+### 중복 실태 — 8쌍
+
+`week05_prompt_parts()`와 `kana_prompt_parts()`를 나란히 놓고 세어 보니 같은 규칙이 여덟 번 복사돼 있었다.
+(`[Week 5 0건 읽기]` / `[Week 6 Kana 0건 읽기]`는 바로 앞 리뷰를 반영하면서 **내가 방금 늘린 것**이다.)
+
+| 규칙 | Week 5 조각 | Week 6 조각 |
+| --- | --- | --- |
+| 오늘 날짜·상대 시점 계산 | `[Week 5 범위]` 안 | `[Week 6 Nana 역할]`·`[Week 6 Kana 역할]` 안 |
+| 대화 검색 tool 사용법·결과 읽기 | `[Week 5 대화 검색 결과 읽기]` | `[Week 6 Nana 대화 검색 tool]`·`[Week 6 Kana tool 용도]` 4) |
+| 여러 사람 일정 모으기 | `[Week 5 여러 사람 일정 모으기]` | `[Week 6 Kana tool 용도]` 1) |
+| 0건 읽기 | `[Week 5 0건 읽기]` | `[Week 6 Kana 0건 읽기]` |
+| 회의 시간 요청 처리 | `[Week 5 회의 시간 요청 처리]` | `[Week 6 Kana 시간 결정 절차]` |
+| 조회 필터 오염 금지 | `[Week 5 조회 필터 규칙]` | `[Week 6 Kana 조회 필터 규칙]` |
+| 반복 호출 금지 | `[Week 5 MCP 호출 규칙]` | `[Week 6 Kana 호출 규칙]` |
+| 멤버 일정 답변 포맷 | `[Week 5 답변 포맷]` | `[Week 6 Kana 답변 포맷]` |
+
+대화 검색은 **3중 복사**였다(Week 5 / Nana / Kana).
+
+### 대응 1 — `student_parts/shared_prompt_rules.py`
+
+여덟 규칙을 함수 여덟 개로 옮기고 라벨을 `[공통 ...]`으로 바꿨다. week 파일은 함수를 호출만 한다.
+
+```python
+# week05_prompt_parts()
+shared_today_rule(), shared_conversation_search_rule(), shared_member_schedule_rule(),
+shared_zero_row_rule(), shared_meeting_time_rule(), shared_lookup_filter_rule(),
+shared_repeat_call_rule(), shared_member_schedule_format_rule(),
+```
+
+정한 기준 세 가지다.
+
+- **두 agent 이상이 똑같이 따라야 하는 규칙만** 넣는다.
+- **특정 agent만 가진 tool 이름이나 담당 범위에 기대지 않는다.** 그래서 Week 5의
+  "Week 3 저장 경로로 저장한다"(Kana엔 저장 tool 없음)나 Kana의 후보 번호 매기기 포맷 같은 꼬리는
+  각 week 파일에 `[Week 5 회의 시간 저장 경로]`·`[Week 6 Kana 답변 포맷 보충]`으로 남겼다.
+- **한쪽만 바뀌면 버그가 되는 규칙만** 넣는다. 바뀌어도 무해하면 각자 두는 편이 낫다.
+
+날짜가 들어가는 규칙은 실행 시점 날짜를 읽어야 해서 상수가 아니라 **함수**다. 나머지도 형태를 맞췄다.
+
+새 파일을 하나 늘리는 게 맞는지 고민했는데, Week 5 파일에 넣으면 Week 5가 Nana(Week 4 계열)와
+supervisor의 규칙까지 소유하게 돼서 "어느 파일이 원본이냐"가 그대로 남는다. `[공통 ...]` 라벨도
+week 번호가 붙은 파일에 있으면 어색하다. 파일 하나 늘리는 대신 소유가 분명해지는 쪽을 골랐다.
+
+조각 수는 Week 5 39 → 42, supervisor 43 → 46, Nana 31 → 33, Kana 8 → 13으로 늘었다.
+Kana가 크게 는 건 원래 한 조각에 뭉쳐 있던 규칙이 공통 단위로 쪼개졌기 때문이고, 지시 내용은 같다.
+
+### 대응 2 — `tests/`
+
+pytest를 새로 깔지 않도록 표준 라이브러리 `unittest`로 썼다. **LLM을 부르지 않는다.**
+
+```bash
+PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
+```
+
+| 파일 | 무엇을 고정하나 |
+| --- | --- |
+| `tests/test_prompt_contract.py` | 공통 규칙 배치표, 복사본 재발 금지, 프롬프트-tool 일치, 후보 제시 stance |
+| `tests/test_schedule_decision_contract.py` | 후보 단계 vs 확정 단계, 후보 겹침 검증, 0건 판정 |
+
+핵심은 `RULE_PLACEMENT` 표다. "어느 규칙이 어느 agent에 들어가야 하는지"를 못 박아 두고,
+들어가야 할 곳에 있는지 **그리고 없어야 할 곳에 없는지**를 함께 본다.
+Kana가 규칙을 빠뜨려도 앱은 그냥 도니까(답만 달라진다) 이 표가 그 침묵을 깨는 자리다.
+
+복사본 재발 테스트는 규칙 본문이 week 파일 소스에 문자열로 나타나는지 본다.
+따옴표와 공백을 지우고 비교해서 **여러 줄로 쪼개 붙인 문자열도 잡고**,
+`[공통 0건 읽기]를 따른다` 같은 문장 안 상호 참조는 본문이 아니므로 걸리지 않는다.
+
+멘토님이 짚은 "회의 시간 정해줘 → 확정이 아니라 후보 제시"는 두 층으로 박았다.
+
+```python
+# 프롬프트 층 — 두 agent가 같은 방향을 말하는지
+stance = "사용자가 고르기 전에 네가 임의로 하나를 확정하지 않고"
+assert stance in week05_system_prompt() and stance in kana_system_prompt()
+
+# tool 층 — 실제 반환값이 확정 상태가 아닌지
+payload = decide(candidate_slots=[...], final_slot=None, needs_agent_selection=True)
+assert payload["final_slot"] is None and payload["needs_agent_selection"] is True
+```
+
+LLM이 실제로 후보를 내는지는 비결정적이라 테스트로 박지 않았다. 대신 **지시가 사라지는 순간**과
+**tool이 대신 골라 버리는 순간**을 각각 잡는다. 한 번 터졌던 증상은 뒤엣것이었다.
+
+### 검증
+
+31개 통과, 1.4초. MCP subprocess를 쓰는 3개는 `ExternalLookupTest` 하나로 몰아 뒀다.
+
+**테스트가 실제로 어긋남을 잡는지** 드리프트를 넣어 확인했다.
+
+| 넣은 드리프트 | 잡은 테스트 |
+| --- | --- |
+| Kana에서 `shared_zero_row_rule()` 제거 | `test_shared_rules_reach_the_agents_that_need_them (rule='zero_row', agent='kana')` |
+| 공통 규칙 본문을 Kana에 다시 복사 | `test_shared_rules_are_not_copied_back_into_week_files` + 배치 테스트 동시 실패 |
+| Kana 프롬프트에 `personal_create_schedule` 지시 추가 | `test_kana_prompt_does_not_order_tools_kana_lacks` |
+
+세 경우 모두 되돌린 뒤 다시 31개 통과를 확인했다.
+
+### 남은 것
+
+- **supervisor는 공통 규칙을 전부 물려받는데 그 tool이 하나도 없다.** `week05_prompt_parts()`를
+  누적하는 구조라 조회 필터·반복 호출 규칙까지 따라온다. 리팩터링 전에도 같았고
+  `[Week 6 위임 전환]`이 무효화하고 있지만, 누적 자체를 끊는 게 더 깨끗하다.
+- **테스트는 "지시가 있는지"까지만 본다.** 모델이 그 지시를 따르는지는 LLM을 불러야 알 수 있다.
+- **stance 테스트가 문장을 리터럴로 비교한다.** 표현을 다듬으면 테스트도 같이 고쳐야 한다.
+  의미는 같은데 문구만 바뀐 경우까지 걸리는 건 이 방식의 비용이다.
 
 ---
 

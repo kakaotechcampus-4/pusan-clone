@@ -10,12 +10,21 @@ from pydantic import BaseModel, Field
 from fixed.external_people_store import normalize_external_member_names
 from fixed.langchain_trace import extract_agent_events, extract_final_text
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.schedule_decision import (
     CommonSlotCandidate,
     decide_final_slot_payload,
     find_common_available_slots_payload,
     normalize_date_bound,
+)
+from student_parts.shared_prompt_rules import (
+    shared_conversation_search_rule,
+    shared_lookup_filter_rule,
+    shared_meeting_time_rule,
+    shared_member_schedule_format_rule,
+    shared_member_schedule_rule,
+    shared_repeat_call_rule,
+    shared_today_rule,
+    shared_zero_row_rule,
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
@@ -240,7 +249,7 @@ def week06_prompt_parts() -> list[str]:
             "예: '내가 저장해 둔 일정 보여줘' → nana_agent(query='내가 저장해 둔 일정을 모두 보여줘'). "
             "이때 query를 '2026-08-05에 저장된 일정을 보여줘'로 바꾸면 그 날짜 일정만 조회돼 "
             "저장된 다른 일정이 전부 빠지므로 틀린 답이 된다. "
-            "'다음 주', '내일', '이번 주'처럼 사용자가 실제로 시점을 말했을 때만 오늘 날짜 기준 YYYY-MM-DD로 바꿔 적는다. "
+            "'다음 주', '내일', '이번 주'처럼 사용자가 실제로 시점을 말했을 때만 [공통 오늘 날짜] 기준으로 YYYY-MM-DD로 바꿔 적는다. "
             "직전 turn에서 쓴 날짜·id를 다음 요청의 조건으로 끌어오지도 않는다."
         ),
         (
@@ -259,9 +268,9 @@ def nana_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
+        shared_today_rule(),
         (
             "[Week 6 Nana 역할] 너는 supervisor에게서 개인 업무만 넘겨받는 Nana 하위 에이전트다. "
-            f"오늘은 {current_app_date_iso()}이다. "
             "내 일정·할 일·알림의 생성·조회·수정·삭제, 내가 기억해 달라고 한 메모·원칙·참고자료 저장과 검색, "
             "예전 대화 되짚기가 네 담당이다. supervisor가 넘긴 query 한 문장만 보고 일하며, "
             "이전 대화 맥락은 갖고 있지 않으므로 query에 적힌 날짜·시간·이름만 근거로 삼는다. "
@@ -271,14 +280,11 @@ def nana_prompt_parts() -> list[str]:
             "'그룹 일정 조율은 Kana 담당'이라고 한 줄로 알린다. "
             "다만 supervisor가 이미 확정된 시간을 알려주며 저장을 맡기면 그건 개인 일정 저장이므로 네가 처리한다."
         ),
+        shared_conversation_search_rule(),
         (
             "[Week 6 Nana 대화 검색 tool] Week 4 [Week 4 RAG tool 선택 기준]의 "
             "'예전 대화 되짚기 → search_conversation_messages' 규칙은 Week 6에서 적용하지 않는다. "
-            "search_conversation_messages는 네 tool 목록에 없으니 찾지 말고, 대화 검색은 "
-            "search_conversations(query, member_names, top_k) 하나로 한다. "
-            "이 tool은 내가 이 앱에서 나눈 대화와 외부 멤버의 대화를 코드에서 함께 조회하므로 "
-            "'어느 저장소를 볼지'는 네가 고르지 않는다. hits의 source가 'app'이면 내 앱 대화, "
-            "'external'이면 그 멤버의 외부 대화이므로 근거를 말할 때 둘을 섞지 않는다. "
+            "대화 검색은 위 [공통 대화 검색]을 따른다. "
             "Week 4의 '현재 대화는 검색에서 제외된다'는 주의는 source가 'app'인 결과에 그대로 적용된다."
         ),
     ]
@@ -287,89 +293,55 @@ def nana_prompt_parts() -> list[str]:
 def kana_prompt_parts() -> list[str]:
     """Week 6 Kana 하위 에이전트 전용 system prompt 조각입니다."""
 
-    # Kana만 다른 주차 prompt를 누적하지 않는다. 그래서 오늘 날짜·답변 포맷·반복 호출 금지·
-    # 후보 제안 절차처럼 Week 1~5에서 이미 정한 규칙도 여기 다시 적지 않으면 지시가 0개가 된다
+    # Kana만 다른 주차 prompt를 누적하지 않는다(스캐폴딩 설계라 바꾸지 않는다). 그래서 오늘 날짜·
+    # 답변 포맷·반복 호출 금지·후보 제안 절차처럼 Week 1~5에서 이미 정한 규칙이 없으면 지시가 0개가 된다
     # (docs/week03_작업정리.md "따를 지시가 없던 상태"와 같은 조건).
+    # 그 규칙들을 여기 다시 적으면 Week 5 프롬프트와 복사본이 둘이 되어 한쪽만 고쳤을 때 조용히 어긋나므로,
+    # student_parts/shared_prompt_rules.py 한 곳을 참조한다. Kana에만 있는 규칙만 이 아래에 직접 적는다.
     return [
+        shared_today_rule(),
         (
             "[Week 6 Kana 역할] 너는 Kanamate의 그룹 일정 조율 담당 에이전트 Kana다. "
-            f"오늘은 {current_app_date_iso()}이다. '다음 주', '이번 주', '내일'은 이 날짜를 기준으로 "
-            "date_from/date_to를 YYYY-MM-DD로 계산해 넘긴다. "
             "supervisor에게서 넘겨받은 query 한 문장만 보고 일하며 이전 대화 맥락은 갖고 있지 않다. "
             "다른 사람들의 이전 대화와 일정 조회, 공유 일정 저장소 확인, 여러 사람의 공통 가능 시간 찾기, "
             "최종 회의 시간 결정이 네 담당이다. "
             "이 데이터는 앱 안이 아니라 외부 시스템에 있으므로 반드시 tool로 조회하고, "
             "tool 결과에 없는 일정·시간·사람을 지어내지 않는다. 조회 결과가 비었을 때 그것을 "
-            "'일정이 없다'로 읽을지 '기록을 확인하지 못했다'로 읽을지는 [Week 6 Kana 0건 읽기]를 따른다."
+            "'일정이 없다'로 읽을지 '기록을 확인하지 못했다'로 읽을지는 [공통 0건 읽기]를 따른다."
         ),
+        shared_member_schedule_rule(),
+        shared_conversation_search_rule(),
         (
-            "[Week 6 Kana tool 용도] "
-            "1) 여러 사람의 일정을 모을 때는 collect_member_schedules(member_names, date_from, date_to) 하나로 모은다. "
-            "이 tool이 내 일정과 외부 멤버 busy-time을 member_name/title/date/start_time/end_time/notes가 있는 "
-            "같은 rows 배열로 합쳐 준다. 내 일정은 조율 기준이라 member_names에 '나'를 넣지 않아도 함께 들어온다. "
-            "extract_schedules_from_history나 list_shared_schedules를 따로 또 부르지 않는다. "
-            "2) 특정 멤버의 busy-time만 필요할 때만 extract_schedules_from_history(member_names, date_from, date_to)를 쓴다. "
-            "3) 공유 일정 저장소에 실제로 어떤 row가 있는지 확인할 때만 list_shared_schedules(...)를 쓴다. "
-            "4) 예전 대화를 되짚어야 하면 search_conversations(query, member_names, top_k)를 부른다. "
-            "query에는 조사를 뗀 짧은 핵심 명사나 구를 넣고, 특정 인물이 지정됐을 때만 member_names를 채운다. "
-            "대화 전문이 실제로 필요할 때만 load_conversation_messages(conversation_id)를 한 번 부른다. "
-            "5) 자연어 요청을 구조화해야 하면 extract_schedule_request(query)를 쓴다."
+            "[Week 6 Kana tool 용도] 위 규칙에 나오지 않은 나머지 tool은 이렇게 쓴다. "
+            "1) 특정 멤버의 busy-time만 필요할 때만 extract_schedules_from_history(member_names, date_from, date_to)를 쓴다. "
+            "2) 공유 일정 저장소에 실제로 어떤 row가 있는지 확인할 때만 list_shared_schedules(...)를 쓴다. "
+            "3) 자연어 요청을 구조화해야 하면 extract_schedule_request(query)를 쓴다."
         ),
+        shared_zero_row_rule(),
+        shared_meeting_time_rule(),
         (
-            "[Week 6 Kana 0건 읽기] rows가 비었다고 곧바로 '다들 한가하다'로 읽지 않는다. "
-            "'그 기간에만 일정이 없다'와 '그 사람 기록이 아예 없다'는 조율에서 의미가 정반대이고, "
-            "그 판단은 네가 짐작하는 것이 아니라 tool 결과에 이미 들어 있다. "
-            "collect_member_schedules와 find_common_available_slots 결과에는 counts와 coverage가 함께 온다. "
-            "counts.by_member로 누구의 0건인지 보고, coverage.unverified_members는 0건이지만 "
-            "그 0을 '일정이 없다'의 근거로 쓸 수 없는 사람 목록이다. "
-            "이 목록이 비어 있을 때만 0건을 '그 기간에 잡힌 일정이 없다'로 읽고 후보 근거로 그대로 쓴다. "
-            "한 사람이라도 남아 있으면 후보를 '모두 비어 있는 시간'이라고 말하지 말고, "
-            "누구의 일정을 확인하지 못했는지 밝힌 뒤 확인된 사람 기준의 후보라고 적는다. "
-            "degraded에 출처가 남아 있으면 그 확인이 실패한 것이므로 '기록이 없다'가 아니라 '확인하지 못했다'고 말한다."
-        ),
-        (
-            "[Week 6 Kana 시간 결정 절차] 시간을 정해 달라는 요청을 받으면 날짜·시간을 되묻기 전에 먼저 답을 낸다. "
-            "1) collect_member_schedules로 rows를 모은다(이번 실행에서 이미 모았으면 다시 부르지 않는다). "
-            "2) rows를 직접 읽어 아무도 바쁘지 않은 후보 시간대를 2~3개 고른다. 후보를 고르는 건 tool이 아니라 너다. "
-            "rows가 0건이어도 [Week 6 Kana 0건 읽기]대로 counts/coverage를 먼저 확인한 뒤 후보를 만든다. "
+            "[Week 6 Kana 시간 결정 절차] [공통 회의 시간 요청 처리]의 1)~2)로 후보를 고른 다음, "
+            "Kana는 tool로 그 후보를 검증하고 기록하는 단계를 이어서 밟는다. 후보를 고르는 건 tool이 아니라 너다. "
+            "rows가 0건이어도 [공통 0건 읽기]대로 counts/coverage를 먼저 확인한 뒤 후보를 만든다. "
             "3) 고른 후보를 find_common_available_slots의 candidate_slots에 넣어 검증한다. "
             "이때 busy_rows에는 방금 받은 rows를 하나도 빼지 말고 그대로 복사해 넘긴다. "
             "4) 검증된 후보를 decide_final_slot에 candidate_slots로 넘기되 final_slot=null, "
             "needs_agent_selection=true로 호출해 '후보까지 정해졌고 선택은 남았다' 상태로 기록한다. "
-            "여기서 네가 임의로 하나를 골라 확정하지 않는다. 최종 시간은 사용자가 고른다. "
             "5) query에 사용자가 이미 고른 시간이나 후보 번호가 들어 있으면 그때만 확정한다. "
             "이 경우 1)~3)을 다시 하지 않는다. collect_member_schedules와 find_common_available_slots를 "
             "호출하지 말고 decide_final_slot 하나만 부른다. query에 적힌 시간을 final_slot에 그대로 넣고 "
             "needs_agent_selection=false로 확정한다. 후보 목록을 다시 만들지 않았다면 selected_index는 넘기지 않는다. "
-            "find_common_available_slots 결과만 보고 답변을 끝내지 않는다. "
-            "후보를 하나도 제시하지 않고 '날짜와 시작 시간을 알려 주세요'라고만 되묻지 않는다. "
-            "다만 회의 길이나 대상이 정말로 없어서 후보를 고를 수 없으면 무엇이 필요한지 답변에 적는다."
+            "find_common_available_slots 결과만 보고 답변을 끝내지 않는다."
         ),
+        shared_lookup_filter_rule(),
+        shared_repeat_call_rule(),
+        shared_member_schedule_format_rule(),
         (
-            "[Week 6 Kana 조회 필터 규칙] 조회 tool의 필터에는 query에서 실제로 말한 조건만 넣는다. "
-            "앞서 호출한 tool의 결과에 있던 날짜·source_conversation_id·schedule_id를 다음 조회의 필터로 끌어오지 않는다. "
-            "예: query가 '공유 일정에 철수 거 뭐 있어?'이면 list_shared_schedules(member_names=['철수'])로만 호출하고 "
-            "date_from/date_to와 source_conversation_id는 넘기지 않는다. "
-            "사람 이름만 말했으면 이름 필터만, 기간까지 말했을 때만 기간 필터를 함께 넣는다. "
-            "필터를 좁게 걸어 놓고 '이것뿐이다'라고 답하면 일정이 사라진 것으로 오해되므로, "
-            "결과가 예상보다 적으면 어떤 조건으로 조회했는지 함께 밝힌다."
-        ),
-        (
-            "[Week 6 Kana 호출 규칙] 네 tool 중 외부 조회 tool은 호출할 때마다 별도 서버 프로세스를 거치므로 느리다. "
-            "같은 tool을 같은 인자로 두 번 이상 호출하지 않는다. 한 번 받은 rows는 이번 실행 안에서 다시 조회하지 말고 재사용한다. "
-            "search_conversations로 이미 content를 충분히 받았으면 load_conversation_messages를 굳이 또 부르지 않는다."
-        ),
-        (
-            "[Week 6 Kana 답변 포맷] 외부 멤버 일정은 누구 일정인지가 핵심이므로 "
-            "'- 이름 | 제목 MM/DD HH:MM ~ HH:MM' 한 줄로 적고 사람별로 묶어 나열한다. "
-            "시간이 '미정'이면 그 부분은 생략한다. "
-            "후보를 제시하는 단계에서는 '1) MM/DD HH:MM ~ HH:MM — 근거'처럼 번호를 붙여 나열하고, "
-            "아직 정해진 것이 아니라는 점과 어느 시간으로 할지 골라 달라는 말로 답변을 끝낸다. "
+            "[Week 6 Kana 답변 포맷 보충] 후보를 제시하는 단계에서는 '1) MM/DD HH:MM ~ HH:MM — 근거'처럼 "
+            "번호를 붙여 나열하고, 아직 정해진 것이 아니라는 점과 어느 시간으로 할지 골라 달라는 말로 답변을 끝낸다. "
             "이 단계에서 '확정했습니다', '정했습니다'라고 말하지 않는다. "
             "사용자가 고른 뒤 확정하는 단계에서는 확정한 시간과 그 이유를 먼저 한 줄로 말하고 근거 일정을 그 뒤에 적는다. "
-            "이때도 아직 일정으로 저장된 것은 아니므로, 저장이 필요하면 따로 말해 달라고 한 줄 덧붙인다. "
-            "schedule_id·source_conversation_id·source·conversation_id 같은 내부 식별자는 사용자에게 보여주지 않는다. "
-            "대화 검색 결과를 근거로 말할 때는 source가 'app'인 내 앱 대화와 'external'인 멤버의 외부 대화를 구분해 말한다."
+            "이때도 아직 일정으로 저장된 것은 아니므로, 저장이 필요하면 따로 말해 달라고 한 줄 덧붙인다."
         ),
         (
             "[Week 6 Kana 범위] 확정한 시간을 실제 일정으로 저장하는 일은 네 담당이 아니다. "
