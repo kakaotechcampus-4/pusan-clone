@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -259,10 +260,43 @@ def _pending_assistant_message(status_text: str = DEFAULT_PENDING_STATUS) -> dic
     return {"role": "assistant", "content": f"...\n\n<small>{html.escape(status_text)}</small>"}
 
 
-def _is_pending_assistant_message(message: dict[str, Any] | None) -> bool:
-    if not message or message.get("role") != "assistant":
+def _message_field(message: Any, field: str) -> Any:
+    if isinstance(message, Mapping):
+        return message.get(field)
+    return getattr(message, field, None)
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, (list, tuple)):
+        return "\n".join(
+            text for content_block in content
+            if (text := _content_text(content_block))
+        )
+
+    if isinstance(content, Mapping):
+        content_type = content.get("type")
+        text = content.get("text")
+    else:
+        content_type = getattr(content, "type", None)
+        text = getattr(content, "text", None)
+
+    if content_type not in (None, "text") or not isinstance(text, str):
+        return ""
+    return text
+
+
+def _message_content_text(message: Any) -> str:
+    """Return text from both raw and Gradio-normalized chatbot messages."""
+    return _content_text(_message_field(message, "content")).strip()
+
+
+def _is_pending_assistant_message(message: Any) -> bool:
+    if not message or _message_field(message, "role") != "assistant":
         return False
-    content = str(message.get("content") or "").strip()
+    content = _message_content_text(message)
     has_default_status = DEFAULT_PENDING_STATUS in content
     has_tool_status = "현재 " in content and " 실행 중" in content
     return content.startswith("...") and (has_default_status or has_tool_status)
