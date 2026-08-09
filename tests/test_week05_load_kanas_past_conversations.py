@@ -276,6 +276,7 @@ class TestPersonalSchedulesForCurrentScope:
         temporary_group = {
             "id": "temporary_group",
             "session_id": "conversation-current",
+            "request_kind": "group_schedule",
             "title": "임시 그룹 일정",
             "attendees": ["철수"],
         }
@@ -510,13 +511,13 @@ class TestStructuredRequestFromScheduleRow:
             {"title": "회의", "members": ["철수"]},
         ],
     )
-    def test_reads_members_from_attendees_or_members(self, week05, row):
-        """참석자가 있는 임시 row를 그룹 일정으로 읽습니다."""
+    def test_week1_rows_default_to_personal_and_preserve_members(self, week05, row):
+        """request_kind가 없는 Week 1 row는 personal로 보고 참석자 값은 보존합니다."""
 
         request = week05._structured_request_from_schedule_row(row)
 
         assert request.members == ["철수"]
-        assert request.kind == "group_schedule"
+        assert request.kind == "personal_schedule"
 
     def test_missing_members_becomes_empty_list(self, week05):
         """참여자 키가 모두 없으면 빈 리스트를 사용합니다."""
@@ -660,12 +661,159 @@ class TestLoadConversationMessages:
 
 
 class TestCollectMemberSchedules:
-    def test_merges_rows_and_excludes_me(
+    def test_formats_group_notes_and_unknown_end_time(self, week05, monkeypatch):
+        """그룹 일정의 참석자를 설명하고 종료 미정은 공식 업무 종료 시각으로 맞춥니다."""
+
+        monkeypatch.setattr(
+            week05,
+            "call_mcp_tool_sync",
+            RecordingMcpCaller('{"rows": []}'),
+        )
+        group_schedule = {
+            "schedule_id": "group_1",
+            "request_kind": "group_schedule",
+            "title": "팀 회의",
+            "date": "2026-07-10",
+            "start_time": "14:00",
+            "end_time": "미정",
+            "attendees": ["철수", " 영희 "],
+        }
+
+        result = week05._collect_member_schedules(
+            member_names=[],
+            date_from="2026-07-10",
+            date_to="2026-07-10",
+            busy_schedules=[group_schedule],
+        )
+
+        assert result["rows"] == [
+            {
+                "member_name": "나",
+                "title": "팀 회의",
+                "date": "2026-07-10",
+                "start_time": "14:00",
+                "end_time": "18:00",
+                "notes": "Nana 그룹 일정 · 참석자: 철수, 영희",
+            }
+        ]
+
+    def test_deduplicates_local_and_shared_copies_with_different_formatting(
         self,
         week05,
         monkeypatch,
     ):
-        """정규화된 범위에서 내 일정과 외부 일정을 합치고 '나'는 외부 조회에서 제외합니다."""
+        """같은 일정의 앱 원본과 공유 복사본이 다르게 다듬어져도 앱 row 하나만 남깁니다."""
+
+        external_copy = {
+            "member_name": "나",
+            "title": "팀 회의",
+            "date": "2026-07-14",
+            "start_time": "미정",
+            "end_time": "미정",
+            "notes": "앱 개인 일정 자동 동기화",
+        }
+        monkeypatch.setattr(
+            week05,
+            "call_mcp_tool_sync",
+            RecordingMcpCaller(
+                json.dumps({"rows": [external_copy]}, ensure_ascii=False)
+            ),
+        )
+        local_schedule = {
+            "schedule_id": "personal_1",
+            "request_kind": "personal_schedule",
+            "title": "팀 회의 (온라인)",
+            "date": "2026-07-14",
+            "start_time": "",
+            "end_time": "미정",
+        }
+
+        result = week05._collect_member_schedules(
+            member_names=["나"],
+            date_from="2026-07-14",
+            date_to="2026-07-14",
+            busy_schedules=[local_schedule],
+        )
+
+        assert result["rows"] == [
+            {
+                "member_name": "나",
+                "title": "팀 회의 (온라인)",
+                "date": "2026-07-14",
+                "start_time": "",
+                "end_time": "18:00",
+                "notes": "Nana 개인 일정",
+            }
+        ]
+
+    def test_queries_me_and_returns_me_once_in_members(self, week05, monkeypatch):
+        """공유 저장소에는 '나'도 조회하되 반환 멤버 목록에는 한 번만 둡니다."""
+
+        caller = RecordingMcpCaller('{"rows": []}')
+        monkeypatch.setattr(week05, "call_mcp_tool_sync", caller)
+
+        result = week05._collect_member_schedules(
+            member_names=["나", "민준"],
+            date_from="2026-07-01",
+            date_to="2026-07-31",
+            busy_schedules=[],
+        )
+
+        assert caller.calls == [
+            (
+                "extract_schedules_from_history",
+                {
+                    "member_names": ["나", "민준"],
+                    "date_from": "2026-07-01",
+                    "date_to": "2026-07-31",
+                },
+            )
+        ]
+        assert result["members"] == ["나", "민준"]
+
+    def test_keeps_same_schedule_for_different_members(self, week05, monkeypatch):
+        """제목·날짜·시각이 같아도 멤버가 다르면 각자의 busy row를 유지합니다."""
+
+        external_row = {
+            "member_name": "민준",
+            "title": "팀 회의",
+            "date": "2026-07-14",
+            "start_time": "14:00",
+            "end_time": "15:00",
+            "notes": "공유 일정",
+        }
+        monkeypatch.setattr(
+            week05,
+            "call_mcp_tool_sync",
+            RecordingMcpCaller(
+                json.dumps({"rows": [external_row]}, ensure_ascii=False)
+            ),
+        )
+        local_schedule = {
+            "schedule_id": "group_1",
+            "request_kind": "group_schedule",
+            "title": "팀 회의",
+            "date": "2026-07-14",
+            "start_time": "14:00",
+            "end_time": "15:00",
+            "attendees": ["민준"],
+        }
+
+        result = week05._collect_member_schedules(
+            member_names=["민준"],
+            date_from="2026-07-14",
+            date_to="2026-07-14",
+            busy_schedules=[local_schedule],
+        )
+
+        assert [row["member_name"] for row in result["rows"]] == ["나", "민준"]
+
+    def test_merges_rows_and_queries_normalized_members(
+        self,
+        week05,
+        monkeypatch,
+    ):
+        """정규화된 범위에서 내 일정과 외부 일정을 합치고 요청 멤버를 그대로 조회합니다."""
 
         external_row = {
             "member_name": "철수",
@@ -714,13 +862,14 @@ class TestCollectMemberSchedules:
             (
                 "extract_schedules_from_history",
                 {
-                    "member_names": ["철수"],
+                    "member_names": ["철수", "나"],
                     "date_from": "2026-07-07",
                     "date_to": "2026-07-10",
                 },
             )
         ]
-        assert set(result) == {"rows", "schedule_summary"}
+        assert set(result) == {"members", "rows", "schedule_summary"}
+        assert result["members"] == ["나", "철수"]
         assert len(result["rows"]) == 2
         personal_row = result["rows"][0]
         assert personal_row == {
@@ -729,11 +878,9 @@ class TestCollectMemberSchedules:
             "date": "2026-07-07",
             "start_time": "09:00",
             "end_time": "10:00",
-            "notes": None,
-            "source_conversation_id": None,
+            "notes": "Nana 개인 일정",
         }
         assert result["rows"][1] == external_row
-        assert set(personal_row) == set(external_row)
         assert "나 | 경계 날짜 일정" in result["schedule_summary"]
         assert "철수 | 외부 회의" in result["schedule_summary"]
 
@@ -754,6 +901,7 @@ class TestCollectMemberSchedules:
         )
 
         assert result == {
+            "members": ["나"],
             "rows": [],
             "schedule_summary": "조회된 외부 일정이 없습니다.",
         }
@@ -854,6 +1002,7 @@ class TestCollectMemberSchedulesTool:
         personal_rows = [{"schedule_id": "personal_1"}]
         group_rows = [{"schedule_id": "group_1"}]
         helper_result = {
+            "members": ["나", "철수"],
             "rows": [{"member_name": "나", "title": "내 일정"}],
             "schedule_summary": "- 나 | 내 일정",
         }
@@ -930,6 +1079,7 @@ class TestCollectMemberSchedulesTool:
         assert set(json.loads(raw)) == {
             "ok",
             "tool_name",
+            "members",
             "rows",
             "schedule_summary",
         }

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""실제 LLM과 케이스 고정 mock tool로 Week 4·5 routing을 평가합니다."""
+"""실제 LLM과 케이스 고정 mock tool로 Week 4~6 agent 행동을 평가합니다."""
 
 import dataclasses
 import importlib
@@ -15,21 +15,32 @@ from langchain.agents import create_agent
 import fixed.app_store as app_store_module
 import fixed.config as config_module
 import fixed.conversation_rag_store as conversation_rag_store_module
+import fixed.mcp_client as mcp_client_module
 import fixed.reference_store as reference_store_module
 import fixed.runtime_clock as runtime_clock
 from fixed.langchain_trace import extract_agent_events, extract_final_text
 from fixed.llm import chat_model
-from fixed.session_scope import conversation_session_scope
+from fixed.session_scope import conversation_session_scope, current_session_scope
 from tests.evals.cases_week04_routing import WEEK04_ROUTING_CASES
 from tests.evals.cases_week05_routing import WEEK05_ROUTING_CASES
+from tests.evals.cases_week06_routing import WEEK06_ROUTING_CASES
 from tests.evals.mock_tools import CaseMockTools
 
 
 WEEK03_MODULE = "student_parts.week03_build_nanas_logbook"
 WEEK04_MODULE = "student_parts.week04_retrieve_nanas_memory"
 WEEK05_MODULE = "student_parts.week05_load_kanas_past_conversations"
+WEEK06_MODULE = "student_parts.week06_kanamate_decides_schedule"
 CASE_PASS_RATE_FLOOR = 0.8
 EVAL_TODAY = date(2026, 7, 26)
+
+
+class EvalIsolationError(AssertionError):
+    """평가 중 mock을 우회해 실제 외부 I/O로 나가려 한 경우입니다.
+
+    `_run_agent_once`의 광범위한 `except Exception`이 이걸 삼켜 "인프라 오류"로 오진하면
+    격리가 깨진 사실이 조용히 묻힙니다. 그래서 별도 타입으로 두고 re-raise합니다.
+    """
 
 
 def _freeze_eval_clock(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -38,12 +49,75 @@ def _freeze_eval_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime_clock, "APP_TODAY", EVAL_TODAY)
 
 
+# 격리 위반 기록입니다. LangChain의 tool 실행부는 tool이 던진 예외를 잡아 모델에게
+# ToolMessage로 돌려주므로, 예외만으로는 위반이 `agent.invoke` 밖으로 나오지 않습니다.
+# 그래서 예외와 별개로 여기에 남기고, 실행 직후 run 단위로 확인합니다.
+#
+# run 식별자는 부분 문자열이 아니라 **정확히** 비교합니다. 문자열 포함으로 찾으면
+# `eval-case-10`의 위반이 `eval-case-1`에도 걸려 엉뚱한 run이 실패합니다.
+# `list.append`와 슬라이스 읽기는 GIL 아래에서 원자적이라 worker 스레드끼리 안전합니다.
+_MCP_ISOLATION_VIOLATIONS: list[tuple[str, str]] = []
+
+
+def _block_real_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """평가 중 실제 MCP 진입점을 모두 막습니다.
+
+    평가는 모든 tool을 케이스 fixture로 mock하므로 실제 MCP를 탈 일이 없습니다. 그래도
+    학생 구현이나 케이스가 바뀌어 mock을 우회하는 경로가 생기면 조용한 인프라 오류가 아니라
+    이름 있는 실패로 즉시 드러나야 합니다.
+
+    두 진입점을 막습니다.
+
+    - `call_local_mcp_tool`: `week05`가 `call_mcp_tool_sync = call_local_mcp_tool_sync`로
+      모듈 로드 시점에 별칭을 굳혀 두지만, `call_local_mcp_tool_sync`가 내부에서
+      `call_local_mcp_tool`을 호출 시점에 전역 조회하므로 별칭 경로도 함께 막힙니다.
+    - `load_local_mcp_tools`: MCP 서브프로세스를 직접 띄우는 loader입니다. `week05`가
+      `load_langchain_mcp_tools`로 노출하고 있어, 학생 구현이 이걸 직접 쓰면 위의 호출 경로를
+      우회합니다.
+    """
+
+    _MCP_ISOLATION_VIOLATIONS.clear()
+
+    def _record(entry_point: str, detail: str) -> EvalIsolationError:
+        conversation_id = current_session_scope()
+        message = (
+            f"평가 중 실제 MCP {entry_point} {detail}이 호출됐습니다 (run: {conversation_id}). "
+            "케이스 fixture가 빠졌거나 mock을 우회하는 경로가 생겼습니다."
+        )
+        _MCP_ISOLATION_VIOLATIONS.append((conversation_id, message))
+        return EvalIsolationError(message)
+
+    async def _raise_on_tool_call(tool_name: str, *args: Any, **kwargs: Any) -> str:
+        del args, kwargs
+        raise _record("tool", repr(tool_name))
+
+    async def _raise_on_tool_load(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise _record("loader", "load_local_mcp_tools")
+
+    monkeypatch.setattr(mcp_client_module, "call_local_mcp_tool", _raise_on_tool_call)
+    monkeypatch.setattr(mcp_client_module, "load_local_mcp_tools", _raise_on_tool_load)
+
+
+def _assert_no_isolation_violation(conversation_id: str) -> None:
+    """이 run에서 기록된 격리 위반이 있으면 인프라 오류로 뭉개지 않고 터뜨립니다."""
+
+    breaches = [
+        message
+        for recorded_id, message in list(_MCP_ISOLATION_VIOLATIONS)
+        if recorded_id == conversation_id
+    ]
+    if breaches:
+        raise EvalIsolationError("\n".join(breaches))
+
+
 @dataclasses.dataclass(frozen=True)
 class EvalEnvironment:
-    """저장소 없이 import한 Week 4·5 모듈과 실제 채팅 모델입니다."""
+    """저장소 없이 import한 Week 4~6 모듈과 실제 채팅 모델입니다."""
 
     week04: Any
     week05: Any
+    week06: Any
     model: Any
 
 
@@ -56,6 +130,8 @@ def eval_env() -> Any:
 
     monkeypatch = pytest.MonkeyPatch()
     _freeze_eval_clock(monkeypatch)
+    # 스레드 풀이 만들어지기 전에 한 번만 설치되므로 병렬 실행에서 경합이 없습니다.
+    _block_real_mcp(monkeypatch)
     monkeypatch.setattr(app_store_module, "AppSQLiteStore", lambda _path: object())
     monkeypatch.setattr(reference_store_module, "PersonalReferenceStore", lambda _path: object())
     monkeypatch.setattr(
@@ -64,7 +140,7 @@ def eval_env() -> Any:
         lambda _path: object(),
     )
 
-    module_names = (WEEK05_MODULE, WEEK04_MODULE, WEEK03_MODULE)
+    module_names = (WEEK06_MODULE, WEEK05_MODULE, WEEK04_MODULE, WEEK03_MODULE)
     previous_modules = {
         name: sys.modules.pop(name)
         for name in module_names
@@ -72,9 +148,15 @@ def eval_env() -> Any:
     }
 
     try:
+        week06 = importlib.import_module(WEEK06_MODULE)
         week05 = importlib.import_module(WEEK05_MODULE)
         week04 = importlib.import_module(WEEK04_MODULE)
-        yield EvalEnvironment(week04=week04, week05=week05, model=chat_model())
+        yield EvalEnvironment(
+            week04=week04,
+            week05=week05,
+            week06=week06,
+            model=chat_model(),
+        )
     finally:
         for name in module_names:
             sys.modules.pop(name, None)
@@ -118,6 +200,16 @@ def week05_case_results(
 ) -> dict[str, dict[str, Any]]:
     cases = _selected_cases(request.session, WEEK05_ROUTING_CASES)
     return _run_cases(request, week05_eval_env, cases, eval_repeats)
+
+
+@pytest.fixture(scope="session")
+def week06_case_results(
+    request: pytest.FixtureRequest,
+    eval_env: EvalEnvironment,
+    eval_repeats: int | None,
+) -> dict[str, dict[str, Any]]:
+    cases = _selected_cases(request.session, WEEK06_ROUTING_CASES)
+    return _run_cases(request, eval_env, cases, eval_repeats)
 
 
 def _run_cases(
@@ -235,11 +327,33 @@ def _run_week05_once(
     )
 
 
+def _run_week06_once(
+    environment: EvalEnvironment,
+    case: dict[str, Any],
+    index: int,
+) -> RunOutcome:
+    if case["surface"] == "supervisor":
+        tools = environment.week06.supervisor_tools()
+        system_prompt = environment.week06.supervisor_system_prompt()
+    elif case["surface"] == "kana":
+        tools = environment.week06.kana_tools()
+        system_prompt = environment.week06.kana_system_prompt()
+    elif case["surface"] == "nana":
+        # Nana 전용 tool 목록은 없습니다. production의 agent_tool_names()와 같이 Week 4 도구를 씁니다.
+        tools = environment.week06.week04_tools()
+        system_prompt = environment.week06.nana_system_prompt()
+    else:
+        raise ValueError(f"알 수 없는 Week 6 eval surface: {case['surface']}")
+    return _run_agent_once(environment, tools, system_prompt, case, index)
+
+
 def _run_case_once(
     environment: EvalEnvironment,
     case: dict[str, Any],
     index: int,
 ) -> RunOutcome:
+    if case["id"].startswith("week06."):
+        return _run_week06_once(environment, case, index)
     if case["id"].startswith("week05."):
         return _run_week05_once(environment, case, index)
     return _run_once(environment, case, index)
@@ -268,9 +382,16 @@ def _run_agent_once(
         )
         with conversation_session_scope(conversation_id):
             result = agent.invoke({"messages": messages})
+    except EvalIsolationError:
+        # 격리 위반은 인프라 오류로 뭉개지 않고 그대로 터뜨립니다.
+        raise
     except Exception as exc:
+        # tool 실행부가 격리 위반 예외를 삼켰다면 아래 진단보다 그 사실이 우선입니다.
+        _assert_no_isolation_violation(conversation_id)
         print(f"[eval] {case['id']} #{index} 인프라 오류: {type(exc).__name__}: {exc}")
         return RunOutcome(failures=None, calls=[], answer="", events=[])
+
+    _assert_no_isolation_violation(conversation_id)
 
     events = extract_agent_events(result)
     answer = extract_final_text(result)
