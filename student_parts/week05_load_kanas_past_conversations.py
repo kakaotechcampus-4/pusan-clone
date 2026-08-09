@@ -276,7 +276,11 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
 
     return StructuredRequest(
-        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
+        kind=(
+            "group_schedule"
+            if row.get("request_kind") == "group_schedule"
+            else "personal_schedule"
+        ),
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -291,12 +295,23 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
 
     if request.kind != "group_schedule":
         return "Nana 개인 일정"
-    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
-    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+    members = [
+        str(member).strip() for member in (request.members or []) if str(member).strip()
+    ]
+    return (
+        f"Nana 그룹 일정 · 참석자: {', '.join(members)}"
+        if members
+        else "Nana 그룹 일정"
+    )
 
 
 def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다."""
+    """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
+
+    start_time과 end_time을 모두 키에 넣습니다. 두 값이 같아야 병합되므로 병합된 row는
+    반드시 같은 시간 구간이고 busy 구간이 사라지지 않습니다. end_time을 빼면
+    10:00-11:00과 10:00-12:00이 합쳐져 11:00-12:00이 빈 시간으로 판단됩니다.
+    """
 
     deduped: dict[tuple[str, ...], dict[str, Any]] = {}
     for row in rows:
@@ -304,6 +319,7 @@ def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             str(row.get("member_name") or "").strip(),
             str(row.get("date") or "").strip(),
             str(row.get("start_time") or "").strip() or "미정",
+            str(row.get("end_time") or "").strip() or "미정",
             strip_parenthetical_text(str(row.get("title") or "")),
         )
         deduped.setdefault(key, row)
