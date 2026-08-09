@@ -282,16 +282,143 @@ SUPERVISOR CALL: kana_agent {"query": "2026-07-07부터 2026-07-17까지 철수�
 
 ---
 
+## busy_rows 0건의 의미를 반환값으로 가르기 (멘토 리뷰 반영)
+
+> 코드 버그가 아니라 **반환값 설계 문제**다. 아래 "남은 한계"에 적어 둔 항목을 실제로 고쳤다.
+
+### 리뷰 지적
+
+`find_common_available_slots_dict`에서 `collect_member_schedules`가 돌려준 rows가 0건일 때,
+KPT에 쓴 **"다들 한가하다"와 "그 기간 기록이 아예 없다"가 구분되지 않는다**는 지적이었다.
+Week 5에서 `counts`/`degraded`로 "결과 없음 vs 조회 실패"를 반환값에 담았듯 이것도 프롬프트가 아니라
+데이터로 구분하라는 것이고, 선택지를 둘로 제시받았다.
+
+1. `collect_member_schedules` 반환에 `counts` 추가 (Week 5 수정 필요)
+2. Week 6에 얇은 래퍼를 두고 rows 유무와 "기간에 기록이 있었는지"를 별도 신호로 받기
+
+### 먼저 정리한 것 — `counts`만으로는 0이 갈리지 않는다
+
+두 선택지를 비교하기 전에, **요청한 기간 안을 아무리 세어도 0의 의미는 하나**라는 걸 먼저 확인했다.
+`counts.total = 0`은 `len(rows) == 0`을 다시 쓴 것이고, 멤버별로 쪼갠 `counts.by_member`도
+"전원 0건"과 "한 사람만 0건"까지만 가른다. 0을 둘로 가르는 정보는 **요청 기간 밖에만** 있다.
+
+| 같은 0건 | 실제 의미 | 조율에서 할 일 |
+| --- | --- | --- |
+| 철수 기록은 있는데 그 기간에만 없음 | 그 기간에 잡힌 일정이 없다 | 후보를 만들어도 된다 |
+| 철수 기록이 저장소에 아예 없음 | 그 사람에 대해 아는 게 없다 | "비어 있다"의 근거로 쓸 수 없다 |
+| 조회 자체가 실패 | 못 봤다 | 위와 같이 근거로 쓸 수 없다 |
+
+그래서 담아야 할 신호는 두 축이다.
+
+- `counts` — **누구의 0건인지**. 요청 멤버 전원이 키로 들어가므로 0건인 사람도 목록에서 사라지지 않는다.
+- `coverage` — **그 0건을 "비어 있다"로 읽어도 되는지**. 기간 필터 없이 한 번 더 확인한 결과다.
+
+### 선택 — 1번(Week 5 반환에 담기)
+
+2번(Week 6 래퍼)이 성립하려면 래퍼가 "기간에 기록이 있었는지"를 **스스로 다시 조회**해야 한다.
+래퍼가 받는 건 이미 합쳐진 rows뿐이라, 그 0이 앱 SQLite leg의 0인지 외부 MCP leg의 0인지 되짚을 수 없기 때문이다.
+그러면 두 가지를 잃는다.
+
+- **병합 규칙이 두 곳으로 갈라진다.** 이름 정규화·`"나"` 포함 규칙·중복 제거를 Week 6이 다시 갖게 되고,
+  Week 5 문서에서 정한 "정규화는 store/MCP 경계에서 한 번만"과 정면으로 부딪힌다.
+- **MCP subprocess가 한 번 더 뜬다.** 그것도 Week 5가 방금 같은 데이터를 읽고 온 직후에.
+
+1번은 반대로 `_collect_member_schedules`가 이미 두 leg를 다 들고 있는 자리라 추가 조회 없이 `counts`를 만들고,
+`coverage`도 같은 자리에서 판정한다. "앞 주차 수정" 비용은 **가법적**이라 작다 — 시그니처와 기존 키는 그대로고
+새 키만 늘어나므로, Week 5 agent는 새 키를 읽지 않아도 지금과 똑같이 동작한다.
+무엇보다 이건 Week 5에 새 개념을 넣는 게 아니라 **Week 5가 `search_conversations`에서 이미 쓴
+`counts`/`degraded` 계약을 같은 파일의 다른 병합 tool에 맞추는 것**이다.
+
+### 구현
+
+`schedule_row_counts(member_names, rows)` / `member_record_coverage(member_names, rows)` 두 helper를
+Week 5에 두고, `collect_member_schedules` 반환에 세 키를 더했다.
+
+```json
+{"ok": true, "tool_name": "collect_member_schedules", "rows": [],
+ "counts": {"total": 0, "mine": 0, "external": 0, "by_member": {"나": 0, "철수": 0, "없는사람": 0}},
+ "coverage": {"members_with_records": ["나", "철수"], "members_without_records": ["없는사람"],
+              "members_unknown": [], "unverified_members": ["없는사람"]},
+ "degraded": []}
+```
+
+- **`unverified_members`가 판단을 대신한다.** "0건인데 그 0을 '한가하다'의 근거로 쓸 수 없는 사람" 목록이라,
+  프롬프트 쪽 규칙은 *"비어 있을 때만 0건을 '일정이 없다'로 읽는다"* 한 줄로 줄었다.
+  Week 5 `[Week 5 대화 검색 결과 읽기]`가 `counts`/`degraded`를 읽는 법만 적고 라우팅 지시를 없앤 것과 같은 형태다.
+- **비용은 애매할 때만 낸다.** rows가 있는 멤버는 그 자체가 "저장소가 이 사람을 안다"는 증거라 조회하지 않는다.
+  0건인 외부 멤버가 있을 때만 그 사람들을 모아 **한 번** 부른다. 전원 rows가 있으면 추가 호출은 0회다.
+- **날짜 없이 묻는 조회라 `list_shared_schedules`를 쓴다.** `extract_schedules_from_history`는
+  `date_from`/`date_to`가 필수라 "기간 밖까지"를 물을 수 없다. 두 tool이 같은 `external_schedules` 테이블을 읽으므로
+  기간 내 rows와 판정 근거가 어긋나지 않는다.
+- **`"나"`는 조회하지 않는다.** 앱 SQLite가 곧 원본이라 0건이 그대로 "비어 있다"는 뜻이고,
+  외부 멤버와 달리 "기록을 못 봤다"가 될 수 없다.
+- **coverage 조회 실패는 `unknown` + `degraded`로 남긴다.** 여기만 `search_conversations`의 leg별 처리와 같이
+  좁게 잡는다. 보조 신호가 죽었다고 rows 수집 전체를 무너뜨리지 않되, **못 본 것을 없는 것으로 둔갑시키지 않는다.**
+  본 조회(`extract_schedules_from_history`) 실패는 지금처럼 그대로 전파된다.
+
+Week 6 `find_common_available_slots_dict`는 이 세 키를 검증 결과 옆에 그대로 얹는다.
+자체 수집한 경로에서는 방금 받은 payload의 값을 재사용해 MCP를 다시 부르지 않고,
+**agent가 `busy_rows`를 복사해 넘긴 경로에서만** 다시 판정한다. 그 rows에는 counts/coverage가 딸려 오지 않는데
+0건인 멤버는 섞여 있을 수 있기 때문이다.
+
+프롬프트는 세 군데를 고쳤다.
+
+| 고친 곳 | 내용 |
+| --- | --- |
+| `[Week 5 0건 읽기]` (신규) | Week 5 단일 agent도 같은 규칙으로 읽게 함 |
+| `[Week 6 Kana 0건 읽기]` (신규) | Kana는 누적이 없으므로 같은 규칙을 다시 적음. `[Week 6 Kana 역할]`의 "결과가 비면 그대로 답한다"를 이 조각으로 넘김 |
+| `FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION` / `DECIDE_FINAL_SLOT_DESCRIPTION` | 반환에 counts/coverage가 온다는 것과, `unverified_members`가 남아 있으면 reason에 누구를 확인하지 못했는지 적으라는 계약 |
+
+### 검증 (LLM 없이, 실제 MCP subprocess + 앱 SQLite)
+
+| 케이스 | rows | `unverified_members` | 판정 |
+| --- | --- | --- | --- |
+| 7/07~7/17 철수·영희 | 9 | `[]` | 전원 기록 있음 |
+| **7/18~7/20 철수·영희** | **0** | **`[]`** | **그 기간에만 없음 → 후보 생성 정당** |
+| 7/07~7/17 없는사람 | 3(내 것만) | `["없는사람"]` | 저장소가 모르는 사람 |
+| 7/18~7/20 철수·없는사람 | 0 | `["없는사람"]` | 같은 0건 안에서 둘이 갈림 |
+
+KPT에 적은 두 사례(7/17~7/20 0건, "다음 주 철수·영희" 0건)가 이제 **둘 다 두 번째 줄로 판정**된다.
+같은 0건에 대해 턴마다 해석이 갈리던 것이 값 하나로 고정됐다.
+
+MCP 호출 횟수도 함께 셌다.
+
+| 경로 | 호출 |
+| --- | --- |
+| 전원 rows 있음 | `extract_schedules_from_history` 1회 (coverage 조회 없음) |
+| 0건 발생 | `extract_schedules_from_history` + `list_shared_schedules` 각 1회 |
+| Week 6 자체 수집 | 위와 동일 — **재계산으로 인한 중복 호출 없음** |
+| Week 6, agent rows 전원 있음 | **0회** |
+| Week 6, agent rows + 모르는 사람 | `list_shared_schedules` 1회 |
+
+실패 경로도 확인했다.
+
+- coverage 조회만 실패 → `ok=True`, rows 유지, `members_unknown=["철수","영희"]`,
+  `degraded=[{"source": "member_coverage", "error": "RuntimeError: mcp down"}]`
+- 본 조회(`extract_schedules_from_history`) 실패 → 예외 그대로 전파 (Week 4 상태 계약 유지)
+- 후보 겹침 검증은 그대로 동작 (철수 `07-07 10:00~11:00`과 겹치는 후보 제외, `14:00~15:00`만 통과)
+- 프롬프트 조각 Week 5 39 / supervisor 43 / Nana 31 / Kana 8, 빈 값 없음.
+  tool 개수는 그대로 (Week 5 20 / supervisor 2 / Nana 14 / Kana 8)
+
+### 남은 것
+
+- `coverage`는 **"기록이 하나라도 있나"**까지만 답한다. 철수의 기록이 7월치뿐인데 12월을 물으면
+  `unverified_members`는 비어 있고 "그 기간에 일정이 없다"로 읽힌다. 기록이 실제로 덮는 기간까지
+  비교하려면 멤버별 날짜 범위를 더 받아야 한다.
+- coverage 조회는 `limit=200` 한 번이라, 확인 대상 멤버들의 row 합이 200을 넘으면 뒤쪽 멤버가
+  "기록 없음"으로 잘못 판정될 수 있다. 현재 fixture는 18건이라 여유가 크다.
+
+---
+
 ## 남은 한계
 
 - **위임 판단은 여전히 프롬프트 의존이다.** 대화 검색은 통합 tool로 코드에 가뒀지만, "개인 일정이냐 그룹 조율이냐"는 supervisor가 지시를 따르는 데 의존한다.
 - **query 재작성은 Week 6에서 새로 생긴 오염 표면이다.** 위 버그는 날짜 케이스를 막았지만, supervisor가 사용자 원문을 다시 쓰는 한 다른 조건이 끼어들 여지는 남는다. 원문을 함께 넘기는 인자(`original_text`)를 두는 것이 다음 후보다.
 - **하위 agent가 stateless라 supervisor가 맥락을 전부 query에 담아야 한다.** 여러 turn에 걸친 조율에서 supervisor가 값을 하나 빠뜨리면 하위는 되물을 수밖에 없다.
 - **하위 실행 비용이 크다.** 한 번의 `kana_agent` 호출 안에서 LLM 루프와 MCP subprocess가 여러 번 돈다. 반복 호출 금지는 프롬프트로만 막고 있다.
-- **`busy_rows`가 0건일 때 "다들 한가하다"와 "그 기간 기록이 아예 없다"를 구분하지 않는다.**
-  7/17~7/20 조회에서 rows 0건을 받고도 "두 사람 모두 일정이 없다"는 근거로 후보를 만들었다.
-  같은 0건인데 "다음 주에 철수랑 영희 언제 시간 돼?"에는 "조회되지 않았습니다"라고 답해 턴마다 해석이 갈린다.
-  Week 5에서 `counts`/`degraded`로 잡은 "기록이 없다 vs 그쪽을 못 봤다" 구분이 Week 6 Kana에는 없다.
+- ~~**`busy_rows`가 0건일 때 "다들 한가하다"와 "그 기간 기록이 아예 없다"를 구분하지 않는다.**~~
+  → 위 "busy_rows 0건의 의미를 반환값으로 가르기"에서 `counts`/`coverage`/`degraded`로 해결.
+  남은 구멍(기록이 덮는 **기간**까지는 비교하지 않음)은 그 절 끝에 적어 뒀다.
 - **주말이 후보로 나온다.** `fixed/schedule_decision.py`는 `workday_start`~`workday_end` 시간대만 검사하고 요일은 보지 않는다.
   실제로 `2026-07-18`(토)이 후보에 포함됐다. 프롬프트에도 주말 규칙이 없어, 범위에 주말만 있으면 주말에 회의를 잡는다.
 - **공유 일정 등록·삭제 경로가 없다.** Week 5 추가과제로 만든 `create_shared_schedule` / `delete_shared_schedule`이

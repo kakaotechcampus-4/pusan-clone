@@ -171,9 +171,15 @@ _WEEK05_AGENT: Any | None = None
 #     앱 DB와 공유 저장소 양쪽에서 들어온 같은 일정을 한 번만 남깁니다.
 #     두 경로가 제목·시간을 다르게 다듬으므로 (member_name, date, start_time, 소괄호 제거 제목)을 키로 씁니다.
 #
+#   - [메인] schedule_row_counts(member_names, rows) / member_record_coverage(member_names, rows)
+#     rows 0건의 의미를 반환값으로 가르는 두 신호입니다. counts는 요청 멤버별 건수로 "누구의 0건인지"를,
+#     coverage는 요청 기간 밖까지 보고 "그 0건을 '비어 있다'로 읽어도 되는지"를 판정합니다.
+#     coverage 조회는 0건인 외부 멤버가 있을 때만 MCP를 한 번 더 부르고, 전원 rows가 있으면 호출하지 않습니다.
+#
 #   - [메인] _collect_member_schedules(...)
 #     내 일정과 외부 멤버 일정을 같은 member_name/title/date/start_time/end_time/notes row 구조로 합칩니다.
 #     외부 멤버 이름과 날짜 범위는 fixed/external_people_store.py helper로 정규화합니다.
+#     rows와 함께 counts/coverage/degraded를 돌려줘 Week 6 조율 tool이 0건을 짐작하지 않게 합니다.
 #
 #   - [메인] search_previous_conversations(...)
 #     외부 SQLite/MCP 서버에 저장된 과거 대화를 검색합니다. wrapper는 query/member_names/limit를 넘기고 결과 문자열을 그대로 반환합니다.
@@ -222,6 +228,9 @@ load_langchain_mcp_tools_sync = load_local_mcp_tools_sync
 PERSONAL_MEMBER_NAME = "나"
 # 조율 후보로 읽어 올 앱 SQLite 일정 최대 개수입니다. list_schedules 기본값(12)은 범위 조회에 너무 좁습니다.
 PERSONAL_SCHEDULE_LIMIT = 200
+# "이 멤버 기록이 하나라도 있나"를 확인할 때 읽어 올 공유 저장소 row 상한입니다.
+# 존재 여부만 보면 되므로 값 자체는 크게 중요하지 않고, store 상한(200)에 맞춰 한 번에 읽습니다.
+MEMBER_COVERAGE_LOOKUP_LIMIT = 200
 
 # week04_tools()에서 물려받되 Week 5 agent에는 공개하지 않는 tool 이름입니다.
 # 대화 검색 진입점을 search_conversations 하나로 줄여 출처 라우팅을 코드에 가둡니다.
@@ -387,6 +396,92 @@ def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(deduped.values())
 
 
+def schedule_row_counts(member_names: list[str], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """수집한 rows를 요청 멤버 기준으로 세어 "누구의 0건인지"를 드러냅니다.
+
+    전체 건수만 보면 0의 의미가 하나뿐이지만, 멤버별로 세면 "전원 0건"과 "한 사람만 0건"이
+    갈립니다. 0을 어떻게 읽을지 판단하려면 이 구분이 먼저 필요합니다.
+    """
+
+    # 내 일정은 member_names에 "나"가 없어도 항상 rows에 들어오므로 키에도 항상 넣는다.
+    by_member = {name: 0 for name in dict.fromkeys([PERSONAL_MEMBER_NAME, *member_names])}
+    for row in rows:
+        name = str(row.get("member_name") or "").strip()
+        by_member[name] = by_member.get(name, 0) + 1
+    mine = by_member.get(PERSONAL_MEMBER_NAME, 0)
+    return {
+        "total": len(rows),
+        "mine": mine,
+        "external": len(rows) - mine,
+        "by_member": by_member,
+    }
+
+
+def member_record_coverage(
+    member_names: list[str],
+    rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """요청 기간 밖까지 보고 "이 멤버의 0건을 '비어 있다'로 읽어도 되는지" 판정합니다.
+
+    같은 0건이라도 "그 기간에만 일정이 없다"와 "그 사람 기록이 저장소에 아예 없다"는
+    조율에서 의미가 정반대입니다. 앞은 후보를 만들어도 되는 0이고, 뒤는 근거가 없는 0입니다.
+    이 구분은 요청 기간 안을 아무리 세어도 나오지 않으므로 기간 필터 없이 한 번 더 확인합니다.
+
+    비용은 애매한 경우에만 냅니다. rows가 있는 멤버는 그 자체가 증거라 다시 묻지 않고,
+    0건인 외부 멤버만 모아 MCP를 한 번 부릅니다. 전원이 rows를 가지면 호출은 0회입니다.
+
+    반환은 (coverage, degraded)입니다.
+    """
+
+    requested = list(dict.fromkeys([PERSONAL_MEMBER_NAME, *member_names]))
+    members_with_rows = {str(row.get("member_name") or "").strip() for row in rows}
+    with_records = [name for name in requested if name in members_with_rows]
+    zero_row_members = [name for name in requested if name not in members_with_rows]
+
+    without_records: list[str] = []
+    unknown: list[str] = []
+    degraded: list[dict[str, Any]] = []
+
+    # "나"는 앱 SQLite가 곧 원본이라 저장된 일정이 0건이면 그대로 "비어 있다"는 뜻이다.
+    # 외부 멤버와 달리 "기록을 못 봤다"가 될 수 없으므로 조회 없이 확인된 쪽으로 둔다.
+    if PERSONAL_MEMBER_NAME in zero_row_members:
+        with_records.append(PERSONAL_MEMBER_NAME)
+    external_members = [name for name in zero_row_members if name != PERSONAL_MEMBER_NAME]
+
+    if external_members:
+        # 날짜 필터 없이 묻는 조회다. extract_schedules_from_history는 date_from/date_to가
+        # 필수라 "기간 밖까지"를 물을 수 없어서, 같은 external_schedules 테이블을 날짜 없이
+        # 읽는 list_shared_schedules를 쓴다. 존재 여부만 보므로 rows 내용은 읽지 않는다.
+        try:
+            payload = json.loads(
+                call_mcp_tool_sync(
+                    "list_shared_schedules",
+                    {"member_names": external_members, "limit": MEMBER_COVERAGE_LOOKUP_LIMIT},
+                )
+            )
+        except Exception as error:  # noqa: BLE001 - 보조 신호 실패가 rows 수집 전체를 무너뜨리지 않게 한다
+            # search_conversations의 leg별 처리와 같은 규칙이다. 실패를 삼켜 "기록이 없다"로
+            # 바꾸지 않고 unknown으로 남겨, 못 본 것이 없는 것으로 둔갑하지 않게 한다.
+            unknown.extend(external_members)
+            degraded.append(
+                {"source": "member_coverage", "error": f"{type(error).__name__}: {error}"}
+            )
+        else:
+            seen = {str(row.get("member_name") or "").strip() for row in payload.get("rows", [])}
+            for name in external_members:
+                (with_records if name in seen else without_records).append(name)
+
+    coverage = {
+        "members_with_records": with_records,
+        "members_without_records": without_records,
+        "members_unknown": unknown,
+        # 0건인데 그 0을 "한가하다"의 근거로 쓸 수 없는 멤버다. 비어 있지 않으면
+        # 답변에서 "일정이 없다"가 아니라 "확인하지 못했다"로 말해야 한다.
+        "unverified_members": [*without_records, *unknown],
+    }
+    return coverage, degraded
+
+
 def _collect_member_schedules(
     *,
     member_names: list[str],
@@ -461,11 +556,21 @@ def _collect_member_schedules(
     # Week 6 조율 tool이 busy_rows를 날짜·시간순으로 읽을 수 있게 정렬해 둔다.
     rows.sort(key=lambda row: (str(row.get("date") or ""), str(row.get("start_time") or "")))
 
+    # rows 길이 하나로는 "다들 한가하다"와 "그 기간 기록이 아예 없다"가 구분되지 않는다.
+    # 둘을 프롬프트가 짐작하게 두지 않고 반환값에 담는다(search_conversations의 counts/degraded와 같은 계약).
+    coverage, degraded = member_record_coverage(normalized_members, rows)
+
     return {
         # ok/tool_name은 다른 week의 tool 응답과 동일한 상태 계약을 맞춘다.
         "ok": True,
         "tool_name": "collect_member_schedules",
         "rows": rows,
+        # 누구의 0건인지 — 전원 0건과 한 사람만 0건을 가른다.
+        "counts": schedule_row_counts(normalized_members, rows),
+        # 그 0건을 "비어 있다"로 읽어도 되는지 — 기간 밖까지 보고 판정한 결과다.
+        "coverage": coverage,
+        # 비어 있으면 판정에 실패한 출처가 없다는 뜻이다.
+        "degraded": degraded,
         # Week 3 personal_list_saved_schedules·Week 4 search_nana_memory와 같은 filters 계약을 맞춘다.
         # 정규화 후 실제로 어떤 조건으로 조회했는지 LLM이 되짚을 수 있게 한다.
         "filters": {
@@ -841,6 +946,16 @@ def week05_prompt_parts() -> list[str]:
             "예: '다음 주에 철수랑 영희 시간 언제 되는지 봐줘' → "
             "collect_member_schedules(member_names=['나','철수','영희'], date_from='2026-07-13', date_to='2026-07-19') 한 번. "
             "이때 extract_schedules_from_history나 list_shared_schedules를 따로 또 부르지 않는다."
+        ),
+        (
+            "[Week 5 0건 읽기] rows가 비었다고 곧바로 '다들 한가하다'로 읽지 않는다. "
+            "그 판단은 네가 짐작하지 말고 결과에 함께 오는 counts와 coverage로 한다. "
+            "counts.by_member는 요청한 사람마다 몇 건이 나왔는지 알려 주므로 '전원 0건'과 '한 사람만 0건'을 여기서 가른다. "
+            "coverage.unverified_members는 0건이지만 그 0을 '일정이 없다'의 근거로 쓸 수 없는 사람 목록이다. "
+            "여기 있는 사람은 '그 기간에 일정이 없다'가 아니라 '일정 기록을 확인하지 못했다'고 말하고, "
+            "그 사람이 한가하다는 전제로 시간을 제안하지 않는다. "
+            "반대로 unverified_members에 없는 사람의 0건은 '그 기간에 잡힌 일정이 없다'는 뜻이므로 그대로 근거로 쓴다. "
+            "degraded에 출처가 남아 있으면 그 확인이 실패한 것이므로 같은 방식으로 밝힌다."
         ),
         (
             "[Week 5 회의 시간 요청 처리] '회의 시간 정해줘', '언제가 좋을까'처럼 시간을 정해 달라는 요청을 받으면 "

@@ -28,6 +28,8 @@ from student_parts.week05_load_kanas_past_conversations import (
     extract_schedules_from_history,
     list_shared_schedules,
     load_conversation_messages,
+    member_record_coverage,
+    schedule_row_counts,
     search_conversations,
     week05_prompt_parts,
 )
@@ -164,6 +166,8 @@ _SUPERVISOR_AGENT: Any | None = None
 #   - [추가] find_common_available_slots_dict(...)
 #     멤버 이름과 날짜 범위를 정규화하고, busy_rows가 없으면 collect_member_schedules를 호출해 수집합니다.
 #     실제 후보 검증 payload 생성은 fixed/schedule_decision.py의 find_common_available_slots_payload(...)가 맡습니다.
+#     검증 결과 옆에 Week 5의 counts/coverage/degraded를 덧붙여 busy_rows 0건이 "다들 한가하다"인지
+#     "그 기간 기록이 아예 없다"인지를 프롬프트가 짐작하지 않고 값으로 읽게 합니다.
 #
 #   - [추가] find_common_available_slots(...)
 #     Kana agent가 직접 고른 candidate_slots가 busy_rows와 겹치지 않는지 검증하고 JSON 문자열로 반환하는 tool입니다.
@@ -295,8 +299,8 @@ def kana_prompt_parts() -> list[str]:
             "다른 사람들의 이전 대화와 일정 조회, 공유 일정 저장소 확인, 여러 사람의 공통 가능 시간 찾기, "
             "최종 회의 시간 결정이 네 담당이다. "
             "이 데이터는 앱 안이 아니라 외부 시스템에 있으므로 반드시 tool로 조회하고, "
-            "tool 결과에 없는 일정·시간·사람을 지어내지 않는다. 조회 결과가 비면 "
-            "'해당 기간에 조회된 일정이 없다'고 그대로 답한다."
+            "tool 결과에 없는 일정·시간·사람을 지어내지 않는다. 조회 결과가 비었을 때 그것을 "
+            "'일정이 없다'로 읽을지 '기록을 확인하지 못했다'로 읽을지는 [Week 6 Kana 0건 읽기]를 따른다."
         ),
         (
             "[Week 6 Kana tool 용도] "
@@ -312,9 +316,22 @@ def kana_prompt_parts() -> list[str]:
             "5) 자연어 요청을 구조화해야 하면 extract_schedule_request(query)를 쓴다."
         ),
         (
+            "[Week 6 Kana 0건 읽기] rows가 비었다고 곧바로 '다들 한가하다'로 읽지 않는다. "
+            "'그 기간에만 일정이 없다'와 '그 사람 기록이 아예 없다'는 조율에서 의미가 정반대이고, "
+            "그 판단은 네가 짐작하는 것이 아니라 tool 결과에 이미 들어 있다. "
+            "collect_member_schedules와 find_common_available_slots 결과에는 counts와 coverage가 함께 온다. "
+            "counts.by_member로 누구의 0건인지 보고, coverage.unverified_members는 0건이지만 "
+            "그 0을 '일정이 없다'의 근거로 쓸 수 없는 사람 목록이다. "
+            "이 목록이 비어 있을 때만 0건을 '그 기간에 잡힌 일정이 없다'로 읽고 후보 근거로 그대로 쓴다. "
+            "한 사람이라도 남아 있으면 후보를 '모두 비어 있는 시간'이라고 말하지 말고, "
+            "누구의 일정을 확인하지 못했는지 밝힌 뒤 확인된 사람 기준의 후보라고 적는다. "
+            "degraded에 출처가 남아 있으면 그 확인이 실패한 것이므로 '기록이 없다'가 아니라 '확인하지 못했다'고 말한다."
+        ),
+        (
             "[Week 6 Kana 시간 결정 절차] 시간을 정해 달라는 요청을 받으면 날짜·시간을 되묻기 전에 먼저 답을 낸다. "
             "1) collect_member_schedules로 rows를 모은다(이번 실행에서 이미 모았으면 다시 부르지 않는다). "
             "2) rows를 직접 읽어 아무도 바쁘지 않은 후보 시간대를 2~3개 고른다. 후보를 고르는 건 tool이 아니라 너다. "
+            "rows가 0건이어도 [Week 6 Kana 0건 읽기]대로 counts/coverage를 먼저 확인한 뒤 후보를 만든다. "
             "3) 고른 후보를 find_common_available_slots의 candidate_slots에 넣어 검증한다. "
             "이때 busy_rows에는 방금 받은 rows를 하나도 빼지 말고 그대로 복사해 넘긴다. "
             "4) 검증된 후보를 decide_final_slot에 candidate_slots로 넘기되 final_slot=null, "
@@ -494,6 +511,9 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "date_from~date_to 범위 안이어야 합니다. 겹치거나 범위를 벗어난 후보는 결과에서 제외됩니다. "
     "busy_rows에는 앞서 호출한 collect_member_schedules 결과의 rows를 하나도 빼지 말고 그대로 복사해 넘깁니다. "
     "busy_rows를 비워서 넘기면 이 tool이 직접 일정을 다시 조회하므로 외부 조회가 한 번 더 발생합니다. "
+    "결과에는 counts와 coverage가 함께 옵니다. counts.by_member는 사람마다 busy row가 몇 건이었는지, "
+    "coverage.unverified_members는 0건이지만 그 0을 '일정이 없다'의 근거로 쓸 수 없는 사람 목록입니다. "
+    "이 목록이 비어 있지 않으면 검증을 통과한 후보라도 '모두 비어 있는 시간'이라고 말하면 안 됩니다. "
     "이 결과로 답변을 끝내지 말고, 검증된 후보 중 하나를 골라 decide_final_slot을 이어서 호출해 최종 시간을 확정하세요."
 )
 
@@ -510,6 +530,8 @@ DECIDE_FINAL_SLOT_DESCRIPTION = (
     "reason에는 사용자가 고른 시간이라는 것과 그 시간이 비어 있는 근거를 적습니다. "
     "후보 자체가 없으면 candidate_slots를 비운 채 final_slot=null, needs_agent_selection=true로 호출하고 "
     "reason에 후보를 찾지 못한 이유를 적습니다. 이때 임의의 시간을 지어내 채우지 않습니다. "
+    "앞선 tool 결과의 coverage.unverified_members에 사람이 남아 있으면 그 사람의 일정을 확인하지 못한 채 "
+    "고른 후보이므로, reason에 누구를 확인하지 못했는지 함께 적습니다. "
     "결정 근거를 함께 남기기 위해 candidate_slots, busy_rows, member_names, date_from, date_to, "
     "duration_minutes도 앞선 tool output에서 그대로 복사해 넘깁니다."
 )
@@ -598,6 +620,9 @@ def find_common_available_slots_dict(
     # busy_rows가 빈 배열로 들어오는 경우도 재수집한다. `is None`만 보면 agent가 rows 복사를 빠뜨렸을 때
     # 겹침 검증이 통과만 하고 아무 근거 없이 후보가 확정된다.
     rows = list(busy_rows or [])
+    counts: dict[str, Any] | None = None
+    coverage: dict[str, Any] | None = None
+    degraded: list[dict[str, Any]] = []
     if not rows:
         collected = json.loads(
             collect_member_schedules.invoke(
@@ -609,8 +634,20 @@ def find_common_available_slots_dict(
             )
         )
         rows = collected.get("rows") or []
+        # 방금 받은 payload에 0건 판정이 이미 들어 있다. 다시 계산하면 MCP를 한 번 더 부르게 된다.
+        counts = collected.get("counts")
+        coverage = collected.get("coverage")
+        degraded = collected.get("degraded") or []
 
-    return find_common_available_slots_payload(
+    # agent가 busy_rows를 복사해 넘긴 경로에는 counts/coverage가 딸려 오지 않는다. 그 rows에도
+    # 0건인 멤버가 섞여 있을 수 있으므로 여기서 한 번 더 판정해야 "한가하다"와 "기록이 없다"가 갈린다.
+    # rows가 있는 멤버는 조회하지 않으므로 전원 rows가 있으면 추가 호출은 발생하지 않는다.
+    if counts is None:
+        counts = schedule_row_counts(lookup_members, rows)
+    if coverage is None:
+        coverage, degraded = member_record_coverage(lookup_members, rows)
+
+    payload = find_common_available_slots_payload(
         member_names=lookup_members,
         date_from=normalized_date_from,
         date_to=normalized_date_to,
@@ -622,6 +659,12 @@ def find_common_available_slots_dict(
         candidate_slots=candidate_slots,
         llm_reason=llm_reason,
     )
+    # fixed/schedule_decision.py는 이 세 키를 모르므로 여기서 덧붙인다. 후보 검증만 통과한 결과와
+    # "그 후보가 근거 있는 빈 시간인지"는 다른 질문이라, 검증 결과 옆에 판정을 같이 남긴다.
+    payload["counts"] = counts
+    payload["coverage"] = coverage
+    payload["degraded"] = degraded
+    return payload
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
