@@ -45,9 +45,12 @@ footer[aria-label="Gradio footer navigation"] {
   background: #ffffff;
   border-bottom: 1px solid var(--kanana-line);
   display: flex;
-  justify-content: space-between;
+  gap: 12px;
+  justify-content: flex-start;
   margin: -16px -16px 16px;
   padding: 14px 24px;
+  position: relative;
+  z-index: 120;
 }
 
 #main-tabs {
@@ -71,6 +74,130 @@ footer[aria-label="Gradio footer navigation"] {
   height: calc(100dvh - 142px);
   min-height: 0;
   overflow: hidden;
+  position: relative;
+}
+
+@media (min-width: 981px) {
+  #kanana-shell > .gradio-column {
+    min-width: 0 !important;
+  }
+}
+
+.conversation-drawer {
+  --conversation-drawer-width: 240px;
+  background: #fffdf7 !important;
+  border: 1px solid #eee6cb !important;
+  border-radius: 0 8px 8px 0;
+  bottom: 0;
+  box-shadow: 0 14px 40px rgba(47, 39, 12, 0.06);
+  flex: 0 0 var(--conversation-drawer-width) !important;
+  flex-wrap: nowrap !important;
+  height: 100dvh;
+  left: 0;
+  max-height: 100dvh;
+  min-width: 200px !important;
+  overflow: hidden;
+  padding: 78px 14px 14px !important;
+  position: fixed;
+  top: 0;
+  transform: translateX(0);
+  transition: transform 180ms ease, opacity 180ms ease, visibility 180ms ease;
+  width: var(--conversation-drawer-width) !important;
+  z-index: 100;
+}
+
+#conversation-drawer-toggle {
+  align-items: center;
+  background: var(--kanana-yellow);
+  border: 1px solid #e0c800;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(47, 39, 12, 0.12);
+  color: var(--kanana-ink);
+  cursor: pointer;
+  display: flex;
+  font-size: 21px;
+  font-weight: 700;
+  height: 38px;
+  justify-content: center;
+  line-height: 1;
+  margin: 0;
+  padding: 0;
+  position: static;
+  width: 38px;
+  z-index: 130;
+}
+
+#conversation-drawer-toggle:hover,
+#conversation-drawer-toggle:focus-visible {
+  background: #ffe933;
+  outline: 2px solid rgba(224, 200, 0, 0.35);
+  outline-offset: 2px;
+}
+
+#conversation-drawer-toggle.is-collapsed {
+  background: #fffdf7;
+}
+
+#conversation-drawer-resizer {
+  bottom: 12px;
+  cursor: col-resize;
+  position: absolute;
+  right: -7px;
+  top: 78px;
+  touch-action: none;
+  width: 14px;
+  z-index: 25;
+}
+
+#conversation-drawer-resizer::after {
+  background: transparent;
+  border-radius: 999px;
+  bottom: 0;
+  content: "";
+  left: 5px;
+  position: absolute;
+  top: 0;
+  transition: background 120ms ease;
+  width: 4px;
+}
+
+#conversation-drawer-resizer:hover::after,
+body.resizing-conversation-drawer #conversation-drawer-resizer::after {
+  background: #e0c800;
+}
+
+body.resizing-conversation-drawer {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+#kanana-shell.conversation-drawer-collapsed .conversation-drawer {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(-100% - 12px));
+  visibility: hidden;
+}
+
+#conversation-selector {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+#conversation-selector label {
+  background: #fff;
+  border: 1px solid #eee6cb;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 6px;
+  padding: 9px 10px;
+}
+
+#conversation-selector label:has(input:checked) {
+  background: #fff8d6;
+  border-color: #ead16a;
+  font-weight: 700;
 }
 
 .sidebar,
@@ -93,6 +220,51 @@ footer[aria-label="Gradio footer navigation"] {
   max-height: calc(100vh - 150px);
   overflow: auto;
   overflow-x: hidden;
+}
+
+.schedule-sidebar {
+  --schedule-panel-width: 34%;
+  flex: 0 1 var(--schedule-panel-width) !important;
+  height: calc(100dvh - 142px);
+  max-height: calc(100dvh - 142px) !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  position: relative;
+  width: var(--schedule-panel-width) !important;
+}
+
+#schedule-panel-resizer {
+  bottom: 12px;
+  cursor: col-resize;
+  position: absolute;
+  right: -7px;
+  top: 12px;
+  touch-action: none;
+  width: 14px;
+  z-index: 25;
+}
+
+#schedule-panel-resizer::after {
+  background: transparent;
+  border-radius: 999px;
+  bottom: 0;
+  content: "";
+  left: 5px;
+  position: absolute;
+  top: 0;
+  transition: background 120ms ease;
+  width: 4px;
+}
+
+#schedule-panel-resizer:hover::after,
+body.resizing-schedule-panel #schedule-panel-resizer::after {
+  background: #e0c800;
+}
+
+body.resizing-schedule-panel {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .sidebar::-webkit-scrollbar,
@@ -191,38 +363,82 @@ footer[aria-label="Gradio footer navigation"] {
   outline-offset: 2px;
 }
 
-#saved-schedule-list {
-  background: #ffffff;
-  border: 1px solid #eee6cb;
-  border-radius: 8px;
-  color: #39352e;
-  font-size: 12px;
-  line-height: 1.45;
-  max-height: 190px;
-  overflow: auto;
-  padding: 10px 12px;
+#saved-items-fields {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0 !important;
+  min-height: 360px;
+  overflow: hidden;
 }
 
-#saved-schedule-list p,
-#saved-schedule-list ul {
-  margin: 0;
+.saved-item-field {
+  flex: 1 1 0;
+  min-height: 100px;
+  overflow: hidden;
+  padding: 4px 0 !important;
 }
 
-#saved-schedule-list li {
-  margin: 0 0 7px;
-  overflow-wrap: anywhere;
+.saved-item-field > .form,
+.saved-item-field .dataframe {
+  max-width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
 }
 
-#saved-schedule-list li:last-child {
-  margin-bottom: 0;
+.saved-item-field .table-wrap,
+.saved-item-field .table-container {
+  max-width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  overflow: auto !important;
+}
+
+.saved-field-resizer {
+  background: #eee6cb;
+  cursor: row-resize;
+  flex: 0 0 9px;
+  position: relative;
+  touch-action: none;
+}
+
+.saved-field-resizer::after {
+  background: #c9bea0;
+  border-radius: 999px;
+  content: "";
+  height: 3px;
+  left: 50%;
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  transition:
+    background 120ms ease,
+    width 120ms ease;
+  width: 42px;
+}
+
+.saved-field-resizer:hover::after,
+.saved-field-resizer.is-dragging::after {
+  background: #e0c800;
+  width: 72px;
+}
+
+body.resizing-saved-field {
+  cursor: row-resize !important;
+  user-select: none !important;
 }
 
 .chat-panel {
+  flex: 1 1 0 !important;
   flex-wrap: nowrap !important;
   height: calc(100dvh - 142px);
   max-height: calc(100dvh - 142px);
   min-height: 0;
+  min-width: 0 !important;
   overflow: hidden;
+  width: auto !important;
 }
 
 #kanana-chatbot {
@@ -362,14 +578,17 @@ footer[aria-label="Gradio footer navigation"] {
 
 @media (max-width: 980px) {
   .kanana-topbar {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
+    align-items: center;
+    flex-direction: row;
+    gap: 12px;
   }
 
   #kanana-shell {
     flex-direction: column !important;
+    height: auto !important;
+    max-height: none !important;
     min-height: auto;
+    overflow-y: auto;
   }
 
   #kanana-shell > .gradio-column {
@@ -377,18 +596,62 @@ footer[aria-label="Gradio footer navigation"] {
     width: 100% !important;
   }
 
+  #conversation-drawer-toggle {
+    height: 38px;
+    width: 38px;
+  }
+
+  .conversation-drawer {
+    height: 100dvh;
+    max-height: 100dvh;
+    min-width: 200px !important;
+    width: min(88vw, var(--conversation-drawer-width)) !important;
+  }
+
+  #conversation-drawer-resizer {
+    display: none;
+  }
+
+  #kanana-shell.conversation-drawer-collapsed .conversation-drawer {
+    transform: translateX(calc(-100% - 12px));
+  }
+
   .chat-panel {
+    flex: 0 0 min(70dvh, 680px) !important;
+    height: min(70dvh, 680px) !important;
+    max-height: none !important;
+    min-height: 480px !important;
     min-width: 0 !important;
     order: 1;
     width: 100% !important;
+  }
+
+  #kanana-chatbot {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 340px !important;
   }
 
   .sidebar,
   .column.sidebar {
     max-height: none;
     min-width: 0 !important;
-    order: 2;
+    order: 3;
     width: 100% !important;
+  }
+
+  .schedule-sidebar {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    max-height: none !important;
+    max-width: none !important;
+    min-height: 560px;
+    width: 100% !important;
+  }
+
+  #schedule-panel-resizer {
+    display: none;
   }
 
   .trace-panel {
