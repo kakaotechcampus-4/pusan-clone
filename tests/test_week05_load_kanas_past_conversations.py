@@ -179,7 +179,7 @@ class Week05IsolatedTestCase(unittest.TestCase):
 
 
 class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
-    def test_filters_personal_kind_before_applying_candidate_limit(self) -> None:
+    def test_keeps_group_schedule_within_candidate_limit(self) -> None:
         personal_rows = [
             {
                 "schedule_id": f"stored-{index}",
@@ -202,24 +202,24 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
         with patch.object(week05, "SQLITE_STORE", store):
             rows = week05._personal_schedules_for_current_scope()
 
-        self.assertEqual(len(rows), 20)
+        self.assertEqual(len(rows), 21)
         self.assertEqual(
             store.calls,
             [
                 {
                     "limit": week05.PERSONAL_SCHEDULE_CANDIDATE_LIMIT,
-                    "kind": "personal_schedule",
+                    "kind": None,
                     "date_from": None,
                     "date_to": None,
                 }
             ],
         )
-        self.assertTrue(all(row["request_kind"] == "personal_schedule" for row in rows))
-        self.assertNotIn("group-stored", {row["schedule_id"] for row in rows})
+        # 그룹 일정도 owner가 '나'인 내 일정이므로 바쁜 시간 후보에서 빠지면 안 된다.
+        self.assertIn("group-stored", {row["schedule_id"] for row in rows})
         self.assertTrue(all(row["source_store"] == "app_sqlite" for row in rows))
         self.assertEqual(original_rows, original_copy)
 
-    def test_real_store_excludes_group_schedule(self) -> None:
+    def test_real_store_includes_group_schedule(self) -> None:
         self.sqlite_store.save_structured_request(
             {
                 "kind": "personal_schedule",
@@ -235,15 +235,15 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
                 "title": "그룹 일정",
                 "date": "2026-07-08",
                 "members": ["나", "철수"],
-                "source_schedule_id": "group-excluded",
+                "source_schedule_id": "group-included",
             }
         )
 
         rows = week05._personal_schedules_for_current_scope()
 
         self.assertEqual(
-            [row["schedule_id"] for row in rows],
-            ["personal-only"],
+            {row["schedule_id"] for row in rows},
+            {"personal-only", "group-included"},
         )
 
     def test_collect_tool_filters_dates_before_candidate_limit(self) -> None:
@@ -283,22 +283,61 @@ class PersonalSchedulesForCurrentScopeTest(Week05IsolatedTestCase):
             [
                 {
                     "limit": week05.PERSONAL_SCHEDULE_CANDIDATE_LIMIT,
-                    "kind": "personal_schedule",
+                    "kind": None,
                     "date_from": "2026-07-07",
                     "date_to": "2026-07-17",
                 }
             ],
         )
 
-    def test_rejects_group_row_before_personal_relabeling(self) -> None:
-        with self.assertRaisesRegex(ValueError, "개인 일정"):
-            week05._structured_request_from_schedule_row(
-                {
-                    "request_kind": "group_schedule",
-                    "title": "그룹 일정",
-                    "date": "2026-07-07",
-                }
-            )
+    def test_reads_schedule_kind_and_notes_from_row(self) -> None:
+        group_request = week05._structured_request_from_schedule_row(
+            {
+                "request_kind": "group_schedule",
+                "title": "하린과 사전 미팅",
+                "date": "2026-07-14",
+                "attendees": ["나", "하린"],
+            }
+        )
+        # Week 1 임시 일정 row에는 request_kind가 없으므로 개인 일정으로 봐야 한다.
+        personal_request = week05._structured_request_from_schedule_row(
+            {
+                "title": "개인 일정",
+                "date": "2026-07-14",
+            }
+        )
+
+        self.assertEqual(group_request.kind, "group_schedule")
+        self.assertEqual(personal_request.kind, "personal_schedule")
+        self.assertEqual(
+            week05._my_schedule_notes(group_request),
+            "Nana 그룹 일정 · 참석자: 나, 하린",
+        )
+        self.assertEqual(week05._my_schedule_notes(personal_request), "Nana 개인 일정")
+
+    def test_dedupes_rows_ignoring_parentheticals_and_end_time(self) -> None:
+        app_row = {
+            "member_name": "나",
+            "title": "팀 회의 (온라인)",
+            "date": "2026-07-14",
+            "start_time": "15:00",
+            "end_time": "18:00",
+            "notes": "Nana 개인 일정",
+        }
+        shared_row = {
+            "member_name": "나",
+            "title": "팀 회의",
+            "date": "2026-07-14",
+            "start_time": "15:00",
+            "end_time": "미정",
+            "notes": "앱 개인 일정 자동 동기화",
+        }
+
+        rows = week05._dedupe_schedule_rows([app_row, shared_row])
+
+        self.assertEqual(len(rows), 1)
+        # 앞에 오는 앱 DB row가 남아야 notes가 내 일정 설명으로 유지된다.
+        self.assertEqual(rows[0]["notes"], "Nana 개인 일정")
 
     def test_deduplicates_saved_id_and_keeps_only_current_session_memory(self) -> None:
         self.sqlite_store.save_structured_request(
@@ -445,7 +484,7 @@ class CollectMemberSchedulesHelperTest(Week05IsolatedTestCase):
         stored_row = next(row for row in rows if row.get("schedule_id") == "stored-1")
         self.assertEqual(stored_row["start_time"], "미정")
         self.assertEqual(stored_row["end_time"], "미정")
-        self.assertEqual(stored_row["notes"], week05.MY_SCHEDULE_NOTES["app_sqlite"])
+        self.assertEqual(stored_row["notes"], "Nana 개인 일정")
         self.assertNotIn("stored-1", stored_row["notes"])
         self.assertEqual(
             payload["undated_personal_schedules"][0]["schedule_id"],
@@ -495,6 +534,50 @@ class CollectMemberSchedulesHelperTest(Week05IsolatedTestCase):
         self.assertEqual(len(payload["rows"]), 1)
         self.assertEqual(payload["rows"][0]["schedule_id"], "personal-only")
         self.assertEqual(payload["rows"][0]["member_name"], "나")
+
+    def test_repeated_me_stays_once_in_filters(self) -> None:
+        payload = week05._collect_member_schedules(
+            member_names=["나", " 나 "],
+            date_from="2026-07-07",
+            date_to="2026-07-17",
+            personal_schedules=[],
+        )
+
+        self.mcp_mock.assert_not_called()
+        self.assertEqual(payload["filters"]["member_names"], ["나"])
+        self.assertEqual(payload["filters"]["excluded_member_names"], ["나"])
+
+    def test_group_schedule_row_becomes_my_busy_time(self) -> None:
+        mcp_result = json.dumps({"ok": True, "rows": []}, ensure_ascii=False)
+        with patch.object(week05, "call_mcp_tool_sync", return_value=mcp_result):
+            payload = week05._collect_member_schedules(
+                member_names=["민준"],
+                date_from="2026-07-14",
+                date_to="2026-07-14",
+                personal_schedules=[
+                    {
+                        "schedule_id": "group-1",
+                        "request_kind": "group_schedule",
+                        "title": "하린과 사전 미팅",
+                        "date": "2026-07-14",
+                        "start_time": "15:00",
+                        "end_time": "16:00",
+                        "attendees": ["하린"],
+                        "source_store": "app_sqlite",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(payload["rows"]), 1)
+        row = payload["rows"][0]
+        self.assertEqual(row["member_name"], "나")
+        self.assertEqual(row["title"], "하린과 사전 미팅")
+        # 조율 대상에 없는 참석자도 notes에 남아야 어떤 회의가 시간을 막는지 알 수 있다.
+        self.assertEqual(row["notes"], "Nana 그룹 일정 · 참석자: 하린")
+        self.assertEqual(
+            payload["sources"],
+            {"app_sqlite": 1, "session_memory": 0, "external_mcp": 0},
+        )
 
     def test_three_external_members_use_one_mcp_call(self) -> None:
         mcp_result = json.dumps({"ok": True, "rows": []}, ensure_ascii=False)
