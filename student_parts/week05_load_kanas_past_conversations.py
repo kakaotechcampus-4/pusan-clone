@@ -14,6 +14,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_parenthetical_text,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -154,7 +155,9 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     store = AppSQLiteStore(CONFIG.app_db_path)
-    saved = store.list_schedules(limit=200, kind="personal_schedule")
+    # kind 필터를 걸지 않는다. schedules 테이블의 row는 개인/그룹 상관없이 owner가 '나'인
+    # 내 일정이므로, 그룹 일정도 내 바쁜 시간 근거로 포함해야 한다. (Week 5 버그 ① 수정)
+    saved = store.list_schedules(limit=200)
     saved_ids = {row.get("schedule_id") or row.get("id") for row in saved}
     session_id = current_session_scope()
     temp = [
@@ -234,10 +237,14 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. Week 1 임시 일정 row에는
+    이 값이 없으므로 개인 일정으로 봅니다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -245,6 +252,39 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
         members=row.get("attendees") or row.get("members") or [],
         original_text=str(row.get("title") or ""),
     )
+
+
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
+
+    if request.kind != "group_schedule":
+        return "Nana 개인 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+
+
+def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
+
+    앱 DB에 저장된 내 일정은 공유 저장소에도 자동 동기화되므로, member_names에 "나"가
+    들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 앞에 오는 앱 DB row를 남깁니다.
+
+    두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면 안 됩니다.
+      - 공유 저장소는 제목에서 소괄호를 지우고 공백을 하나로 줄입니다. 앱 DB는 원문을 둡니다.
+      - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
+      - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
+    """
+
+    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("member_name") or "").strip(),
+            str(row.get("date") or "").strip(),
+            str(row.get("start_time") or "").strip() or "미정",
+            strip_parenthetical_text(str(row.get("title") or "")),
+        )
+        deduped.setdefault(key, row)
+    return list(deduped.values())
 
 
 def _collect_member_schedules(
@@ -267,7 +307,7 @@ def _collect_member_schedules(
             "date": req.date,
             "start_time": req.start_time,
             "end_time": req.end_time,
-            "notes": schedule.get("notes"),
+            "notes": _my_schedule_notes(req),
         })
 
     # 외부 MCP 조회 전에 멤버 이름/날짜 범위를 외부 저장소 기준으로 정규화한다.
@@ -291,6 +331,9 @@ def _collect_member_schedules(
             "notes": row.get("notes"),
         })
 
+    # 내 일정(앱 DB)이 공유 저장소에도 동기화돼 member_names에 "나"가 있으면 같은 일정이
+    # 두 경로로 들어온다. my_rows가 앞에 있으므로 dedupe 시 앱 DB row(정확한 notes)가 남는다.
+    rows = _dedupe_schedule_rows(rows)
     return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
 
 
