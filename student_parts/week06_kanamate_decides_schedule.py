@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import Any
 
 from langchain.agents import create_agent
@@ -177,6 +178,11 @@ _SUPERVISOR_AGENT: Any | None = None
 #     실제 후보 검증 payload 생성은 fixed/schedule_decision.py의 find_common_available_slots_payload(...)가 맡습니다.
 #     검증 결과 옆에 Week 5의 counts/coverage/degraded를 덧붙여 busy_rows 0건이 "다들 한가하다"인지
 #     "그 기간 기록이 아예 없다"인지를 프롬프트가 짐작하지 않고 값으로 읽게 합니다.
+#     fixed/schedule_decision.py가 보지 않는 요일 조건도 검증에 넘기기 전에 여기서 걸고,
+#     무엇을 왜 걸렀는지 weekday_policy에 남깁니다.
+#
+#   - [추가] _is_weekend(day) / _split_weekend_candidates(candidate_slots, allow_weekend)
+#     후보를 평일/주말로 가릅니다. 주말 제외를 프롬프트 부탁이 아니라 코드로 강제하는 자리입니다.
 #
 #   - [추가] find_common_available_slots(...)
 #     Kana agent가 직접 고른 candidate_slots가 busy_rows와 겹치지 않는지 검증하고 JSON 문자열로 반환하는 tool입니다.
@@ -323,8 +329,12 @@ def kana_prompt_parts() -> list[str]:
             "[Week 6 Kana 시간 결정 절차] [공통 회의 시간 요청 처리]의 1)~2)로 후보를 고른 다음, "
             "Kana는 tool로 그 후보를 검증하고 기록하는 단계를 이어서 밟는다. 후보를 고르는 건 tool이 아니라 너다. "
             "rows가 0건이어도 [공통 0건 읽기]대로 counts/coverage를 먼저 확인한 뒤 후보를 만든다. "
+            "후보는 평일에서 고른다. 주말(토·일)은 검증 단계에서 코드가 걸러 내므로 넣어도 결과에 남지 않는다. "
+            "사용자가 '주말에', '토요일에'처럼 주말을 명시적으로 요청했을 때만 allow_weekend=true로 넘긴다. "
             "3) 고른 후보를 find_common_available_slots의 candidate_slots에 넣어 검증한다. "
             "이때 busy_rows에는 방금 받은 rows를 하나도 빼지 말고 그대로 복사해 넘긴다. "
+            "결과의 candidate_slots가 비었으면 weekday_policy.rejected_slots를 먼저 보고, "
+            "주말이라 빠진 것이면 같은 후보를 다시 내지 말고 평일로 새로 고른다. "
             "4) 검증된 후보를 decide_final_slot에 candidate_slots로 넘기되 final_slot=null, "
             "needs_agent_selection=true로 호출해 '후보까지 정해졌고 선택은 남았다' 상태로 기록한다. "
             "5) query에 사용자가 이미 고른 시간이나 후보 번호가 들어 있으면 그때만 확정한다. "
@@ -448,6 +458,48 @@ def _subagent_run(agent: Any, query: str) -> dict[str, Any]:
     }
 
 
+def _is_weekend(day: str) -> bool:
+    """YYYY-MM-DD가 토요일이나 일요일인지 봅니다.
+
+    날짜를 읽을 수 없으면 주말이 아니라고 본다. 여기서 판단하지 못한 후보는
+    fixed/schedule_decision.py의 범위 검사가 어차피 걸러 낸다.
+    """
+
+    try:
+        return date.fromisoformat(normalize_date_bound(day)).weekday() >= 5
+    except (TypeError, ValueError):
+        return False
+
+
+def _split_weekend_candidates(
+    candidate_slots: list[Any] | None,
+    allow_weekend: bool,
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """후보를 평일/주말로 가르고, 걸러 낸 주말 후보는 이유와 함께 돌려줍니다.
+
+    fixed/schedule_decision.py의 검증은 범위·업무 시간·길이·겹침 네 가지만 보고 요일은 보지 않는다.
+    그 파일은 수정 대상이 아니므로, 검증에 넘기기 **전에** 여기서 요일 조건을 먼저 적용한다.
+    프롬프트로 "주말을 고르지 마라"라고 부탁하는 대신 코드가 거르므로 턴마다 흔들리지 않는다.
+
+    검증 뒤가 아니라 앞에서 거르는 이유는 limit 때문이다. 뒤에서 걸러 내면 주말 후보가
+    limit 자리를 먼저 차지해 멀쩡한 평일 후보가 잘려 나간다.
+
+    거른 것을 조용히 버리지 않고 rejected로 남긴다. 후보가 왜 사라졌는지 agent가 모르면
+    같은 주말 후보를 다시 제안하거나 "후보가 없다"고 답해 버린다.
+    """
+
+    kept: list[Any] = []
+    rejected: list[dict[str, Any]] = []
+    for candidate in candidate_slots or []:
+        slot = candidate.model_dump() if hasattr(candidate, "model_dump") else candidate
+        day = str(slot.get("date", "")) if isinstance(slot, dict) else ""
+        if not allow_weekend and _is_weekend(day):
+            rejected.append({**slot, "rejected_reason": "weekend"})
+            continue
+        kept.append(candidate)
+    return kept, rejected
+
+
 def _final_payloads_from_events(events: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, Any]:
     """Kana 하위 trace에서 최종 시간 결정 payload를 끌어올립니다."""
 
@@ -481,6 +533,10 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "'duration_minutes': 60, 'reason': '세 사람 모두 오후 일정이 없음'}]. "
     "후보는 busy_rows의 어떤 row와도 시간이 겹치면 안 되고, workday_start~workday_end 안에 있어야 하며, "
     "date_from~date_to 범위 안이어야 합니다. 겹치거나 범위를 벗어난 후보는 결과에서 제외됩니다. "
+    "주말(토·일) 후보도 코드가 제외합니다. 부탁이 아니라 검증 단계에서 걸러 내므로 넣어도 결과에 남지 않고, "
+    "무엇이 왜 빠졌는지는 결과의 weekday_policy.rejected_slots에 남습니다. "
+    "사용자가 '주말에', '토요일에'처럼 주말을 명시적으로 요청했을 때만 allow_weekend=true로 넘기고, "
+    "그렇지 않으면 처음부터 평일로만 후보를 고르세요. "
     "busy_rows에는 앞서 호출한 collect_member_schedules 결과의 rows를 하나도 빼지 말고 그대로 복사해 넘깁니다. "
     "busy_rows를 비워서 넘기면 이 tool이 직접 일정을 다시 조회하므로 외부 조회가 한 번 더 발생합니다. "
     "결과에는 counts와 coverage가 함께 옵니다. counts.by_member는 사람마다 busy row가 몇 건이었는지, "
@@ -529,6 +585,13 @@ class FindCommonAvailableSlotsInput(BaseModel):
         ),
     )
     llm_reason: str | None = Field(default=None, description="LLM agent가 후보 목록을 고른 전체 이유")
+    allow_weekend: bool = Field(
+        default=False,
+        description=(
+            "주말(토·일) 후보를 허용할지 여부. 기본은 False라 주말 후보는 코드가 걸러 냅니다. "
+            "사용자가 '주말에', '토요일에'처럼 주말을 명시적으로 요청했을 때만 True로 넘깁니다."
+        ),
+    )
 
 
 class DecideFinalSlotInput(BaseModel):
@@ -578,6 +641,7 @@ def find_common_available_slots_dict(
     busy_rows: list[dict[str, Any]] | None = None,
     candidate_slots: list[dict[str, Any]] | None = None,
     llm_reason: str | None = None,
+    allow_weekend: bool = False,
 ) -> dict[str, Any]:
     """멤버별 busy-time rows와 LLM이 고른 후보 payload를 검증 결과로 바꿉니다."""
 
@@ -619,6 +683,11 @@ def find_common_available_slots_dict(
     if coverage is None:
         coverage, degraded = member_record_coverage(lookup_members, rows)
 
+    # 요일 조건은 fixed/schedule_decision.py가 보지 않는 유일한 축이라 검증에 넘기기 전에 여기서 건다.
+    # busy_rows에 가짜 "주말" row를 넣어 겹침 검증으로 거르는 방법도 있지만, rows는 counts/coverage와
+    # 답변 근거로 그대로 쓰이는 데이터라 없는 일정이 "누군가 바쁘다"로 읽히고 0건 판정도 망가진다.
+    weekday_candidates, weekend_rejected = _split_weekend_candidates(candidate_slots, allow_weekend)
+
     payload = find_common_available_slots_payload(
         member_names=lookup_members,
         date_from=normalized_date_from,
@@ -628,7 +697,7 @@ def find_common_available_slots_dict(
         workday_start=workday_start,
         workday_end=workday_end,
         limit=limit,
-        candidate_slots=candidate_slots,
+        candidate_slots=weekday_candidates,
         llm_reason=llm_reason,
     )
     # fixed/schedule_decision.py는 이 세 키를 모르므로 여기서 덧붙인다. 후보 검증만 통과한 결과와
@@ -636,6 +705,12 @@ def find_common_available_slots_dict(
     payload["counts"] = counts
     payload["coverage"] = coverage
     payload["degraded"] = degraded
+    # 어떤 요일 정책으로 걸렀고 무엇이 걸렸는지 남긴다. 이게 없으면 후보가 사라진 이유가
+    # agent에게도 사용자에게도 보이지 않는다.
+    payload["weekday_policy"] = {
+        "allow_weekend": allow_weekend,
+        "rejected_slots": weekend_rejected,
+    }
     return payload
 
 
@@ -651,6 +726,7 @@ def find_common_available_slots(
     busy_rows: list[dict[str, Any]] | None = None,
     candidate_slots: list[Any] | None = None,
     llm_reason: str | None = None,
+    allow_weekend: bool = False,
 ) -> str:
     """수집된 멤버 일정에서 LLM이 직접 고른 공통 가능 후보 시간을 검증합니다."""
 
@@ -667,6 +743,7 @@ def find_common_available_slots(
             busy_rows=busy_rows,
             candidate_slots=candidate_slots,
             llm_reason=llm_reason,
+            allow_weekend=allow_weekend,
         )
     )
 

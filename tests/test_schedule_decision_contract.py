@@ -142,6 +142,90 @@ class FindCommonAvailableSlotsContractTest(unittest.TestCase):
         self.assertIn("나", payload["members"])
 
 
+class WeekendPolicyTest(unittest.TestCase):
+    """주말 제외가 프롬프트 부탁이 아니라 코드로 강제되는지 봅니다.
+
+    2026-07-18은 토요일, 07-19는 일요일, 07-17은 금요일이다.
+    fixed/schedule_decision.py는 요일을 보지 않으므로 이 검사는 전부 Week 6 쪽 책임이다.
+    """
+
+    def _run(self, candidates: list[dict], allow_weekend: bool = False) -> dict:
+        return find_common_available_slots_dict(
+            ["철수"],
+            "2026-07-17",
+            "2026-07-19",
+            busy_rows=BUSY_ROWS,
+            candidate_slots=candidates,
+            allow_weekend=allow_weekend,
+        )
+
+    def test_saturday_candidate_is_dropped(self) -> None:
+        payload = self._run(
+            [{"date": "2026-07-18", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60}]
+        )
+        self.assertEqual(payload["candidate_slots"], [])
+
+    def test_weekday_candidate_survives(self) -> None:
+        payload = self._run(
+            [{"date": "2026-07-17", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60}]
+        )
+        self.assertEqual(len(payload["candidate_slots"]), 1)
+        self.assertEqual(payload["candidate_slots"][0]["date"], "2026-07-17")
+
+    def test_dropped_candidate_is_reported_not_swallowed(self) -> None:
+        """왜 빠졌는지 남지 않으면 agent가 같은 후보를 다시 낸다."""
+
+        payload = self._run(
+            [{"date": "2026-07-19", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60}]
+        )
+        rejected = payload["weekday_policy"]["rejected_slots"]
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected[0]["date"], "2026-07-19")
+        self.assertEqual(rejected[0]["rejected_reason"], "weekend")
+        self.assertFalse(payload["weekday_policy"]["allow_weekend"])
+
+    def test_explicit_weekend_request_is_honored(self) -> None:
+        """사용자가 주말을 요청하면 막지 않는다. 기본값이 강제이지 금지가 아니다."""
+
+        payload = self._run(
+            [{"date": "2026-07-18", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60}],
+            allow_weekend=True,
+        )
+        self.assertEqual(len(payload["candidate_slots"]), 1)
+        self.assertEqual(payload["weekday_policy"]["rejected_slots"], [])
+
+    def test_weekend_candidates_do_not_eat_the_limit(self) -> None:
+        """주말 후보가 limit 자리를 먼저 차지해 평일 후보가 잘리면 안 된다."""
+
+        payload = find_common_available_slots_dict(
+            ["철수"],
+            "2026-07-17",
+            "2026-07-21",
+            busy_rows=BUSY_ROWS,
+            limit=1,
+            candidate_slots=[
+                {"date": "2026-07-18", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60},
+                {"date": "2026-07-20", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60},
+            ],
+        )
+        self.assertEqual(len(payload["candidate_slots"]), 1)
+        # 주말(토)이 limit 1을 먼저 먹었다면 여기서 평일(월) 후보가 사라진다.
+        self.assertEqual(payload["candidate_slots"][0]["date"], "2026-07-20")
+
+    def test_busy_rows_are_not_polluted_with_fake_weekend_rows(self) -> None:
+        """주말을 가짜 busy row로 막는 방식을 쓰지 않는다는 계약이다.
+
+        rows는 counts/coverage와 답변 근거로 그대로 쓰이므로, 없는 일정을 넣으면
+        "누군가 그날 바쁘다"로 읽히고 0건 판정도 같이 망가진다.
+        """
+
+        payload = self._run(
+            [{"date": "2026-07-18", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60}]
+        )
+        self.assertEqual(payload["busy_rows"], BUSY_ROWS)
+        self.assertEqual(payload["counts"]["total"], len(BUSY_ROWS))
+
+
 class ZeroRowMeaningTest(unittest.TestCase):
     """0건이 '한가하다'인지 '기록이 없다'인지 값으로 갈리는지 봅니다."""
 

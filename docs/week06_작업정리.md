@@ -532,6 +532,105 @@ LLM이 실제로 후보를 내는지는 비결정적이라 테스트로 박지 �
 
 ---
 
+## 주말 제외를 검증 단계에서 강제하기 (멘토 리뷰 반영)
+
+> `fixed/schedule_decision.py`를 고치지 않고, 그 앞단에서 요일 조건을 건다.
+
+### 먼저 확인한 것 — `fixed`에는 요일 제약이 없다
+
+멘토님이 확인해 보라고 한 지점부터 봤다. `normalize_llm_candidate_slots(...)`가 후보를 떨어뜨리는 조건은 네 개뿐이다.
+
+| 조건 | 코드 |
+| --- | --- |
+| 날짜가 `date_from~date_to` 밖 | `if day not in valid_days` |
+| 시간이 `workday_start~workday_end` 밖 | `if start_minutes < work_start or end_minutes > work_end ...` |
+| 회의 길이 미달 | `if end_minutes - start_minutes < requested_duration` |
+| busy_rows와 겹침 | `if busy_rows_overlap(...)` |
+
+`fixed/`와 `mcp_server/` 전체를 `weekday|isoweekday|주말`로 훑어도 요일을 보는 코드는 없다
+(`fixed/runtime_clock.py`의 `next_weekday_date`는 "다음 주 월요일" 계산용이고 검증과 무관하다).
+`valid_days`도 `date_range(...)`가 만든 **연속** 날짜 집합이라, `date_from`/`date_to`를 조정해서
+주말만 빼는 것도 불가능하다. 지적하신 대로 description도 시간대만 말하고 요일은 언급하지 않았다.
+
+### (b)를 실제로 흉내내 봤다 — 지금 구조에서는 못 쓴다
+
+가짜 busy_rows 방식이 "다소 억지스럽다"에서 그치지 않고 **깨뜨리는 게 있었다.**
+겹침 검증에 걸리려면 주말마다 **멤버 이름별로** row를 넣어야 하는데, 그러면 이렇게 된다.
+
+```
+counts:   {"total": 4, "mine": 2, "external": 2, "by_member": {"나": 2, "철수": 2}}
+coverage: {"members_with_records": ["나", "철수"], "unverified_members": []}
+          → coverage 조회가 아예 안 나감. 가짜 row를 "기록 있음"의 증거로 삼는다.
+
+사용자에게 보이는 요약:
+- 철수 | 주말 | 2026-07-18 00:00-23:59
+```
+
+바로 앞 리뷰에서 넣은 `counts`/`coverage`가 rows를 **근거 데이터**로 읽기 때문이다.
+`member_record_coverage(...)`는 "rows가 있으면 저장소가 이 사람을 안다"를 전제로 조회를 건너뛰는데,
+그 rows가 가짜면 **0건 판정이 통째로 거짓말이 된다.** 게다가 rows는 `decide_final_slot`의 근거로도 남고
+`external_schedule_summary(...)`를 거쳐 답변에도 나가므로, 없는 일정이 "철수가 그날 바쁘다"로 읽힌다.
+
+즉 (b)는 요일 제약 하나를 데이터로 강제하는 대가로 **0건 판정과 답변 근거 두 개를 오염시킨다.**
+
+### 대응 — (c) 검증에 넘기기 전에 거른다
+
+`fixed`를 고칠 수 없으니 그 **앞단**에서 건다. `find_common_available_slots_dict(...)`가
+`find_common_available_slots_payload(...)`를 호출하기 전에 후보를 평일/주말로 가른다.
+
+```python
+weekday_candidates, weekend_rejected = _split_weekend_candidates(candidate_slots, allow_weekend)
+payload = find_common_available_slots_payload(..., candidate_slots=weekday_candidates)
+payload["weekday_policy"] = {"allow_weekend": allow_weekend, "rejected_slots": weekend_rejected}
+```
+
+(a)와 다른 점은 **프롬프트가 지키는 게 아니라 코드가 거른다**는 것이다. Kana가 주말 후보를 넣어도
+결과에 남지 않으므로 턴마다 흔들리지 않는다. (b)와 다른 점은 rows를 건드리지 않아 근거 데이터가 그대로라는 것이다.
+검증 자체를 대체한 게 아니라 `내 요일 게이트 ∘ fixed의 검증`으로 **합성**했으니, 강제되는 층은 여전히 코드다.
+
+결정 세 가지.
+
+- **검증 뒤가 아니라 앞에서 거른다.** 뒤에서 걸러 내면 주말 후보가 `limit` 자리를 먼저 차지해
+  멀쩡한 평일 후보가 잘려 나간다(테스트로 고정했다).
+- **거른 것을 조용히 버리지 않는다.** `weekday_policy.rejected_slots`에 `rejected_reason: "weekend"`로 남긴다.
+  왜 사라졌는지 모르면 Kana가 같은 후보를 다시 내거나 "후보가 없다"고 답해 버린다.
+- **`allow_weekend`(기본 `False`)를 둔다.** 하드코딩하면 "이번 주 토요일에 회의 잡아줘"가
+  구조적으로 불가능해져서 지금보다 나쁜 버그가 된다.
+
+`allow_weekend`가 Week 5에서 정한 "출처를 고르는 인자를 두지 않는다"와 부딪히지 않는지 따져 봤다.
+그때 없앤 건 사용자가 말한 적 없는 **라우팅**(어느 저장소를 볼지)이었고, 주말 허용 여부는
+사용자가 실제로 말하는 **의도**다. LLM이 전달해야 하는 값이라 인자로 두는 게 맞다.
+대신 기본값을 `False`로 두고 description에 "명시적으로 요청했을 때만"을 박아 기본 경로에서는 판단이 필요 없게 했다.
+
+(a)도 버리지 않았다. description과 Kana 프롬프트에 "평일에서 고른다"를 적어 두면 애초에 주말 후보를
+안 내므로 왕복이 줄어든다. **강제는 (c)가 하고, (a)는 안내다.**
+
+### 검증
+
+기존 31개에 6개를 더해 37개 통과.
+
+```
+7/17~7/20에 금·토·일 후보 3개를 넣음
+  통과 후보: ['2026-07-17']
+  걸러진 것: [('2026-07-18', 'weekend'), ('2026-07-19', 'weekend')]
+allow_weekend=True
+  통과 후보: ['2026-07-17', '2026-07-18', '2026-07-19']
+```
+
+문서 "남은 한계"에 적어 둔 `2026-07-18`(토) 사례가 그대로 막힌다.
+`limit=1`에 토·월 후보를 넣으면 월요일이 남는지(주말이 limit을 먼저 먹지 않는지),
+`busy_rows`가 오염되지 않는지도 테스트로 고정했다.
+
+### 남은 것
+
+- **확정 경로(`decide_final_slot`)에는 게이트가 없다.** 2단계는 사용자가 고른 시간을 그대로 넣는 자리라
+  주말이 와도 사용자 선택이므로 막지 않는 게 맞다고 봤다. 다만 Kana가 그 경로로 주말을 지어내면 걸리지 않는다.
+- **공휴일은 보지 않는다.** 요일만 본다. 공휴일까지 하려면 달력 데이터가 필요하다.
+- **업무 시간과 달리 요일은 인자로 조정할 수 없다.** `workday_start`/`workday_end`처럼
+  "어느 요일까지 허용"을 받게 하려면 인자를 하나 더 늘려야 하는데, 지금 필요한 건 주말 온·오프뿐이라 두지 않았다.
+
+---
+
 ## 남은 한계
 
 - **위임 판단은 여전히 프롬프트 의존이다.** 대화 검색은 통합 tool로 코드에 가뒀지만, "개인 일정이냐 그룹 조율이냐"는 supervisor가 지시를 따르는 데 의존한다.
@@ -541,7 +640,7 @@ LLM이 실제로 후보를 내는지는 비결정적이라 테스트로 박지 �
 - ~~**`busy_rows`가 0건일 때 "다들 한가하다"와 "그 기간 기록이 아예 없다"를 구분하지 않는다.**~~
   → 위 "busy_rows 0건의 의미를 반환값으로 가르기"에서 `counts`/`coverage`/`degraded`로 해결.
   남은 구멍(기록이 덮는 **기간**까지는 비교하지 않음)은 그 절 끝에 적어 뒀다.
-- **주말이 후보로 나온다.** `fixed/schedule_decision.py`는 `workday_start`~`workday_end` 시간대만 검사하고 요일은 보지 않는다.
-  실제로 `2026-07-18`(토)이 후보에 포함됐다. 프롬프트에도 주말 규칙이 없어, 범위에 주말만 있으면 주말에 회의를 잡는다.
+- ~~**주말이 후보로 나온다.**~~ → 위 "주말 제외를 검증 단계에서 강제하기"에서 `fixed` 앞단 게이트로 해결.
+  남은 구멍(확정 경로·공휴일)은 그 절 끝에 적어 뒀다.
 - **공유 일정 등록·삭제 경로가 없다.** Week 5 추가과제로 만든 `create_shared_schedule` / `delete_shared_schedule`이
   `nana_tools()`·`kana_tools()` 어느 쪽에도 없어 Week 6에서는 호출할 수 없다.
