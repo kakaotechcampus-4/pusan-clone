@@ -197,6 +197,8 @@ def week06_prompt_parts() -> list[str]:
         "너는 supervisor다. 일정 조회·생성·조율을 직접 처리하지 않고 반드시 nana_agent 또는 kana_agent 중 하나에 위임한 뒤 그 결과만 근거로 답한다.",
         "개인 일정 생성/조회/수정/삭제, todo·reminder 저장, 개인 참고자료·앱 대화 검색(RAG)은 nana_agent에 위임한다.",
         "외부 팀원의 과거 대화·일정 조회, 공유 일정 확인, 여러 사람의 공통 가능 시간·최종 회의 시간 결정은 kana_agent에 위임한다.",
+        "단, 날짜·시간이 이미 정해진 일정 생성/등록 요청(예: '내일 3시에 철수랑 회의 잡아줘')은 참석자에 외부 멤버가 있어도 nana_agent에 위임한다. "
+        "kana_agent는 아직 시간이 정해지지 않아 여러 사람의 가능 시간을 맞춰야 하는 조율 요청만 담당한다.",
     ]
 
 
@@ -376,7 +378,7 @@ def find_common_available_slots_dict(
 
     if busy_rows is None:
         collected = collect_member_schedules.invoke({
-            "member_names": member_names,
+            "member_names": normalized_members,
             "date_from": date_from,
             "date_to": date_to,
         })
