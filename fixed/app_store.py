@@ -23,6 +23,8 @@ from fixed.external_mcp import (
 from fixed.store_base import (
     SCHEDULE_COLUMNS,
     SCHEDULE_COLUMNS_WITH_KIND,
+    REMINDER_COLUMNS,
+    TODO_COLUMNS,
     SQLiteFileStore,
     decode_schedule_row,
     new_id,
@@ -513,7 +515,7 @@ class AppSQLiteStore(SQLiteFileStore):
         with self.connect() as conn:
             return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
-    # Schedule lookup and deletion
+    # Schedule + Reminder + Todo lookup and deletion
 
     def list_schedules(
         self,
@@ -553,8 +555,8 @@ class AppSQLiteStore(SQLiteFileStore):
         return [decode_schedule_row(row) for row in rows]
 
     def list_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
-        query = """
-            SELECT title, date, start_time, created_at
+        query = f"""
+            SELECT {REMINDER_COLUMNS}
             FROM reminders
             ORDER BY
                 date ASC,
@@ -566,8 +568,8 @@ class AppSQLiteStore(SQLiteFileStore):
             return [dict(row) for row in conn.execute(query, (limit,)).fetchall()]
 
     def list_todos(self, limit: int = 50) -> list[dict[str, Any]]:
-        query = """
-            SELECT title, due_date, end_time, priority, created_at
+        query = f"""
+            SELECT {TODO_COLUMNS}
             FROM todos
             ORDER BY
                 CASE UPPER(TRIM(COALESCE(priority, '')))
@@ -697,6 +699,184 @@ class AppSQLiteStore(SQLiteFileStore):
 
         return {"schedule": updated, "shared_sync": shared_sync, "shared_sync_skip_reason": shared_sync_skip_reason}
 
+    def update_reminder(
+        self,
+        reminder_id: str,
+        title: str | None = None,
+        date: str | None = None,
+        start_time: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any] | None:
+        """알림을 수정하고 연결된 structured request도 같은 값으로 갱신합니다."""
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {REMINDER_COLUMNS}
+                FROM reminders
+                WHERE reminder_id = ?
+                """,
+                (reminder_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            current = dict(row)
+            updated = {
+                **current,
+                "title": title if title is not None else current.get("title"),
+                "date": date if date is not None else current.get("date"),
+                "start_time": start_time if start_time is not None else current.get("start_time"),
+                "reason": reason if reason is not None else current.get("reason"),
+            }
+            conn.execute(
+                """
+                UPDATE reminders
+                SET title = ?,
+                    date = ?,
+                    start_time = ?,
+                    reason = ?
+                WHERE reminder_id = ?
+                """,
+                (
+                    updated["title"],
+                    updated["date"],
+                    updated["start_time"],
+                    updated["reason"],
+                    reminder_id,
+                ),
+            )
+
+            raw_row = conn.execute(
+                "SELECT raw_json FROM structured_requests WHERE request_id = ?",
+                (current.get("request_id"),),
+            ).fetchone()
+            raw_payload: dict[str, Any] = {}
+            if raw_row:
+                try:
+                    raw_payload = json.loads(raw_row["raw_json"] or "{}")
+                except Exception:
+                    raw_payload = {}
+            raw_payload.update(
+                {
+                    "title": updated["title"],
+                    "date": updated["date"],
+                    "start_time": updated["start_time"],
+                    "reason": updated["reason"],
+                }
+            )
+            conn.execute(
+                """
+                UPDATE structured_requests
+                SET title = ?,
+                    date = ?,
+                    start_time = ?,
+                    reason = ?,
+                    raw_json = ?
+                WHERE request_id = ?
+                  AND kind = 'reminder'
+                """,
+                (
+                    updated["title"],
+                    updated["date"],
+                    updated["start_time"],
+                    updated["reason"],
+                    json.dumps(raw_payload, ensure_ascii=False),
+                    current.get("request_id"),
+                ),
+            )
+
+        return updated
+
+    def update_todo(
+        self,
+        todo_id: str,
+        title: str | None = None,
+        due_date: str | None = None,
+        end_time: str | None = None,
+        priority: str | None = None,
+    ) -> dict[str, Any] | None:
+        """할 일을 수정하고 연결된 structured request도 같은 값으로 갱신합니다."""
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {TODO_COLUMNS}
+                FROM todos
+                WHERE todo_id = ?
+                """,
+                (todo_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            current = dict(row)
+            updated = {
+                **current,
+                "title": title if title is not None else current.get("title"),
+                "due_date": due_date if due_date is not None else current.get("due_date"),
+                "end_time": end_time if end_time is not None else current.get("end_time"),
+                "priority": priority if priority is not None else current.get("priority"),
+            }
+            conn.execute(
+                """
+                UPDATE todos
+                SET title = ?,
+                    due_date = ?,
+                    end_time = ?,
+                    priority = ?
+                WHERE todo_id = ?
+                """,
+                (
+                    updated["title"],
+                    updated["due_date"],
+                    updated["end_time"],
+                    updated["priority"],
+                    todo_id,
+                ),
+            )
+
+            raw_row = conn.execute(
+                "SELECT raw_json FROM structured_requests WHERE request_id = ?",
+                (current.get("request_id"),),
+            ).fetchone()
+            raw_payload: dict[str, Any] = {}
+            if raw_row:
+                try:
+                    raw_payload = json.loads(raw_row["raw_json"] or "{}")
+                except Exception:
+                    raw_payload = {}
+            raw_payload.update(
+                {
+                    "title": updated["title"],
+                    "date": updated["due_date"],
+                    "end_time": updated["end_time"],
+                    "priority": updated["priority"],
+                }
+            )
+            conn.execute(
+                """
+                UPDATE structured_requests
+                SET title = ?,
+                    date = ?,
+                    end_time = ?,
+                    priority = ?,
+                    raw_json = ?
+                WHERE request_id = ?
+                  AND kind = 'todo'
+                """,
+                (
+                    updated["title"],
+                    updated["due_date"],
+                    updated["end_time"],
+                    updated["priority"],
+                    json.dumps(raw_payload, ensure_ascii=False),
+                    current.get("request_id"),
+                ),
+            )
+
+        return updated
+
     def find_schedules(
         self,
         schedule_ids: list[str] | None = None,
@@ -746,6 +926,100 @@ class AppSQLiteStore(SQLiteFileStore):
             rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
         return [decode_schedule_row(row) for row in rows]
 
+    def find_reminders(
+        self,
+        request_ids: list[str] | None = None,
+        date: str | None = None,
+        title: str | None = None,
+        start_time: str | None = None,
+        time_unspecified: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """알림 ID나 날짜/제목/시간 필터에 맞는 저장 알림을 찾습니다.
+        
+        삭제/수정 전 agent가 후보를 좁히는 용도입니다. `time_unspecified=True`는
+        "시간 미정 일정"처럼 start_time이 비어 있는 row를 찾을 때 사용합니다.
+        """
+
+        where: list[str] = []
+        params: list[Any] = []
+        if request_ids is not None:
+            placeholders = ", ".join("?" for _ in request_ids)
+            where.append(f"request_id IN ({placeholders})")
+            params.extend(request_ids)
+        if date:
+            where.append("date = ?")
+            params.append(date)
+        if title:
+            where.append("title LIKE ?")
+            params.append(f"%{title}%")
+        if start_time:
+            where.append("start_time = ?")
+            params.append(start_time)
+        if time_unspecified:
+            where.append("(start_time IS NULL OR start_time = '' OR start_time = '미정')")
+
+        sql = f"""
+            SELECT {REMINDER_COLUMNS}
+            FROM reminders
+        """
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    def find_todos(
+        self,
+        request_ids: list[str] | None = None,
+        due_date: str | None = None,
+        title: str | None = None,
+        end_time: str | None = None,
+        priority: str | None = None,
+        time_unspecified: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """할 일 ID나 마감일/제목/시간/우선순위 필터에 맞는 할 일을 찾습니다.
+        
+        삭제/수정 전 agent가 후보를 좁히는 용도입니다. `time_unspecified=True`는
+        "시간 미정 일정"처럼 start_time이 비어 있는 row를 찾을 때 사용합니다.
+        """
+
+        where: list[str] = []
+        params: list[Any] = []
+        if request_ids is not None:
+            placeholders = ", ".join("?" for _ in request_ids)
+            where.append(f"request_id IN ({placeholders})")
+            params.extend(request_ids)
+        if due_date:
+            where.append("due_date = ?")
+            params.append(due_date)
+        if title:
+            where.append("title LIKE ?")
+            params.append(f"%{title}%")
+        if end_time:
+            where.append("end_time = ?")
+            params.append(end_time)
+        if priority:
+            where.append("UPPER(TRIM(priority)) = UPPER(TRIM(?))")
+            params.append(priority)
+        if time_unspecified:
+            where.append("(end_time IS NULL OR end_time = '' OR end_time = '미정')")
+
+        sql = f"""
+            SELECT {TODO_COLUMNS}
+            FROM todos
+        """
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
     def delete_schedule(self, schedule_id: str) -> dict[str, Any] | None:
         """schedule_id 하나를 삭제하고 연결된 structured request도 함께 정리합니다."""
 
@@ -782,6 +1056,62 @@ class AppSQLiteStore(SQLiteFileStore):
 
         decoded["shared_sync_skip_reason"] = None
         return decoded
+
+    def delete_reminder(self, reminder_id: str) -> dict[str, Any] | None:
+        """reminder_id 하나를 삭제하고 연결된 structured request도 함께 정리합니다."""
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {REMINDER_COLUMNS}
+                FROM reminders
+                WHERE reminder_id = ?
+                """,
+                (reminder_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            deleted = dict(row)
+            conn.execute("DELETE FROM reminders WHERE reminder_id = ?", (reminder_id,))
+            conn.execute(
+                """
+                DELETE FROM structured_requests
+                WHERE request_id = ?
+                  AND kind = 'reminder'
+                """,
+                (deleted.get("request_id"),),
+            )
+
+        return deleted # 별도의 디코딩 과정 생략
+
+    def delete_todo(self, todo_id: str) -> dict[str, Any] | None:
+        """todo_id 하나를 삭제하고 연결된 structured request도 함께 정리합니다."""
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {TODO_COLUMNS}
+                FROM todos
+                WHERE todo_id = ?
+                """,
+                (todo_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            deleted = dict(row)
+            conn.execute("DELETE FROM todos WHERE todo_id = ?", (todo_id,))
+            conn.execute(
+                """
+                DELETE FROM structured_requests
+                WHERE request_id = ?
+                  AND kind = 'todo'
+                """,
+                (deleted.get("request_id"),),
+            )
+
+        return deleted # 별도의 디코딩 과정 생략
 
     def delete_schedules_by_filter(
         self,

@@ -47,6 +47,14 @@ SCHEDULE_COLUMNS_WITH_KIND = (
     "(SELECT kind FROM structured_requests WHERE request_id = schedules.request_id) AS request_kind"
 )
 
+REMINDER_COLUMNS = (
+    "reminder_id, request_id, title, date, start_time, reason, created_at"
+)
+
+TODO_COLUMNS = (
+    "todo_id, request_id, title, due_date, end_time, priority, created_at"
+)
+
 
 class SQLiteFileStore:
     """파일 기반 SQLite 저장소가 공유하는 경로 준비와 연결 설정입니다."""
