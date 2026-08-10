@@ -334,6 +334,7 @@ class AppSQLiteStore(SQLiteFileStore):
         created_at = now_iso()
         saved_rows: list[dict[str, Any]] = []
         shared_sync: dict[str, Any] | None = None
+        shared_sync_skip_reason: str | None = None
         schedule_for_shared: dict[str, Any] | None = None
         source_schedule_id = str(payload.get("source_schedule_id") or "").strip()
         is_secret = current_secret_mode()
@@ -357,6 +358,7 @@ class AppSQLiteStore(SQLiteFileStore):
                             {"table": "schedules", "id": existing_schedule["schedule_id"], "existing": True},
                         ],
                         "shared_sync": None,
+                        "shared_sync_skip_reason": None,
                         "already_exists": True,
                     }
             conn.execute(
@@ -438,16 +440,16 @@ class AppSQLiteStore(SQLiteFileStore):
                 )
                 saved_rows.append({"table": "reminders", "id": reminder_id})
 
-        if schedule_for_shared is not None and not is_secret:
+        if schedule_for_shared is not None:
             # 외부 공유 저장소 동기화는 앱 DB transaction 바깥에서 수행합니다.
             # 외부 MCP 실패가 앱 DB 저장 자체를 되돌리지 않게 하기 위함입니다.
-            if kind == "group_schedule":
+            if is_secret:
+                shared_sync_skip_reason = "secret_schedule"
+            elif kind == "group_schedule":
                 shared_sync = sync_group_schedule_to_shared(schedule_for_shared)
             else:
                 shared_sync = sync_personal_schedule_to_shared(schedule_for_shared)
-            return {"request_id": request_id, "kind": kind, "saved_rows": saved_rows, "shared_sync": shared_sync} # public 모드에서의 반환값을 if 블록 안으로 넣어주기
-        else:
-            return {"request_id": request_id, "kind": kind, "saved_rows": saved_rows, "shared_sync": "skip", "shared_sync_skip_reason": "active secret mode" if schedule_for_shared is not None and is_secret else None}
+        return {"request_id": request_id, "kind": kind, "saved_rows": saved_rows, "shared_sync": shared_sync, "shared_sync_skip_reason": shared_sync_skip_reason}
 
     # Structured request lookup
 
@@ -684,10 +686,8 @@ class AppSQLiteStore(SQLiteFileStore):
             )
 
         shared_sync = None
-        shared_sync_skipped = False
         shared_sync_skip_reason = None
         if updated.get("is_secret"): # 원래 is_secret이었으면 건너뛰기
-            shared_sync_skipped = True
             shared_sync_skip_reason = "secret_schedule"
         elif updated.get("request_kind") == "personal_schedule":
             shared_sync = sync_personal_schedule_to_shared(updated)
@@ -695,7 +695,7 @@ class AppSQLiteStore(SQLiteFileStore):
             delete_group_schedule_from_shared(current)
             shared_sync = sync_group_schedule_to_shared(updated)
 
-        return {"schedule": updated, "shared_sync": shared_sync, "shared_sync_skipped": shared_sync_skipped, "shared_sync_skip_reason": shared_sync_skip_reason}
+        return {"schedule": updated, "shared_sync": shared_sync, "shared_sync_skip_reason": shared_sync_skip_reason}
 
     def find_schedules(
         self,
@@ -772,8 +772,7 @@ class AppSQLiteStore(SQLiteFileStore):
             )
 
         if decoded.get("is_secret"): # 시크릿 일정은 공유 저장소 delete를 skip
-            decoded["shared_delete_skipped"] = True
-            decoded["shared_delete_skip_reason"] = "secret_schedule"
+            decoded["shared_sync_skip_reason"] = "secret_schedule"
             return decoded
         if decoded.get("request_kind") == "personal_schedule" and decoded.get("request_id"):
             # 개인 일정은 외부 공유 저장소에 복사본이 있으므로 앱 DB 삭제와 함께 제거합니다.
@@ -781,8 +780,7 @@ class AppSQLiteStore(SQLiteFileStore):
         elif decoded.get("request_kind") == "group_schedule" and decoded.get("request_id"):
             delete_group_schedule_from_shared(decoded)
 
-        decoded["shared_delete_skipped"] = False
-        decoded["shared_delete_skip_reason"] = None
+        decoded["shared_sync_skip_reason"] = None
         return decoded
 
     def delete_schedules_by_filter(
@@ -839,7 +837,9 @@ class AppSQLiteStore(SQLiteFileStore):
 
         decoded_rows = [decode_schedule_row(row) for row in deleted_rows]
         for row in decoded_rows:
+            row["shared_sync_skip_reason"] = None
             if row.get("is_secret"): # 시크릿은 공유 저장소에서 삭제하지 않음
+                row["shared_sync_skip_reason"] = "secret_schedule"
                 continue
             if row.get("request_kind") == "personal_schedule" and row.get("request_id"):
                 delete_personal_schedule_from_shared(row["request_id"])
