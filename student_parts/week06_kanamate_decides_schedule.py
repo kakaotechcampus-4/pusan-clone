@@ -231,6 +231,7 @@ def kana_prompt_parts() -> list[str]:
         "collect_member_schedules가 needs_input을 반환하면 일정을 추측하지 말고 사용자에게 확인할 기간을 되묻는다. ",
         "collect_member_schedules의 rows는 '이미 바쁜 시간' 목록이다. rows가 비어 있는 건 가능한 시간이 없는게 아니라 기존 일정이 없다는 것이므로 조율 가능한 기간이 된다. ",
         "그룹 조율 요청에서는 collect_member_schedules로 바쁜 시간을 모은 뒤, find_common_available_slots로 후보를 검증하고, 이어서 decide_final_slot으로 최종 시간을 확정한다. 세 tool을 순서대로 호출하고 중간에서 답변을 끝내지 않는다. ",
+        "find_common_available_slots의 후보가 0개여도 예외가 아니다. 그 경우에도 decide_final_slot을 final_slot=null, needs_agent_selection=true로 호출한 뒤에 답한다. ",
         "'1시간짜리', '30분만' 같은 소요 시간은 structured_request에 담기지 않으므로 사용자 원문에서 직접 읽어 find_common_available_slots의 duration_minutes(분)로 넘긴다. 원문에 없으면 기본값 60을 쓴다. ",
     ]
 
@@ -299,14 +300,17 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "여러 사람이 함께 비어 있는 회의 시간 후보를 검증하고 기록하는 tool이다. "
     "이 tool은 후보를 계산해주지 않는다. 반드시 candidate_slots를 채워서 호출해야 하며, 비운 채 호출하면 결과도 비어 있다. candidate_slots가 이 tool의 핵심 입력이다. "
     "후보는 collect_member_schedules가 돌려준 rows(이미 바쁜 시간)를 읽고 그 사이의 빈 시간에서 직접 고른다. 3개 이상 제안한다. "
+    "후보가 3개 미만이면 있는 만큼만 넘기고 개수 부족을 이유로 재호출하지 않는다. "
     "member_names에는 외부 멤버만 넣는다. 내 일정은 자동으로 포함된다. "
     "busy_rows 인자는 생략한다. 넘기지 않으면 이 tool이 바쁜 시간을 직접 수집하므로, 앞선 tool 결과의 rows를 인자로 다시 옮겨 적지 않는다. "
     "candidate_slots의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), duration_minutes(분), reason(그 시간을 고른 짧은 근거)을 모두 포함해야 한다. "
     "후보는 다음을 전부 만족해야 하고, 하나라도 어긋나면 결과에서 조용히 제외된다. "
     "(1) date_from~date_to 안의 날짜, (2) workday_start~workday_end(기본 09:00~18:00) 안의 시간, (3) 길이가 duration_minutes 이상, (4) 어떤 busy row와도 겹치지 않음. "
-    "busy row의 end_time이 '미정'이면 그 시각부터 그날 끝까지 바쁜 것으로 계산되므로 그 뒤 시간은 후보로 잡지 않는다. "
+    "busy row의 start_time이 '미정'이면 자정부터 바쁜 것으로 계산되고, end_time이 '미정'이면 그 시각부터 그날 끝까지 바쁜 것으로 계산된다. 둘 다 '미정'이면 그 날 통째로 바쁜 날이다. "
     "반환된 candidate_slots가 넘긴 것보다 적으면 위 조건에 걸린 것이니 조건을 맞춰 다시 호출한다. "
     "결과의 candidate_slots가 비어 있으면 '가능한 시간이 없다'고 답하지 말고, 조건에 맞는 후보를 직접 채워 다시 호출한다. "
+    "재호출은 최대 1회만 한다. 재호출할 때는 같은 후보를 그대로 보내지 말고 (1)~(4)를 하나씩 다시 확인해 시간을 바꾼다. "
+    "재호출 뒤에도 candidate_slots가 비어 있으면 더 호출하지 말고, decide_final_slot을 final_slot=null, needs_agent_selection=true로 호출해 마무리한다. "
     "이 tool의 결과로 답변을 끝내지 않는다. 후보를 확인한 뒤 반드시 decide_final_slot을 이어서 호출해 최종 시간을 확정한다."
 )
 
@@ -335,7 +339,7 @@ class FindCommonAvailableSlotsInput(BaseModel):
     limit: int = Field(default=5, ge=1, le=20, description="최대 후보 수")
     busy_rows: list[dict[str, Any]] | None = Field(
         default=None,
-        description="앞선 일정 조회 tool output에서 복사한 busy_rows. 후보는 이 row들과 overlap/겹치면 안 됩니다.",
+        description="보통은 비워 둔다. 비우면 tool이 직접 수집한다.",
     )
     candidate_slots: list[CommonSlotCandidate] = Field(
         default_factory=list,
