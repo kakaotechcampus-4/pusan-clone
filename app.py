@@ -536,7 +536,7 @@ def build_demo() -> gr.Blocks:
                         initial_schedules, initial_reminders, initial_todos = (_saved_item_tables())
 
                         gr.HTML(
-                            "<div class='conversation-list-title'>내 일정</div>",
+                            "<div class='conversation-list-title'>내 리스트</div>",
                             container=False,
                         )
 
@@ -588,7 +588,7 @@ def build_demo() -> gr.Blocks:
                                     interactive=False,
                                     wrap=True,
                                     show_label=True,
-                                    label="리마인더",
+                                    label="알림",
                                     elem_id="reminder-table",
                                     show_search="filter"
                                 )
