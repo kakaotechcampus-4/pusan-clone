@@ -106,6 +106,7 @@ class AppSQLiteStore(SQLiteFileStore):
                     request_id TEXT,
                     title TEXT NOT NULL,
                     due_date TEXT,
+                    end_time TEXT DEFAULT '미정',
                     priority TEXT NOT NULL DEFAULT 'MEDIUM' CHECK (priority IN ('LOW', 'MEDIUM', 'HIGH')),
                     created_at TEXT NOT NULL
                 );
@@ -119,6 +120,36 @@ class AppSQLiteStore(SQLiteFileStore):
                     reason TEXT,
                     created_at TEXT NOT NULL
                 );
+                """
+            )
+
+        # 마이그레이션 코드 포함!
+        # initialize는 매번 실행되는 함수이므로,
+        # 첫 실행 후 컬럼 변경을 확인한 다음에 주석처리해도 된다
+        schedules_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(schedules)")
+        }
+
+        if "is_secret" not in schedules_columns:
+            conn.execute(
+                """
+                ALTER TABLE schedules
+                ADD COLUMN is_secret INTEGER NOT NULL DEFAULT 0
+                """
+            )
+
+
+        todos_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(todos)")
+        }
+
+        if "end_time" not in todos_columns:
+            conn.execute(
+                """
+                ALTER TABLE todos
+                ADD COLUMN end_time TEXT DEFAULT '미정'
                 """
             )
 
