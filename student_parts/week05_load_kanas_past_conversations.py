@@ -16,6 +16,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_parenthetical_text,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -190,9 +191,10 @@ _WEEK05_AGENT: Any | None = None
 #      extract_schedules_from_history 는 MCP 서버 tool 의 이름이기도 해서
 #      call_mcp_tool_sync 호출 문자열로는 그대로 씁니다.
 #
-#   2. 가이드에 없는 순수 helper 4개를 추가했습니다. MCP/저장소 접근이 있는 함수에서
+#   2. 가이드에 없는 순수 helper 5개를 추가했습니다. MCP/저장소 접근이 있는 함수에서
 #      '판단'만 떼어내 mocking 없이 테스트하기 위해서입니다.
-#        _external_member_names_excluding_me : 외부 조회 대상에서 "나" 제외
+#        _dedupe_schedule_rows               : 앱 DB/공유 저장소 중복 row 제거
+#        _my_schedule_notes                  : 내 일정 row 의 개인/그룹 구분 문구
 #        _personal_schedule_rows             : 내 일정 -> 공통 row 스키마 성형
 #        _is_within_date_range               : 날짜 범위 판정(형식 불명이면 포함)
 #        _validate_date_order                : 조회 tool 3종의 날짜 역전 검증(스키마에서 호출)
@@ -395,10 +397,15 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    kind 를 개인 일정으로 고정하지 않는다. schedules 테이블은 개인/그룹을 구분해 담고
+    (`request_kind`), 조율 화면에서 "이 시간은 누구와의 약속인가"가 개인 일정과 다르게
+    읽히기 때문이다. Week 1 임시 일정 row 에는 이 값이 없으므로 그때만 개인 일정으로 본다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -408,24 +415,34 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     )
 
 
-def _external_member_names_excluding_me(member_names: list[str]) -> list[str]:
-    """외부 MCP 조회 대상 멤버 이름만 남깁니다. "나"는 제외합니다. (순수 함수)
+def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """같은 일정이 앱 DB 와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다. (순수 함수)
 
-    내 일정의 진실은 앱 SQLite 다. 외부 공유 저장소의 "나" row 는 앱 저장 경로가
-    자동으로 만드는 파생 복사본이라(sync_personal_schedule_to_shared), 원본과 같이 읽으면
-    같은 일정이 rows 에 두 번 들어간다. 동기화가 title/end_time/notes 값을 바꾸므로
-    합친 뒤 값으로 거르는 방법은 안정적이지 않아, member_name 으로 출처를 고른다.
+    앱에 저장한 내 일정은 공유 저장소에도 "나" 이름으로 자동 동기화되므로
+    (sync_personal_schedule_to_shared), member_names 에 "나"가 들어온 호출에서는
+    같은 일정이 앱 DB 경로와 공유 저장소 경로 두 갈래로 들어온다.
+
+    두 경로가 같은 일정을 다르게 다듬기 때문에 값을 그대로 비교하면 안 걸린다.
+      - 공유 저장소는 제목에서 소괄호를 지우고 연속 공백을 하나로 줄인다. 앱 DB 는 원문을 둔다.
+      - start_time 이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춘다.
+      - end_time 은 키에서 뺀다. 같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의
+        일정은 하나로 본다.
+
+    앞에 오는 row 를 남긴다(dict 는 넣은 순서를 유지하고 setdefault 는 덮어쓰지 않는다).
+    호출부가 my_rows 를 외부 rows 보다 앞에 두므로 앱 DB row 가 살아남고, 그래야
+    _my_schedule_notes() 가 만든 참석자 notes 가 "앱 개인 일정 자동 동기화"로 덮이지 않는다.
     """
 
-    normalized = normalize_external_member_names(member_names)
-    external_names: list[str] = []
-    for name in normalized:
-        if name == PERSONAL_SHARED_MEMBER_NAME:
-            continue
-        if name in external_names:
-            continue
-        external_names.append(name)
-    return external_names
+    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("member_name") or "").strip(),
+            str(row.get("date") or "").strip(),
+            str(row.get("start_time") or "").strip() or "미정",
+            strip_parenthetical_text(str(row.get("title") or "")),
+        )
+        deduped.setdefault(key, row)
+    return list(deduped.values())
 
 
 def _is_within_date_range(date: str, date_from: str, date_to: str) -> bool:
@@ -451,6 +468,22 @@ def _is_within_date_range(date: str, date_from: str, date_to: str) -> bool:
     if date_to and parseable(date_to) and date > date_to:
         return False
     return True
+
+
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row 가 개인 일정인지, 참석자가 있는 그룹 일정인지 적습니다. (순수 함수)
+
+    row 구조가 개인/그룹 모두 같아서, notes 가 없으면 조율 결과를 읽는 쪽이 "이 시간이 왜
+    막혔는지"를 알 수 없다. 참석자를 함께 적어 두면 이미 그 사람과 잡아둔 약속인지
+    바로 보인다. 반면 busy-time 판정 자체는 종류와 무관하므로 rows 에서 빼지 않는다.
+    """
+
+    if request.kind != "group_schedule":
+        return "앱에 저장된 내 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    if not members:
+        return "앱에 저장된 내 그룹 일정"
+    return f"앱에 저장된 내 그룹 일정 · 참석자: {', '.join(members)}"
 
 
 def _personal_schedule_rows(
@@ -482,7 +515,7 @@ def _personal_schedule_rows(
                 "date": date,
                 "start_time": request.start_time or "미정",
                 "end_time": request.end_time or "미정",
-                "notes": "앱에 저장된 내 일정",
+                "notes": _my_schedule_notes(request),
             }
         )
     return rows
@@ -497,17 +530,20 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다.
 
-    출처를 '합치는' 게 아니라 멤버별로 **권위 있는 출처 하나씩만** 읽는다.
+    두 출처를 모두 읽고 합친 뒤 중복을 걸러낸다.
       - "나"      -> 앱 SQLite + 현재 대화의 임시 일정 (personal_schedules 로 주입)
       - 외부 멤버 -> 외부 SQLite/MCP 의 extract_schedules_from_history
+
+    member_names 에 "나"가 들어오면 공유 저장소의 "나" 복사본도 함께 들어오므로
+    _dedupe_schedule_rows() 로 한 번 거른다. my_rows 를 외부 rows 보다 **앞에** 두어야
+    앱 DB row 가 살아남고 참석자 notes 가 유지된다.
 
     내 일정은 항상 포함한다. 넣을지 말지는 이 tool 을 고르는 순간 이미 정해진 것이고
     (남 일정만 필요하면 extract_schedules_of_members_exclude_me 다), 인자로 한 번 더
     물으면 같은 판단을 두 곳에서 하게 된다.
-
-    판단 로직은 위의 순수 helper 두 개가 갖고, 이 함수는 그 둘과 MCP 호출 한 번을 엮는다.
     """
 
+    normalized_members = normalize_external_member_names(member_names)
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
         member_names, date_from, date_to
     )
@@ -517,24 +553,24 @@ def _collect_member_schedules(
         raise ValueError(
             f"date_from({normalized_date_from})이 date_to({normalized_date_to})보다 뒤입니다."
         )
-    external_members = _external_member_names_excluding_me(member_names)
-
     rows = _personal_schedule_rows(personal_schedules, normalized_date_from, normalized_date_to)
 
-    # 외부 조회 대상이 "나"뿐이면 MCP subprocess 를 띄울 이유가 없다.
-    if external_members:
+    # 조회 대상이 없으면 MCP subprocess 를 띄울 이유가 없다.
+    if normalized_members:
         # call_external_tool_payload 는 call_mcp_tool_sync + json.loads 다.
         # 여기서는 rows 를 꺼내 써야 하므로 문자열 그대로가 아니라 payload 로 읽는다.
         payload = call_external_tool_payload(
             "extract_schedules_from_history",
             {
-                "member_names": external_members,
+                "member_names": normalized_members,
                 "date_from": normalized_date_from,
                 "date_to": normalized_date_to,
             },
         )
         rows.extend(row for row in payload.get("rows", []) if isinstance(row, dict))
 
+    # 정렬보다 먼저 거른다. dedupe 는 앞에 오는 row 를 남기는데, 정렬이 그 순서를 흩뜨린다.
+    rows = _dedupe_schedule_rows(rows)
     rows.sort(
         key=lambda row: (
             str(row.get("date") or ""),
@@ -550,7 +586,11 @@ def _collect_member_schedules(
     return {
         "ok": True,
         "tool_name": "extract_schedules_of_members_include_me",
-        "member_names": [PERSONAL_SHARED_MEMBER_NAME, *external_members],
+        # "나"는 항상 맨 앞에 한 번만 둔다. 호출자가 "나"를 함께 넘겨도 두 번 들어가지 않는다.
+        "member_names": [
+            PERSONAL_SHARED_MEMBER_NAME,
+            *[name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME],
+        ],
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
         "rows": rows,
@@ -773,6 +813,15 @@ WEEK05_EXTERNAL_MEMBER_PROMPT = (
     "'오늘 하루'로 좁히면 실제로 있는 일정을 없다고 답하게 되기 때문이다. "
     "list_shared_schedules 는 필터가 모두 선택이라 이 규칙과 무관하다 — 그대로 호출한다.\n"
     "조회 결과의 rows와 schedule_summary만 근거로 답한다. 사용자가 묻지 않은 사람의 일정은 언급하지 않는다.\n"
+    # notes 는 rows 에 이미 실려 있지만, 쓰라고 말하지 않으면 "선약이 있습니다"까지만
+    # 답하고 사용자는 그 시간을 옮길 수 있는지 판단할 수 없다.
+    "notes는 그 시간이 왜 막혔는지 설명할 때 쓴다 — "
+    "내 그룹 일정이면 참석자를 밝혀 누구와의 선약인지 알린다(내 일정을 말하는 것이므로 "
+    "위의 '묻지 않은 사람' 규칙에 걸리지 않는다). "
+    # 내 일정의 참석자는 '내가 그때 약속을 잡아뒀다'는 사실일 뿐, 그 사람이 지금도
+    # 그 시간에 바쁘다는 근거가 아니다. 상대가 그 약속을 옮겼어도 내 row 는 남는다.
+    "다만 그 이름을 그 사람의 현재 일정으로 읽지 않는다 — "
+    "다른 사람이 그 시간에 가능한지는 그 사람을 조회한 rows로만 판단한다.\n"
     "조회를 하지 않은 채 '기록이 없다'고 말하지 않는다. 처음 보는 이름이라도 일단 tool로 조회하고, "
     "결과가 비어 있을 때만 없다고 답한다."
 )
