@@ -319,9 +319,10 @@ def _collect_member_schedules(
 
     return {
         "ok": True, "tool_name": "collect_member_schedules",
-        "rows": rows, "merged_rows": _merged_rows(rows), "schedule_summary": external_schedule_summary(rows)
+        "rows": _schedule_sort(rows), "merged_rows": _schedule_sort(_merged_rows(rows)), "schedule_summary": external_schedule_summary(rows)
     }
 
+_prefix = "그룹 일정 - 참석자:"
 def _merged_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: "OrderedDict[tuple, dict[str, Any]]" = OrderedDict()
     for row in rows:
@@ -339,7 +340,32 @@ def _merged_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         name = stripped_row.get("member_name")
         if name and name not in groups[key]["members"]:
             groups[key]["members"].append(name)
+        if name == "나":
+            notes = str(stripped_row.get("notes") or "").strip()
+
+            if notes.startswith(_prefix):
+                attendee = notes.removeprefix(_prefix).strip()
+                my_schedule_members = [
+                    member.strip()
+                    for member in attendee.split(",")
+                    if member.strip()
+                ]
+
+                for member in my_schedule_members:
+                    if member not in groups[key]["members"]:
+                        groups[key]["members"].append(member)
     return list(groups.values())
+
+def _schedule_sort(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def sort_key(row: dict[str, Any]) -> tuple[str, bool, str, str]:
+        date = str(row.get("date") or "9999-12-31").strip()
+        start_time = str(row.get("start_time") or "미정").strip()
+        end_time = str(row.get("end_time") or "미정").strip()
+        start_time_unspecified = (start_time == "미정") # 시작 시간이 불분명한 일정
+
+        return (date, start_time_unspecified, start_time, end_time)
+
+    return sorted(rows, key=sort_key)
 
 @tool(args_schema=SearchPreviousConversationsInput)
 def search_previous_conversations(

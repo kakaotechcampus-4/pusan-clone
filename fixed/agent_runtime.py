@@ -88,7 +88,7 @@ class AgentRuntime:
         self.app_store.append_message(conversation_id, "assistant", result.answer)
         return RuntimeResult(answer=result.answer, trace=trace, conversation_id=conversation_id)
 
-    def stream_agent(self, user_message: str, conversation_id: str | None) -> Iterator[RuntimeStreamEvent]:
+    def stream_agent(self, user_message: str, conversation_id: str | None, secret_mode: bool = False) -> Iterator[RuntimeStreamEvent]:
         """stream 모드로 agent를 실행하며 tool 진행 상태와 최종 답변을 순서대로 yield합니다."""
 
         conversation_id = self.ensure_conversation(conversation_id, user_message)
@@ -98,7 +98,7 @@ class AgentRuntime:
         messages = self._agent_messages(previous_messages, user_message)
         stream = stream_active_week_agent(self.active_week, messages)
         while True:
-            with conversation_session_scope(conversation_id):
+            with conversation_session_scope(conversation_id, secret_mode): # secret_mode를 넘겨서 event를 정의하기
                 try:
                     event = next(stream)
                 except StopIteration:

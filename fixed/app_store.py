@@ -23,12 +23,15 @@ from fixed.external_mcp import (
 from fixed.store_base import (
     SCHEDULE_COLUMNS,
     SCHEDULE_COLUMNS_WITH_KIND,
+    REMINDER_COLUMNS,
+    TODO_COLUMNS,
     SQLiteFileStore,
     decode_schedule_row,
     new_id,
     now_iso,
 )
 
+from fixed.session_scope import current_secret_mode
 
 class AppSQLiteStore(SQLiteFileStore):
     """앱 내부 DB 저장소입니다.
@@ -95,6 +98,7 @@ class AppSQLiteStore(SQLiteFileStore):
                     start_time TEXT,
                     end_time TEXT,
                     attendees_json TEXT NOT NULL DEFAULT '[]',
+                    is_secret INTEGER NOT NULL DEFAULT 0,
                     source TEXT NOT NULL DEFAULT 'structured_output',
                     created_at TEXT NOT NULL
                 );
@@ -104,7 +108,8 @@ class AppSQLiteStore(SQLiteFileStore):
                     request_id TEXT,
                     title TEXT NOT NULL,
                     due_date TEXT,
-                    priority TEXT,
+                    end_time TEXT DEFAULT '미정',
+                    priority TEXT NOT NULL DEFAULT 'MEDIUM' CHECK (priority IN ('LOW', 'MEDIUM', 'HIGH')),
                     created_at TEXT NOT NULL
                 );
 
@@ -117,6 +122,36 @@ class AppSQLiteStore(SQLiteFileStore):
                     reason TEXT,
                     created_at TEXT NOT NULL
                 );
+                """
+            )
+
+        # 마이그레이션 코드 포함!
+        # initialize는 매번 실행되는 함수이므로,
+        # 첫 실행 후 컬럼 변경을 확인한 다음에 주석처리해도 된다
+        schedules_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(schedules)")
+        }
+
+        if "is_secret" not in schedules_columns:
+            conn.execute(
+                """
+                ALTER TABLE schedules
+                ADD COLUMN is_secret INTEGER NOT NULL DEFAULT 0
+                """
+            )
+
+
+        todos_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(todos)")
+        }
+
+        if "end_time" not in todos_columns:
+            conn.execute(
+                """
+                ALTER TABLE todos
+                ADD COLUMN end_time TEXT DEFAULT '미정'
                 """
             )
 
@@ -301,8 +336,10 @@ class AppSQLiteStore(SQLiteFileStore):
         created_at = now_iso()
         saved_rows: list[dict[str, Any]] = []
         shared_sync: dict[str, Any] | None = None
+        shared_sync_skip_reason: str | None = None
         schedule_for_shared: dict[str, Any] | None = None
         source_schedule_id = str(payload.get("source_schedule_id") or "").strip()
+        is_secret = current_secret_mode()
 
         with self.connect() as conn:
             if kind in {"personal_schedule", "group_schedule"} and source_schedule_id:
@@ -323,6 +360,7 @@ class AppSQLiteStore(SQLiteFileStore):
                             {"table": "schedules", "id": existing_schedule["schedule_id"], "existing": True},
                         ],
                         "shared_sync": None,
+                        "shared_sync_skip_reason": None,
                         "already_exists": True,
                     }
             conn.execute(
@@ -354,8 +392,8 @@ class AppSQLiteStore(SQLiteFileStore):
                 conn.execute(
                     """
                     INSERT INTO schedules
-                        (schedule_id, request_id, owner, title, date, start_time, end_time, attendees_json, source, created_at)
-                    VALUES (?, ?, 'me', ?, ?, ?, ?, ?, 'structured_output', ?)
+                        (schedule_id, request_id, owner, title, date, start_time, end_time, attendees_json, is_secret, source, created_at)
+                    VALUES (?, ?, 'me', ?, ?, ?, ?, ?, ?, 'structured_output', ?)
                     """,
                     (
                         schedule_id,
@@ -365,6 +403,7 @@ class AppSQLiteStore(SQLiteFileStore):
                         start_time,
                         end_time,
                         json.dumps(members, ensure_ascii=False),
+                        int(is_secret),
                         created_at,
                     ),
                 )
@@ -386,10 +425,10 @@ class AppSQLiteStore(SQLiteFileStore):
                 todo_id = new_id("todo")
                 conn.execute(
                     """
-                    INSERT INTO todos (todo_id, request_id, title, due_date, priority, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO todos (todo_id, request_id, title, due_date, end_time, priority, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (todo_id, request_id, title, date, priority, created_at),
+                    (todo_id, request_id, title, date, end_time, priority, created_at),
                 )
                 saved_rows.append({"table": "todos", "id": todo_id})
             elif kind == "reminder":
@@ -406,12 +445,13 @@ class AppSQLiteStore(SQLiteFileStore):
         if schedule_for_shared is not None:
             # 외부 공유 저장소 동기화는 앱 DB transaction 바깥에서 수행합니다.
             # 외부 MCP 실패가 앱 DB 저장 자체를 되돌리지 않게 하기 위함입니다.
-            if kind == "group_schedule":
+            if is_secret:
+                shared_sync_skip_reason = "secret_schedule"
+            elif kind == "group_schedule":
                 shared_sync = sync_group_schedule_to_shared(schedule_for_shared)
             else:
                 shared_sync = sync_personal_schedule_to_shared(schedule_for_shared)
-
-        return {"request_id": request_id, "kind": kind, "saved_rows": saved_rows, "shared_sync": shared_sync}
+        return {"request_id": request_id, "kind": kind, "saved_rows": saved_rows, "shared_sync": shared_sync, "shared_sync_skip_reason": shared_sync_skip_reason}
 
     # Structured request lookup
 
@@ -475,7 +515,7 @@ class AppSQLiteStore(SQLiteFileStore):
         with self.connect() as conn:
             return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
-    # Schedule lookup and deletion
+    # Schedule + Reminder + Todo lookup and deletion
 
     def list_schedules(
         self,
@@ -514,6 +554,38 @@ class AppSQLiteStore(SQLiteFileStore):
             rows = [dict(row) for row in cur.fetchall()]
         return [decode_schedule_row(row) for row in rows]
 
+    def list_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
+        query = f"""
+            SELECT {REMINDER_COLUMNS}
+            FROM reminders
+            ORDER BY
+                date ASC,
+                start_time ASC,
+                created_at ASC
+            LIMIT ?
+        """
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(query, (limit,)).fetchall()]
+
+    def list_todos(self, limit: int = 50) -> list[dict[str, Any]]:
+        query = f"""
+            SELECT {TODO_COLUMNS}
+            FROM todos
+            ORDER BY
+                CASE UPPER(TRIM(COALESCE(priority, '')))
+                    WHEN 'HIGH' THEN 3
+                    WHEN 'MEDIUM' THEN 2
+                    WHEN 'LOW' THEN 1
+                    ELSE 0
+                END DESC,
+                due_date ASC,
+                end_time ASC,
+                created_at DESC
+            LIMIT ?
+        """
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(query, (limit,)).fetchall()]
+    
     def update_schedule(
         self,
         schedule_id: str,
@@ -616,12 +688,194 @@ class AppSQLiteStore(SQLiteFileStore):
             )
 
         shared_sync = None
-        if updated.get("request_kind") == "personal_schedule":
+        shared_sync_skip_reason = None
+        if updated.get("is_secret"): # 원래 is_secret이었으면 건너뛰기
+            shared_sync_skip_reason = "secret_schedule"
+        elif updated.get("request_kind") == "personal_schedule":
             shared_sync = sync_personal_schedule_to_shared(updated)
         elif updated.get("request_kind") == "group_schedule":
             delete_group_schedule_from_shared(current)
             shared_sync = sync_group_schedule_to_shared(updated)
-        return {"schedule": updated, "shared_sync": shared_sync}
+
+        return {"schedule": updated, "shared_sync": shared_sync, "shared_sync_skip_reason": shared_sync_skip_reason}
+
+    def update_reminder(
+        self,
+        reminder_id: str,
+        title: str | None = None,
+        date: str | None = None,
+        start_time: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any] | None:
+        """알림을 수정하고 연결된 structured request도 같은 값으로 갱신합니다."""
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {REMINDER_COLUMNS}
+                FROM reminders
+                WHERE reminder_id = ?
+                """,
+                (reminder_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            current = dict(row)
+            updated = {
+                **current,
+                "title": title if title is not None else current.get("title"),
+                "date": date if date is not None else current.get("date"),
+                "start_time": start_time if start_time is not None else current.get("start_time"),
+                "reason": reason if reason is not None else current.get("reason"),
+            }
+            conn.execute(
+                """
+                UPDATE reminders
+                SET title = ?,
+                    date = ?,
+                    start_time = ?,
+                    reason = ?
+                WHERE reminder_id = ?
+                """,
+                (
+                    updated["title"],
+                    updated["date"],
+                    updated["start_time"],
+                    updated["reason"],
+                    reminder_id,
+                ),
+            )
+
+            raw_row = conn.execute(
+                "SELECT raw_json FROM structured_requests WHERE request_id = ?",
+                (current.get("request_id"),),
+            ).fetchone()
+            raw_payload: dict[str, Any] = {}
+            if raw_row:
+                try:
+                    raw_payload = json.loads(raw_row["raw_json"] or "{}")
+                except Exception:
+                    raw_payload = {}
+            raw_payload.update(
+                {
+                    "title": updated["title"],
+                    "date": updated["date"],
+                    "start_time": updated["start_time"],
+                    "reason": updated["reason"],
+                }
+            )
+            conn.execute(
+                """
+                UPDATE structured_requests
+                SET title = ?,
+                    date = ?,
+                    start_time = ?,
+                    reason = ?,
+                    raw_json = ?
+                WHERE request_id = ?
+                  AND kind = 'reminder'
+                """,
+                (
+                    updated["title"],
+                    updated["date"],
+                    updated["start_time"],
+                    updated["reason"],
+                    json.dumps(raw_payload, ensure_ascii=False),
+                    current.get("request_id"),
+                ),
+            )
+
+        return updated
+
+    def update_todo(
+        self,
+        todo_id: str,
+        title: str | None = None,
+        due_date: str | None = None,
+        end_time: str | None = None,
+        priority: str | None = None,
+    ) -> dict[str, Any] | None:
+        """할 일을 수정하고 연결된 structured request도 같은 값으로 갱신합니다."""
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {TODO_COLUMNS}
+                FROM todos
+                WHERE todo_id = ?
+                """,
+                (todo_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            current = dict(row)
+            updated = {
+                **current,
+                "title": title if title is not None else current.get("title"),
+                "due_date": due_date if due_date is not None else current.get("due_date"),
+                "end_time": end_time if end_time is not None else current.get("end_time"),
+                "priority": priority if priority is not None else current.get("priority"),
+            }
+            conn.execute(
+                """
+                UPDATE todos
+                SET title = ?,
+                    due_date = ?,
+                    end_time = ?,
+                    priority = ?
+                WHERE todo_id = ?
+                """,
+                (
+                    updated["title"],
+                    updated["due_date"],
+                    updated["end_time"],
+                    updated["priority"],
+                    todo_id,
+                ),
+            )
+
+            raw_row = conn.execute(
+                "SELECT raw_json FROM structured_requests WHERE request_id = ?",
+                (current.get("request_id"),),
+            ).fetchone()
+            raw_payload: dict[str, Any] = {}
+            if raw_row:
+                try:
+                    raw_payload = json.loads(raw_row["raw_json"] or "{}")
+                except Exception:
+                    raw_payload = {}
+            raw_payload.update(
+                {
+                    "title": updated["title"],
+                    "date": updated["due_date"],
+                    "end_time": updated["end_time"],
+                    "priority": updated["priority"],
+                }
+            )
+            conn.execute(
+                """
+                UPDATE structured_requests
+                SET title = ?,
+                    date = ?,
+                    end_time = ?,
+                    priority = ?,
+                    raw_json = ?
+                WHERE request_id = ?
+                  AND kind = 'todo'
+                """,
+                (
+                    updated["title"],
+                    updated["due_date"],
+                    updated["end_time"],
+                    updated["priority"],
+                    json.dumps(raw_payload, ensure_ascii=False),
+                    current.get("request_id"),
+                ),
+            )
+
+        return updated
 
     def find_schedules(
         self,
@@ -672,6 +926,100 @@ class AppSQLiteStore(SQLiteFileStore):
             rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
         return [decode_schedule_row(row) for row in rows]
 
+    def find_reminders(
+        self,
+        request_ids: list[str] | None = None,
+        date: str | None = None,
+        title: str | None = None,
+        start_time: str | None = None,
+        time_unspecified: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """알림 ID나 날짜/제목/시간 필터에 맞는 저장 알림을 찾습니다.
+        
+        삭제/수정 전 agent가 후보를 좁히는 용도입니다. `time_unspecified=True`는
+        "시간 미정 일정"처럼 start_time이 비어 있는 row를 찾을 때 사용합니다.
+        """
+
+        where: list[str] = []
+        params: list[Any] = []
+        if request_ids is not None:
+            placeholders = ", ".join("?" for _ in request_ids)
+            where.append(f"request_id IN ({placeholders})")
+            params.extend(request_ids)
+        if date:
+            where.append("date = ?")
+            params.append(date)
+        if title:
+            where.append("title LIKE ?")
+            params.append(f"%{title}%")
+        if start_time:
+            where.append("start_time = ?")
+            params.append(start_time)
+        if time_unspecified:
+            where.append("(start_time IS NULL OR start_time = '' OR start_time = '미정')")
+
+        sql = f"""
+            SELECT {REMINDER_COLUMNS}
+            FROM reminders
+        """
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    def find_todos(
+        self,
+        request_ids: list[str] | None = None,
+        due_date: str | None = None,
+        title: str | None = None,
+        end_time: str | None = None,
+        priority: str | None = None,
+        time_unspecified: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """할 일 ID나 마감일/제목/시간/우선순위 필터에 맞는 할 일을 찾습니다.
+        
+        삭제/수정 전 agent가 후보를 좁히는 용도입니다. `time_unspecified=True`는
+        "시간 미정 일정"처럼 start_time이 비어 있는 row를 찾을 때 사용합니다.
+        """
+
+        where: list[str] = []
+        params: list[Any] = []
+        if request_ids is not None:
+            placeholders = ", ".join("?" for _ in request_ids)
+            where.append(f"request_id IN ({placeholders})")
+            params.extend(request_ids)
+        if due_date:
+            where.append("due_date = ?")
+            params.append(due_date)
+        if title:
+            where.append("title LIKE ?")
+            params.append(f"%{title}%")
+        if end_time:
+            where.append("end_time = ?")
+            params.append(end_time)
+        if priority:
+            where.append("UPPER(TRIM(priority)) = UPPER(TRIM(?))")
+            params.append(priority)
+        if time_unspecified:
+            where.append("(end_time IS NULL OR end_time = '' OR end_time = '미정')")
+
+        sql = f"""
+            SELECT {TODO_COLUMNS}
+            FROM todos
+        """
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
     def delete_schedule(self, schedule_id: str) -> dict[str, Any] | None:
         """schedule_id 하나를 삭제하고 연결된 structured request도 함께 정리합니다."""
 
@@ -697,13 +1045,73 @@ class AppSQLiteStore(SQLiteFileStore):
                 (row["request_id"],),
             )
 
+        if decoded.get("is_secret"): # 시크릿 일정은 공유 저장소 delete를 skip
+            decoded["shared_sync_skip_reason"] = "secret_schedule"
+            return decoded
         if decoded.get("request_kind") == "personal_schedule" and decoded.get("request_id"):
             # 개인 일정은 외부 공유 저장소에 복사본이 있으므로 앱 DB 삭제와 함께 제거합니다.
             delete_personal_schedule_from_shared(decoded["request_id"])
         elif decoded.get("request_kind") == "group_schedule" and decoded.get("request_id"):
             delete_group_schedule_from_shared(decoded)
 
+        decoded["shared_sync_skip_reason"] = None
         return decoded
+
+    def delete_reminder(self, reminder_id: str) -> dict[str, Any] | None:
+        """reminder_id 하나를 삭제하고 연결된 structured request도 함께 정리합니다."""
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {REMINDER_COLUMNS}
+                FROM reminders
+                WHERE reminder_id = ?
+                """,
+                (reminder_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            deleted = dict(row)
+            conn.execute("DELETE FROM reminders WHERE reminder_id = ?", (reminder_id,))
+            conn.execute(
+                """
+                DELETE FROM structured_requests
+                WHERE request_id = ?
+                  AND kind = 'reminder'
+                """,
+                (deleted.get("request_id"),),
+            )
+
+        return deleted # 별도의 디코딩 과정 생략
+
+    def delete_todo(self, todo_id: str) -> dict[str, Any] | None:
+        """todo_id 하나를 삭제하고 연결된 structured request도 함께 정리합니다."""
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {TODO_COLUMNS}
+                FROM todos
+                WHERE todo_id = ?
+                """,
+                (todo_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            deleted = dict(row)
+            conn.execute("DELETE FROM todos WHERE todo_id = ?", (todo_id,))
+            conn.execute(
+                """
+                DELETE FROM structured_requests
+                WHERE request_id = ?
+                  AND kind = 'todo'
+                """,
+                (deleted.get("request_id"),),
+            )
+
+        return deleted # 별도의 디코딩 과정 생략
 
     def delete_schedules_by_filter(
         self,
@@ -759,6 +1167,10 @@ class AppSQLiteStore(SQLiteFileStore):
 
         decoded_rows = [decode_schedule_row(row) for row in deleted_rows]
         for row in decoded_rows:
+            row["shared_sync_skip_reason"] = None
+            if row.get("is_secret"): # 시크릿은 공유 저장소에서 삭제하지 않음
+                row["shared_sync_skip_reason"] = "secret_schedule"
+                continue
             if row.get("request_kind") == "personal_schedule" and row.get("request_id"):
                 delete_personal_schedule_from_shared(row["request_id"])
             elif row.get("request_kind") == "group_schedule" and row.get("request_id"):

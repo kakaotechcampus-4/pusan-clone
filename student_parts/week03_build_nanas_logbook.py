@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
@@ -30,30 +30,43 @@ _WEEK03_AGENT: Any | None = None
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
 SQLITE_MEMORY_PROMPT = (
     "일정/할 일/알림은 앱 SQLite DB에 영속 메모리로 저장되므로, 현재 대화뿐 아니라 새 대화에서도 과거 기록을 조회/수정/삭제할 수 있다. "
-    "현재 대화에서 알 수 없는 '나'의 일정/할 일/알림을 물으면 get_saved_request, list_saved_requests, personal_list_saved_schedules로 DB를 조회한 결과를 답변하고, 저장된 기록이 없으면 없다고 답한다. "
+    "현재 대화에서 알 수 없는 '나'의 일정을 물으면 personal_list_saved_schedules로 조회한다. "
+    "일정이 아닌 할 일(todo)이나 알림(reminder) 조회 요청은 반드시 get_saved_request 또는 list_saved_requests로 실행하고 다른 목록 도구로 대신하지 않는다. "
+    "조회 결과가 없으면 저장된 기록이 없다고 답한다. "
     "저장된 일정은 personal_update_saved_schedule로 수정하고 personal_delete_saved_schedules로 삭제한다. "
+    "저장된 할 일은 personal_update_saved_todo로 수정하고 personal_delete_saved_todo로 삭제하며, "
+    "저장된 알림은 personal_update_saved_reminder로 수정하고 personal_delete_saved_reminder로 삭제한다. "
     "개인 일정의 저장/수정/삭제는 외부 공유 일정 복사본에도 함께 반영된다. "
 )
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
 WEEK03_TOOL_CALL_PROMPT = (
+    "알림이나 할 일 조회 및 수정/삭제 대상 확인에는 personal_list_saved_schedules를 절대 호출하지 않고, 먼저 list_saved_requests에 kind='reminder'/'todo'와 날짜 범위를 전달한다. "
+    "예를 들어 '저장된 알림 중에 8월 2일에 있는 2차 PR 마감을 지워줘'는 list_saved_requests에서 kind='reminder'와 8월 2일을 해석한 동일한 date_from/date_to로 대상을 찾은 뒤 personal_delete_saved_reminder(request_id=조회된 request_id)를 호출한다. "
     "저장 요청은 kind에 따라 저장 경로를 하나만 선택하며, 같은 요청에 두 경로를 함께 쓰지 않는다. "
     "본인 외 참석자가 없는 개인 일정(personal_schedule) 생성 요청에만 personal_create_schedule 하나를 호출한다. "
     "이 도구가 임시 메모리와 SQLite 저장을 모두 처리하므로, 같은 요청에 save_structured_request를 추가로 호출하지 않는다. "
     "본인 외 참석자가 있는 그룹 일정(group_schedule)과 할 일(todo)·알림(reminder) 저장 요청은 personal_create_schedule을 쓰지 않고, "
     "extract_schedule_request로 구조화한 뒤 structured_request의 kind/title/date/start_time/end_time/members/priority/reason/original_text 값을 save_structured_request에 전달해 저장한다. "
-    "저장된 구조화 요청 조회는 get_saved_request(단건 요청)과 list_saved_requests(여러 요청)를 쓰고, '나'의 저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
+    "저장된 구조화 요청 조회는 get_saved_request(request_id의 단건 요청)와 list_saved_requests(조건에 맞는 여러 요청)를 쓰고, '나'의 저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
+    "할 일 또는 알림 조회 요청에는 반드시 get_saved_request나 list_saved_requests를 호출하며, personal_list_saved_schedules를 사용하지 않는다. "
+
     "personal_list_saved_schedules는 기본적으로 개인 일정(personal_schedule)만 조회한다. "
     "참석자가 있는 그룹 일정을 조회/수정/삭제해야 할 때는 kind='group_schedule'을 지정하고, 개인과 그룹 일정을 모두 봐야 하면 kind를 각각 지정해 두 번 조회한다. "
     "저장된 일정 수정 요청에는 personal_update_saved_schedule에 schedule_id와 바꿀 필드만 전달한다. 바꾸지 않을 필드는 넘기지 않으며, 개인 일정은 공유 일정 복사본도 함께 갱신된다. "
     "저장된 일정 삭제 요청에는 먼저 personal_list_saved_schedules로 대상 schedule_id를 확인한 뒤 personal_delete_saved_schedules에 schedule_ids나 날짜/제목/시간 필터를 전달한다. "
+
+    "할 일 수정/삭제 요청에는 먼저 get_saved_request나 list_saved_requests에서 kind='todo'로 대상 request_id를 확인한다. "
+    "그 다음 수정은 personal_update_saved_todo에 request_id와 바꿀 필드만 전달하고, 삭제는 personal_delete_saved_todo에 request_id를 전달한다. "
+    "알림 수정/삭제 요청에는 먼저 get_saved_request나 list_saved_requests에서 kind='reminder'로 대상 request_id를 확인한다. "
+    "그 다음 수정은 personal_update_saved_reminder에 request_id와 바꿀 필드만 전달하고, 삭제는 personal_delete_saved_reminder에 request_id를 전달한다. "
+
     "수정 및 삭제 대상이 그룹 일정이거나 개인/그룹이 불확실하면, 후보 확인 시 kind='group_schedule'로도 조회해 대상을 빠뜨리지 않는다. "
     "조건 없이 삭제하지 않으며, 사용자가 전체 삭제를 명확하게 요청할 때만 delete_all=True를 사용한다. "
     "사용자의 현재 메시지가 명확하게 저장/조회/수정/삭제를 요청할 때만 해당 tool을 호출한다. "
     "뜻을 알 수 없거나 일정과 무관한 입력에는 어떤 tool도 호출하지 말고 무엇을 도와줄지 되묻는다. "
     "이미 처리한 요청을 사용자가 다시 요청하지 않았다면, 직전에 저장/수정/삭제했다는 이유만으로 같은 동작을 반복하지 않는다. "
     "'나'의 일정 조회는 personal_list_saved_schedules를, 할 일과 알림을 포함한 '나'의 전체 기록 조회는 list_saved_requests를 쓴다. "
-    "다른 사람(외부 멤버)의 일정 조회 도구는 이후 주차에서 안내한다."
 )
 
 
@@ -296,7 +309,10 @@ def save_structured_request_payload(
 class SavedRequestListInput(BaseModel):
     """저장 요청 목록 조회 입력입니다."""
 
-    kind: RequestKind | None = None
+    kind: RequestKind | None = Field(
+        default=None,
+        description="조회할 저장 요청 종류. 할 일은 todo, 알림은 reminder를 지정합니다.",
+    )
     date_from: str | None = None
     date_to: str | None = None
 
@@ -307,11 +323,17 @@ class SavedRequestGetInput(BaseModel):
     request_id: str
 
 
+SavedScheduleKind = Literal["personal_schedule", "group_schedule"]
+
+
 class SavedScheduleListInput(BaseModel):
     """저장 일정 목록 조회 입력입니다."""
 
     limit: int = Field(default=50, ge=1, le=200)
-    kind: RequestKind | None = None
+    kind: SavedScheduleKind | None = Field(
+        default=None,
+        description="일정만 조회합니다. personal_schedule 또는 group_schedule만 허용됩니다.",
+    )
     date_from: str | None = None
     date_to: str | None = None
 
@@ -336,6 +358,36 @@ class SavedScheduleDeleteInput(BaseModel):
     start_time: str | None = None
     time_unspecified: bool = False
     delete_all: bool = False
+
+
+class SavedTodoUpdateInput(BaseModel):
+    """저장된 할 일 수정 입력입니다."""
+
+    request_id: str = Field(description="get_saved_request/list_saved_requests에서 확인한 todo request_id")
+    title: str | None = None
+    due_date: str | None = None
+    end_time: str | None = None
+    priority: str | None = None
+
+
+class SavedReminderUpdateInput(BaseModel):
+    """저장된 알림 수정 입력입니다."""
+
+    request_id: str = Field(description="get_saved_request/list_saved_requests에서 확인한 reminder request_id")
+    title: str | None = None
+    date: str | None = None
+    start_time: str | None = None
+    reason: str | None = None
+
+
+class SavedTodoDeleteInput(BaseModel):
+    """저장된 할 일 삭제 입력입니다."""
+    request_id: str = Field(description="get_saved_request/list_saved_requests에서 확인한 todo request_id")
+
+
+class SavedReminderDeleteInput(BaseModel):
+    """저장된 알림 삭제 입력입니다."""
+    request_id: str = Field(description="get_saved_request/list_saved_requests에서 확인한 reminder request_id")
 
 
 def _delete_saved_schedules(
@@ -385,6 +437,40 @@ def _delete_saved_schedules(
         "personal_delete_saved_schedules",
         deleted_count=len(deleted),
         filters=filters,
+        deleted=deleted)
+
+
+def _delete_saved_todo(
+    *, store: AppSQLiteStore, request_id: str
+) -> dict[str, Any]: # _delete_saved_schedules처럼 필터 기반의 삭제가 아닌 request_id 단건 match 삭제
+    todo = _saved_todo(store, request_id)
+    if todo is None:
+        return tool_result(
+            "personal_delete_saved_todo",
+            ok=False, request_id=request_id,
+            error="request_id에 연결된 할 일을 찾을 수 없습니다.")
+
+    deleted = store.delete_todo(todo["todo_id"])
+    return tool_result(
+        "personal_delete_saved_todo",
+        request_id=request_id,
+        deleted=deleted)
+
+
+def _delete_saved_reminder(
+    *, store: AppSQLiteStore, request_id: str
+) -> dict[str, Any]: # _delete_saved_schedules처럼 필터 기반의 삭제가 아닌 request_id 단건 match 삭제
+    reminder = _saved_reminder(store, request_id)
+    if reminder is None:
+        return tool_result(
+            "personal_delete_saved_reminder",
+            ok=False, request_id=request_id,
+            error="request_id에 연결된 알림을 찾을 수 없습니다.")
+
+    deleted = store.delete_reminder(reminder["reminder_id"])
+    return tool_result(
+        "personal_delete_saved_reminder",
+        request_id=request_id,
         deleted=deleted)
 
 
@@ -481,7 +567,7 @@ def list_saved_requests(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
+    """저장 요청을 조회합니다. 특히 todo/reminder 조회와 수정 및 삭제 대상 request_id 확인에 사용합니다."""
 
     # DONE: kind/date_from/date_to 필터로 저장 요청을 조회하고 rows를 JSON 문자열로 반환하세요.
     rows = _store().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)
@@ -501,14 +587,13 @@ def get_saved_request(request_id: str) -> str:
 @tool(args_schema=SavedScheduleListInput)
 def personal_list_saved_schedules(
     limit: int = 50,
-    kind: RequestKind | None = None,
+    kind: SavedScheduleKind | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+    """개인/그룹 일정만 조회합니다. 할 일(todo)이나 알림(reminder)에는 사용하지 않습니다."""
 
     # DONE: 날짜/종류/limit 필터로 저장 일정을 조회하세요.
-    kind = kind
     schedules = _store().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to)
     # DONE: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
     filters = {"kind": kind, "date_from": date_from, "date_to": date_to, "limit": limit}
@@ -536,6 +621,20 @@ def delete_saved_schedules_dict(
         time_unspecified=time_unspecified,
         delete_all=delete_all,
     )
+
+
+def _saved_todo(store: AppSQLiteStore, request_id: str) -> dict[str, Any] | None:
+    # 실제 todos 테이블 조회 -> request_id를 실제 todo_id로 변환
+    # 지금은 별도의 필터를 넘겨주지 않고 단건 id match로 찾습니다.
+    rows = store.find_todos(request_ids=[request_id], limit=1)
+    return rows[0] if rows else None
+
+
+def _saved_reminder(store: AppSQLiteStore, request_id: str) -> dict[str, Any] | None:
+    # 실제 reminders 테이블 조회 -> request_id를 실제 reminder_id로 변환
+    # 지금은 별도의 필터를 넘겨주지 않고 단건 id match로 찾습니다.
+    rows = store.find_reminders(request_ids=[request_id], limit=1)
+    return rows[0] if rows else None
 
 
 @tool(args_schema=SavedScheduleUpdateInput)
@@ -572,6 +671,59 @@ def personal_update_saved_schedule(
         shared_sync=result.get("shared_sync")))
 
 
+@tool(args_schema=SavedTodoUpdateInput)
+def personal_update_saved_todo(
+    request_id: str,
+    title: str | None = None,
+    due_date: str | None = None,
+    end_time: str | None = "미정",
+    priority: str | None = "MEDIUM",
+) -> str:
+    """앱 DB에 저장된 내 할 일 원본을 수정합니다."""
+
+    store = _store()
+    todo = _saved_todo(store, request_id)
+    if todo is None: # 업데이트 대상을 특정할 수 없는 경우
+        return json_payload(tool_result(
+                "personal_update_saved_todo",
+                ok=False, request_id=request_id,
+                error="request_id에 연결된 할 일을 찾을 수 없습니다."))
+
+    updated = store.update_todo(
+        todo["todo_id"], title=title,
+        due_date=due_date, end_time=end_time, priority=priority)
+    return json_payload(tool_result(
+            "personal_update_saved_todo",
+            request_id=request_id,
+            updated_todo=updated))
+
+
+@tool(args_schema=SavedReminderUpdateInput)
+def personal_update_saved_reminder(
+    request_id: str,
+    title: str | None = None,
+    date: str | None = None,
+    start_time: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """앱 DB에 저장된 내 알림 원본을 수정합니다."""
+
+    store = _store()
+    reminder = _saved_reminder(store, request_id)
+    if reminder is None: # 업데이트 대상을 특정할 수 없는 경우
+        return json_payload(tool_result(
+                "personal_update_saved_reminder",
+                ok=False, request_id=request_id,
+                error="request_id에 연결된 알림을 찾을 수 없습니다."))
+
+    updated = store.update_reminder(
+        reminder["reminder_id"], title=title,
+        date=date, start_time=start_time, reason=reason)
+    return json_payload(tool_result(
+            "personal_update_saved_reminder",
+            request_id=request_id, updated_reminder=updated))
+
+
 @tool(args_schema=SavedScheduleDeleteInput)
 def personal_delete_saved_schedules(
     schedule_ids: list[str] | None = None,
@@ -596,6 +748,22 @@ def personal_delete_saved_schedules(
     return json_payload(result)
 
 
+@tool(args_schema=SavedTodoDeleteInput)
+def personal_delete_saved_todo(request_id: str) -> str:
+    """Nana가 조회 도구에서 고른 request_id과 일치하는 저장된 할 일을 필터 없이 단건 삭제합니다."""
+
+    result = _delete_saved_todo(store=_store(), request_id=request_id)
+    return json_payload(result)
+
+
+@tool(args_schema=SavedReminderDeleteInput)
+def personal_delete_saved_reminder(request_id: str) -> str:
+    """Nana가 조회 도구에서 고른 request_id과 일치하는 저장된 알림을 필터 없이 단건 삭제합니다."""
+
+    result = _delete_saved_reminder(store=_store(), request_id=request_id)
+    return json_payload(result)
+
+
 def week03_tools() -> list[Any]:
     """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
 
@@ -611,6 +779,10 @@ def week03_tools() -> list[Any]:
         personal_list_saved_schedules,
         personal_update_saved_schedule,
         personal_delete_saved_schedules,
+        personal_update_saved_todo,
+        personal_update_saved_reminder,
+        personal_delete_saved_todo,
+        personal_delete_saved_reminder,
     ]
 
 
@@ -632,9 +804,16 @@ def week03_prompt_parts() -> list[str]:
         # DONE: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
         # (날짜 정보는 저번 추가 프롬프트에 전달됨)
         "새 일정/할 일/알림 저장 요청에는 extract_schedule_request 후 save_structured_request를 사용하고(개인 일정 직접 생성은 personal_create_schedule), "
-        "저장 기록 조회는 get_saved_request/list_saved_requests/personal_list_saved_schedules를, "
+        "사용자가 알림/리마인더/reminder 또는 할 일/todo라고 명시하면 날짜나 마감 표현이 있어도 일정으로 취급하지 않는다. "
+        "할 일/알림 조회는 반드시 get_saved_request 또는 list_saved_requests를 사용하고, 일정 조회만 personal_list_saved_schedules를 사용한다. "
+        "알림 삭제는 list_saved_requests(kind='reminder')로 request_id를 확인한 뒤 personal_delete_saved_reminder를 호출하고, "
+        "할 일 삭제는 list_saved_requests(kind='todo')로 request_id를 확인한 뒤 personal_delete_saved_todo를 호출한다. "
         "저장 일정 수정은 personal_update_saved_schedule, 삭제는 personal_delete_saved_schedules를 쓴다. "
-        "수정/삭제는 personal_list_saved_schedules로 대상 schedule_id를 먼저 확인한 뒤 진행하며, 구조화된 결과를 SQLite에 저장하지 못하면 오류를 반환한다.",
+        "할 일은 personal_update_saved_todo/personal_delete_saved_todo로 수정/삭제하고, "
+        "알림은 personal_update_saved_reminder/personal_delete_saved_reminder로 수정/삭제한다. "
+        "할 일과 알림 수정/삭제 전에는 get_saved_request나 list_saved_requests로 대상 request_id를 먼저 확인하고, "
+        "일정 수정/삭제 전에는 personal_list_saved_schedules로 대상 schedule_id를 먼저 확인한다. "
+        "구조화된 결과를 SQLite에 저장하지 못하면 오류를 반환한다.",
     ]
 
 
