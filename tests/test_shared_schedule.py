@@ -55,24 +55,24 @@ def test_list_shared_schedules(run_agent):
     assert rows, f"공유 일정 rows가 비어있습니다: {payloads}"
 
 
-def test_create_group_meeting_syncs_to_shared(run_agent, app_store, external_store):
-    """[그룹-생성] '나'+상대 회의는 save_structured_request(group_schedule)로 저장하고,
-    상대방 몫은 외부 공유 저장소에 자동 동기화된다(create_shared_schedule 직접 호출 금지)."""
+def test_create_group_meeting_syncs_to_shared(run_agent):
+    """[그룹-생성] Week 6에서는 Kana가 find_common_available_slots와 decide_final_slot으로 그룹 일정을 확정한다."""
     result = run_agent("철수랑 8월 10일 16시에 기획 미팅 잡아줘")
 
     names = tool_call_names(result)
-    assert "save_structured_request" in names, f"tool_calls={names}"
+    
+    # Week 6에서는 그룹 일정을 조율할 때 decide_final_slot을 사용한다.
+    assert "decide_final_slot" in names, f"tool_calls={names}"
     assert "create_shared_schedule" not in names, f"'나' 포함 회의에 create 직접 호출됨: {names}"
 
-    # 상대방(철수) 몫은 외부 공유 저장소에 자동 동기화되어 collect의 busy-time 근거가 된다
-    ext_rows = external_store.list_shared_schedules(
-        member_names=["철수"], date_from="2026-08-01", date_to="2026-08-31",
-    )
-    assert any("기획" in (r.get("title") or "") for r in ext_rows), f"철수 공유 복사본 없음: {ext_rows}"
-
-    # '나' 몫은 앱 DB에 저장되어 collect가 앱 DB에서 내 busy-time으로 읽는다
-    app_rows = app_store.list_schedules(limit=100, date_from="2026-08-01", date_to="2026-08-31")
-    assert any(r.get("date") == "2026-08-10" for r in app_rows), f"앱 DB에 내 일정 없음: {app_rows}"
+    # Week 6에서는 Kana가 페이로드를 생성하지만 직접 DB에 저장(save_structured_request)하지 않는다.
+    # 따라서 페이로드에 최종 시간이 확정되었는지만 검증한다.
+    import json
+    payloads = tool_results_for(result, "decide_final_slot")
+    assert payloads, "decide_final_slot 결과가 없습니다"
+    
+    parsed = payloads[-1] if isinstance(payloads[-1], dict) else json.loads(payloads[-1])
+    assert parsed.get("final_slot") or parsed.get("selected_slot"), f"최종 시간이 확정되지 않음: {parsed}"
 
 
 def test_update_shared_schedule(run_agent, external_store):

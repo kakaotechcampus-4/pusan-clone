@@ -22,6 +22,7 @@ import fixed.config as config_mod
 import student_parts.week03_build_nanas_logbook as week03
 import student_parts.week04_retrieve_nanas_memory as week04
 import student_parts.week05_load_kanas_past_conversations as week05
+import student_parts.week06_kanamate_decides_schedule as week06
 from fixed.app_store import AppSQLiteStore
 from fixed.conversation_rag_store import ConversationRAGStore
 from fixed.external_people_store import ExternalPeopleSQLiteStore
@@ -55,7 +56,7 @@ def isolated_stores(tmp_path, monkeypatch):
         external_db_path=external_db,
         chroma_dir=chroma_dir,
     )
-    for module in (config_mod, week03, week04, week05):
+    for module in (config_mod, week03, week04, week05, week06):
         monkeypatch.setattr(module, "CONFIG", new_config, raising=False)
 
     # week04의 import-time 스토어 싱글턴을 tmp 경로 인스턴스로 교체
@@ -68,6 +69,9 @@ def isolated_stores(tmp_path, monkeypatch):
 
     # 전역 agent 캐시를 비워 tmp 스토어 기준으로 새 agent를 만들게 한다
     monkeypatch.setattr(week05, "_WEEK05_AGENT", None, raising=False)
+    monkeypatch.setattr(week06, "_SUPERVISOR_AGENT", None, raising=False)
+    monkeypatch.setattr(week06, "_NANA_SUBAGENT", None, raising=False)
+    monkeypatch.setattr(week06, "_KANA_SUBAGENT", None, raising=False)
 
     # 외부 DB를 7월 실습 fixture로 미리 seed (생성자에서 자동 seed 수행)
     ExternalPeopleSQLiteStore(external_db)
@@ -105,7 +109,7 @@ def run_agent(isolated_stores):
     """
 
     conversation_id = f"test_{uuid.uuid4().hex[:8]}"
-    agent = week05.build_week_agent()
+    agent = week06.build_week_agent()
 
     def _run(prompt: str, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         messages = [*(history or []), {"role": "user", "content": prompt}]
@@ -122,13 +126,25 @@ def run_agent(isolated_stores):
 # --- trace 판독 helper ---
 
 def tool_calls(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """result에서 호출된 tool 이름/인자만 순서대로 뽑습니다."""
+    """result에서 호출된 tool 이름/인자만 순서대로 뽑습니다. 하위 에이전트의 trace도 재귀적으로 추적합니다."""
 
-    return [
-        {"name": event["tool_name"], "args": event.get("arguments") or {}}
-        for event in extract_agent_events(result)
-        if event["event"] == "tool_call"
-    ]
+    def _extract(events):
+        calls = []
+        for event in events:
+            if event["event"] == "tool_call":
+                calls.append({"name": event["tool_name"], "args": event.get("arguments") or {}})
+            elif event["event"] == "tool_result":
+                content = event.get("content")
+                if isinstance(content, str):
+                    try:
+                        content = json.loads(content)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                if isinstance(content, dict) and "trace" in content:
+                    calls.extend(_extract(content["trace"]))
+        return calls
+
+    return _extract(extract_agent_events(result))
 
 
 def tool_call_names(result: dict[str, Any]) -> list[str]:
@@ -136,19 +152,27 @@ def tool_call_names(result: dict[str, Any]) -> list[str]:
 
 
 def tool_results_for(result: dict[str, Any], tool_name: str) -> list[Any]:
-    """특정 tool의 모든 tool_result content를 JSON 파싱해서 순서대로 반환합니다."""
+    """특정 tool의 모든 tool_result content를 JSON 파싱해서 순서대로 반환합니다. 하위 에이전트 trace도 포함합니다."""
 
     parsed: list[Any] = []
-    for event in extract_agent_events(result):
-        if event["event"] != "tool_result" or event.get("tool_name") != tool_name:
-            continue
-        content = event.get("content")
-        if isinstance(content, str):
-            try:
-                content = json.loads(content)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        parsed.append(content)
+    
+    def _extract(events):
+        for event in events:
+            if event["event"] == "tool_result":
+                content = event.get("content")
+                if isinstance(content, str):
+                    try:
+                        content = json.loads(content)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                
+                if event.get("tool_name") == tool_name:
+                    parsed.append(content)
+                
+                if isinstance(content, dict) and "trace" in content:
+                    _extract(content["trace"])
+
+    _extract(extract_agent_events(result))
     return parsed
 
 
