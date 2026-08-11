@@ -71,7 +71,7 @@ def test_create_group_meeting_syncs_to_shared(run_agent):
     payloads = tool_results_for(result, "decide_final_slot")
     assert payloads, "decide_final_slot 결과가 없습니다"
     
-parsed = payloads[-1] if isinstance(payloads[-1], dict) else json.loads(payloads[-1])
+    parsed = payloads[-1] if isinstance(payloads[-1], dict) else json.loads(payloads[-1])
     assert parsed.get("final_slot") or parsed.get("selected_slot"), f"최종 시간이 확정되지 않음: {parsed}"
 
 
