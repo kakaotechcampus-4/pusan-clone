@@ -471,3 +471,18 @@ tool 시그니처·입력 스키마·반환 payload 키는 그대로다.
   `"나"`의 busy-time으로 계속 잡힌다. 정리는 `delete_shared_schedule` 수동 호출이 필요하다.
 - **최종 회의 시간 결정은 Week 6** — 공통 가능 시간 계산(`find_common_available_slots`)은
   이 파일의 rows를 busy_rows 근거로 쓰는 다음 주차 과제다.
+
+---
+
+## Week 6 리뷰로 되돌아온 수정 — `collect_member_schedules` 반환에 `counts`/`coverage` 추가
+
+`rows` 길이 하나로는 "다들 한가하다"와 "그 기간 기록이 아예 없다"가 구분되지 않는다는 Week 6 멘토 리뷰를
+이 파일에 반영했다. 판정 근거가 두 leg를 다 들고 있는 `_collect_member_schedules` 자리에만 있기 때문이다.
+
+- 추가 helper: `schedule_row_counts(...)` (누구의 0건인지) / `member_record_coverage(...)` (그 0을 "비어 있다"로 읽어도 되는지)
+- 추가 반환 키: `counts` / `coverage` / `degraded` — `search_conversations`가 이미 쓰던 계약과 같은 모양
+- 추가 프롬프트 조각: `[Week 5 0건 읽기]`
+- **시그니처와 기존 키는 그대로다.** 새 키를 읽지 않는 코드는 영향받지 않는다.
+
+설계 비교(Week 6 래퍼 대신 여기를 고른 이유), 비용, 검증은 `docs/week06_작업정리.md`의
+"busy_rows 0건의 의미를 반환값으로 가르기" 절에 정리했다.
